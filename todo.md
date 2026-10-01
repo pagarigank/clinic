@@ -172,12 +172,12 @@ flowchart LR
 
 ### 1.5 Jobs
 - [x] ⛔ pg-boss setup, schema, per-tenant queues, `tenantId` schema validation on every payload, retry/DLQ policy, observability (`job_runs` view)
-- [ ] `JOB-01 outbox.dispatch` publishes the transactional outbox to queues and notifications (every 5 s); the outbox is the only bridge between a request transaction and async work
-- [ ] `JOB-08 audit.partition.maintain`, `JOB-15 retention.enforce` (safe default: nothing auto-deleted until a tenant enables enforcement), `JOB-11 session.cleanup` (also sweeps expired break-glass sessions), `JOB-12 user.inactive.deactivate`, `JOB-13 credential.expiry.remind` (PRC/S2/PDEA licences **and any branch licence on file** — reminders are per licence record, so a branch with no DOH LTO recorded gets no reminder)
-- [ ] Job runner conventions: idempotent handler, per-tenant concurrency caps, DLQ replay tool
-- [ ] pg-boss named queue policies per job, not one shared queue: `short` for `JOB-11 session.cleanup`; `singleton` + `singletonKey: tenantId` for `JOB-06 subscription.check` and `JOB-18 rls.canary`; `stately` for `JOB-01 outbox.dispatch`; `key_strict_fifo` + `singletonKey: "{tenantId}:{module}"` for `JOB-03 tenant.provision` re-runs
-- [ ] Explicit `expireInSeconds` + `heartbeat` on long jobs (large report export, DSR export) so a wedged worker is reclaimed; `retentionSeconds` bounds the job table. Never pass `priority: false` (deprecated/ignored from pg-boss 12.30.0, measured ~180x slower)
-- [ ] `rls.canary` (JOB-18) with a security-event on failure
+- [x] `JOB-01 outbox.dispatch` publishes the transactional outbox to queues and notifications (every 5 s); the outbox is the only bridge between a request transaction and async work
+- [x] `JOB-08 audit.partition.maintain`, `JOB-15 retention.enforce` (safe default: nothing auto-deleted until a tenant enables enforcement), `JOB-11 session.cleanup` (also sweeps expired break-glass sessions), `JOB-12 user.inactive.deactivate`, `JOB-13 credential.expiry.remind` (PRC/S2/PDEA licences **and any branch licence on file** — reminders are per licence record, so a branch with no DOH LTO recorded gets no reminder)
+- [x] Job runner conventions: idempotent handler, per-tenant concurrency caps, DLQ replay tool
+- [x] pg-boss named queue policies per job, not one shared queue: `short` for `JOB-11 session.cleanup`; `singleton` + `singletonKey: tenantId` for `JOB-06 subscription.check` and `JOB-18 rls.canary`; `stately` for `JOB-01 outbox.dispatch`; `key_strict_fifo` + `singletonKey: "{tenantId}:{module}"` for `JOB-03 tenant.provision` re-runs
+- [x] Explicit `expireInSeconds` + `heartbeat` on long jobs (large report export, DSR export) so a wedged worker is reclaimed; `retentionSeconds` bounds the job table. Never pass `priority: false` (deprecated/ignored from pg-boss 12.30.0, measured ~180x slower)
+- [x] `rls.canary` (JOB-18) with a security-event on failure
 
 ### 1.6 Module entitlements
 
