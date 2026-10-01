@@ -11,9 +11,12 @@ import { AdminModule } from "./admin/admin.module.js";
 import { FilesModule } from "./files/files.module.js";
 import { ReferenceModule } from "./reference/reference.module.js";
 import { PatientsModule } from "./patients/patients.module.js";
+import { TenantConfigModule } from "./tenant-config/tenant-config.module.js";
+import { TemplatesModule } from "./templates/templates.module.js";
 
 @Module({
-  imports: [PingModule, HealthModule, MetricsModule, AuthModule, RbacModule, AuditModule, TenantModulesModule, PlatformModule, AdminModule, FilesModule, ReferenceModule, PatientsModule],
+  imports: [PingModule, HealthModule, MetricsModule, AuthModule, RbacModule, AuditModule, TenantModulesModule, PlatformModule, AdminModule, FilesModule, ReferenceModule, PatientsModule, TenantConfigModule, TemplatesModule],
 })
 export class AppModule {}
+
 

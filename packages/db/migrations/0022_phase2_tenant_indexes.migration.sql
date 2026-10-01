@@ -1,0 +1,20 @@
+-- Tenant indexes required by schema-linter (ground rule 1): every tenant_id table must have an index starting with tenant_id
+CREATE INDEX IF NOT EXISTS files_tenant_idx ON files (tenant_id);
+CREATE INDEX IF NOT EXISTS service_catalog_tenant_idx ON service_catalog (tenant_id);
+CREATE INDEX IF NOT EXISTS price_lists_tenant_idx ON price_lists (tenant_id);
+CREATE INDEX IF NOT EXISTS discount_types_tenant_idx ON discount_types (tenant_id);
+CREATE INDEX IF NOT EXISTS payment_methods_tenant_idx ON payment_methods (tenant_id);
+CREATE INDEX IF NOT EXISTS holidays_tenant_idx ON holidays (tenant_id);
+CREATE INDEX IF NOT EXISTS operating_hours_tenant_idx ON operating_hours (tenant_id);
+CREATE INDEX IF NOT EXISTS service_units_tenant_idx ON service_units (tenant_id);
+CREATE INDEX IF NOT EXISTS templates_tenant_idx ON templates (tenant_id);
+CREATE INDEX IF NOT EXISTS template_versions_tenant_idx ON template_versions (tenant_id);
+CREATE INDEX IF NOT EXISTS patients_tenant_idx ON patients (tenant_id);
+CREATE INDEX IF NOT EXISTS patient_identifiers_tenant_idx ON patient_identifiers (tenant_id);
+CREATE INDEX IF NOT EXISTS patient_contacts_tenant_idx ON patient_contacts (tenant_id);
+CREATE INDEX IF NOT EXISTS patient_allergies_tenant_idx ON patient_allergies (tenant_id);
+CREATE INDEX IF NOT EXISTS patient_flags_tenant_idx ON patient_flags (tenant_id);
+CREATE INDEX IF NOT EXISTS patient_consents_tenant_idx ON patient_consents (tenant_id);
+CREATE INDEX IF NOT EXISTS patient_merges_tenant_idx ON patient_merges (tenant_id);
+CREATE INDEX IF NOT EXISTS patient_philhealth_tenant_idx ON patient_philhealth (tenant_id);
+CREATE INDEX IF NOT EXISTS patient_philhealth_dependents_tenant_idx ON patient_philhealth_dependents (tenant_id);

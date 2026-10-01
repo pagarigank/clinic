@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
+import { Module } from '../rbac/module.guard.js';
 import { FilesService } from './files.service.js';
 import { CreateFileSchema, type CreateFileRequest } from '@clinic/contracts';
 import type { RequestWithAuth } from '../auth/auth-context.js';
@@ -11,6 +12,7 @@ import type { RequestWithAuth } from '../auth/auth-context.js';
 @ApiBearerAuth()
 @Controller('files')
 @UseGuards(AuthGuard, TenantContextGuard)
+@Module('admin')
 export class FilesController {
   constructor(private readonly filesService: FilesService) {}
 

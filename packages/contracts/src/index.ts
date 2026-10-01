@@ -329,3 +329,174 @@ export const FilePresignedResponseSchema = z.object({
   objectKey: z.string(),
 });
 export type FilePresignedResponse = z.infer<typeof FilePresignedResponseSchema>;
+
+/** ---- Patients (Phase 2.2) ---- */
+
+export const PatientGenderSchema = z.enum(['M', 'F', 'OTHER', 'PREFER_NOT_TO_SAY']);
+export type PatientGender = z.infer<typeof PatientGenderSchema>;
+
+export const PatientStatusSchema = z.enum(['ACTIVE', 'INACTIVE', 'DECEASED', 'MERGED']);
+export type PatientStatus = z.infer<typeof PatientStatusSchema>;
+
+export const PatientIdentifierTypeSchema = z.enum(['PHILHEALTH', 'SSS', 'TIN', 'PASSPORT', 'DRIVERS_LICENSE', 'NATIONAL_ID', 'HMO', 'OTHER']);
+export type PatientIdentifierType = z.infer<typeof PatientIdentifierTypeSchema>;
+
+export const PatientContactTypeSchema = z.enum(['MOBILE', 'LANDLINE', 'EMAIL', 'OTHER']);
+export type PatientContactType = z.infer<typeof PatientContactTypeSchema>;
+
+export const AllergenSeveritySchema = z.enum(['MILD', 'MODERATE', 'SEVERE', 'LIFE_THREATENING']);
+export type AllergenSeverity = z.infer<typeof AllergenSeveritySchema>;
+
+export const PatientFlagLevelSchema = z.enum(['INFO', 'WARNING', 'DANGER']);
+export type PatientFlagLevel = z.infer<typeof PatientFlagLevelSchema>;
+
+export const CreatePatientSchema = z.object({
+  firstName: z.string().min(1).max(120),
+  lastName: z.string().min(1).max(120),
+  middleName: z.string().max(120).optional(),
+  dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD'),
+  gender: PatientGenderSchema,
+  registrationType: z.enum(['STANDARD', 'EMERGENCY']).optional().default('STANDARD'),
+});
+export type CreatePatientRequest = z.infer<typeof CreatePatientSchema>;
+
+export const UpdatePatientSchema = z.object({
+  firstName: z.string().min(1).max(120).optional(),
+  lastName: z.string().min(1).max(120).optional(),
+  middleName: z.string().max(120).nullable().optional(),
+  dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  gender: PatientGenderSchema.optional(),
+  rowVersion: z.number().int().positive(),
+});
+export type UpdatePatientRequest = z.infer<typeof UpdatePatientSchema>;
+
+export const DeactivatePatientSchema = z.object({
+  reason: z.string().min(1).max(500),
+  rowVersion: z.number().int().positive(),
+});
+export type DeactivatePatientRequest = z.infer<typeof DeactivatePatientSchema>;
+
+export const MarkDeceasedSchema = z.object({
+  dateOfDeath: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  rowVersion: z.number().int().positive(),
+});
+export type MarkDeceasedRequest = z.infer<typeof MarkDeceasedSchema>;
+
+export const RevealIdentifierSchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+export type RevealIdentifierRequest = z.infer<typeof RevealIdentifierSchema>;
+
+export const AddIdentifierSchema = z.object({
+  type: PatientIdentifierTypeSchema,
+  value: z.string().min(1).max(100),
+});
+export type AddIdentifierRequest = z.infer<typeof AddIdentifierSchema>;
+
+export const AddContactSchema = z.object({
+  type: PatientContactTypeSchema,
+  value: z.string().min(1).max(200),
+  isPrimary: z.boolean().optional().default(false),
+});
+export type AddContactRequest = z.infer<typeof AddContactSchema>;
+
+export const AddAllergySchema = z.object({
+  substance: z.string().min(1).max(200),
+  severity: AllergenSeveritySchema,
+});
+export type AddAllergyRequest = z.infer<typeof AddAllergySchema>;
+
+export const AddFlagSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().max(1000).optional(),
+  level: PatientFlagLevelSchema,
+});
+export type AddFlagRequest = z.infer<typeof AddFlagSchema>;
+
+export const AcknowledgeDuplicatesSchema = z.object({
+  candidateIds: z.array(z.string().uuid()).min(1),
+  reason: z.string().min(1).max(500),
+});
+export type AcknowledgeDuplicatesRequest = z.infer<typeof AcknowledgeDuplicatesSchema>;
+
+export const MergePatientSchema = z.object({
+  survivingPatientId: z.string().uuid(),
+  mergedPatientId: z.string().uuid(),
+  reason: z.string().min(1).max(500),
+});
+export type MergePatientRequest = z.infer<typeof MergePatientSchema>;
+
+export const ConsentCaptureSchema = z.object({
+  templateVersionId: z.string().uuid(),
+  fileId: z.string().uuid().optional(),
+});
+export type ConsentCaptureRequest = z.infer<typeof ConsentCaptureSchema>;
+
+export const ConsentWithdrawSchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+export type ConsentWithdrawRequest = z.infer<typeof ConsentWithdrawSchema>;
+
+export const PhilHealthDataSchema = z.object({
+  pin: z.string().min(1).max(30),
+  membershipCategory: z.enum(['MEMBER', 'DEPENDENT', 'SENIOR_CITIZEN', 'KONSULTA']),
+  konsultaPcp: z.string().max(200).optional(),
+  konsultaStatus: z.enum(['NOT_REGISTERED', 'REGISTERED', 'LAPSED']).optional().default('NOT_REGISTERED'),
+});
+export type PhilHealthDataRequest = z.infer<typeof PhilHealthDataSchema>;
+
+export const PhilHealthDependentSchema = z.object({
+  dependentFirstName: z.string().min(1).max(120),
+  dependentLastName: z.string().min(1).max(120),
+  dependentDob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  dependentRelationship: z.enum(['SPOUSE', 'CHILD', 'PARENT', 'OTHER']),
+});
+export type PhilHealthDependentRequest = z.infer<typeof PhilHealthDependentSchema>;
+
+/** ---- Tenant config (Phase 2.1) ---- */
+
+export const CreateServiceSchema = z.object({
+  code: z.string().min(1).max(50).regex(/^[a-z0-9_]+$/),
+  name: z.string().min(1).max(200),
+  branchId: z.string().uuid().optional(),
+});
+export type CreateServiceRequest = z.infer<typeof CreateServiceSchema>;
+
+export const CreatePriceListSchema = z.object({
+  serviceId: z.string().uuid(),
+  amount: z.number().min(0),
+  effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+export type CreatePriceListRequest = z.infer<typeof CreatePriceListSchema>;
+
+export const CreateDiscountTypeSchema = z.object({
+  name: z.string().min(1).max(100),
+  percentage: z.number().min(0).max(100),
+});
+export type CreateDiscountTypeRequest = z.infer<typeof CreateDiscountTypeSchema>;
+
+export const CreatePaymentMethodSchema = z.object({
+  code: z.string().min(1).max(50).regex(/^[a-z0-9_]+$/),
+  name: z.string().min(1).max(100),
+});
+export type CreatePaymentMethodRequest = z.infer<typeof CreatePaymentMethodSchema>;
+
+export const CreateHolidaySchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  name: z.string().min(1).max(200),
+});
+export type CreateHolidayRequest = z.infer<typeof CreateHolidaySchema>;
+
+/** ---- Templates (Phase 2.1) ---- */
+
+export const TemplateTypeSchema = z.enum(['DOCUMENT', 'NOTIFICATION', 'CONSENT']);
+export type TemplateType = z.infer<typeof TemplateTypeSchema>;
+
+export const CreateTemplateSchema = z.object({
+  type: TemplateTypeSchema,
+  code: z.string().min(1).max(80).regex(/^[a-z0-9_]+$/),
+  name: z.string().min(1).max(200),
+  content: z.string().min(1),
+});
+export type CreateTemplateRequest = z.infer<typeof CreateTemplateSchema>;

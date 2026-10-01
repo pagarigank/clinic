@@ -2,10 +2,12 @@ import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { getAppPool } from '@clinic/db';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
+import { ModuleAllowlist } from '../rbac/module.guard.js';
 
 @ApiTags('Reference Data')
 @Controller('reference')
 @UseGuards(AuthGuard)
+@ModuleAllowlist()
 export class ReferenceController {
   
   @Get('icd10')
