@@ -36,6 +36,15 @@ async function bootstrap(): Promise<void> {
   app.useGlobalFilters(new ProblemExceptionFilter());
   // Controllers declare their full `api/v1/...` paths; no global prefix.
 
+  const { DocumentBuilder, SwaggerModule } = await import('@nestjs/swagger');
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('Clinic Platform API')
+    .setDescription('The internal API documentation')
+    .setVersion('1.0')
+    .build();
+  const document = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup('docs', app, document);
+
   await app.listen(config.PORT, "0.0.0.0");
 
   if (config.NODE_ENV !== "test") {

@@ -57,6 +57,8 @@ export class AuthGuard implements CanActivate {
         branchId: claims.brn,
         amr: claims.amr,
         scopes: [],
+        modules: claims.mod,
+        modulesVersion: claims.mdv,
       };
       return true;
     }

@@ -15,6 +15,10 @@ export interface AuthContext {
   amr: string[];
   /** API-key scopes only (empty for interactive users). */
   scopes: string[];
+  /** Entitled modules and statuses (Phase 1.6). */
+  modules?: { module: string; status: string }[];
+  /** Cache key for module entitlements. */
+  modulesVersion?: number;
 }
 
 export interface RequestWithAuth {

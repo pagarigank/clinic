@@ -24,6 +24,8 @@ export interface AccessClaims {
   sid: string; // session id
   brn: string | null; // default branch at issuance
   amr: string[]; // authentication methods: pwd, totp, mfa-recovery, mfa-remembered, apikey
+  mod?: { module: string; status: string }[]; // Phase 1.6 module entitlements
+  mdv?: number; // Phase 1.6 modules_version cache key
 }
 
 export interface RefreshClaims {
