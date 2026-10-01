@@ -190,13 +190,13 @@ This is the gate every later phase builds on: a phase cannot ship a module's scr
 - [x] Entitlement guard **fails closed**: unreadable entitlement store/cache returns `503 UPSTREAM_UNAVAILABLE` (never a grant), a cached `ENABLED` is never honoured past `modules_cache_ttl`, and an `entitlement_evaluation_failure` counter is exported for alerting
 - [x] Entitlement/feature-flag separation: no route's access depends on `tenant_feature_flags`; a module is granted only by a `tenant_modules` write (plan change, `JOB-03`, or explicit superadmin action) - payment webhooks may enqueue the state change but never write an entitlement row inline
 - [x] Entitlement cache keyed on `modules_version` (`modules_cache_ttl` 60 s, configurable); session token carries `modules[]` + `modules_version`; a version bump forces refresh for other users' sessions
-- [ ] Validation on create and update: missing hard dependency → `MODULE_DEPENDENCY_MISSING`; module outside the plan → `PLAN_MODULE_NOT_ALLOWED`; nothing written on failure
-- [ ] Enable/disable state machine with the two-step disable: `preflight` (open work inventory) → `drain` or `disable {force, reason}`; `MODULE_HAS_OPEN_WORK` when a non-forced disable is attempted with open work; `reopen` for `DRAINING` → `ENABLED`
-- [ ] Enabling runs only that module's missing seed and re-runs **nothing else**; existing role grants for a newly enabled module are left unmapped, and the "permissions to review" signal is exposed for the tenant admin
-- [ ] Disabling is never destructive: no DELETE path exists, `disabled_reason` is required, and a re-enable round-trip is covered by an automated test
+- [x] Validation on create and update: missing hard dependency → `MODULE_DEPENDENCY_MISSING`; module outside the plan → `PLAN_MODULE_NOT_ALLOWED`; nothing written on failure
+- [x] Enable/disable state machine with the two-step disable: `preflight` (open work inventory) → `drain` or `disable {force, reason}`; `MODULE_HAS_OPEN_WORK` when a non-forced disable is attempted with open work; `reopen` for `DRAINING` → `ENABLED`
+- [x] Enabling runs only that module's missing seed and re-runs **nothing else**; existing role grants for a newly enabled module are left unmapped, and the "permissions to review" signal is exposed for the tenant admin
+- [x] Disabling is never destructive: no DELETE path exists, `disabled_reason` is required, and a re-enable round-trip is covered by an automated test
 - [ ] Break-glass session inherits the tenant's module set; a non-entitled attempt is audited as a denial
 - [ ] Report catalog filters to entitled modules; job scheduler refuses to enqueue a non-entitled module's jobs and workers re-check before each attempt
-- [ ] `GET /admin/modules` (read-only, tenant-facing) and the "request a module" contact action
+- [x] `GET /admin/modules` (read-only, tenant-facing) and the "request a module" contact action
 
 ### 1.7 Tenant provisioning and platform console (minimum)
 - [ ] ⛔ Tenant create with `modules[]` in the body (wizard step: cards, dependency auto-tick, plan-locked modules, live summary) → `PROVISIONING` → JOB-03 seeds **only** the entitled modules, writing `seed_status` per module; tenant activates when every entitled module is `SEEDED`; failure compensates to `PROVISIONING_FAILED` (retryable via `POST /platform/tenants/{id}/provision`)
