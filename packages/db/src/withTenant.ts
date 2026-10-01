@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import { noteTenantTransaction } from "./tenant-scope.js";
 
 /**
  * Request/job transaction wrapper (architecture §6.5).
@@ -48,6 +49,9 @@ export async function withTenantOnPool<T>(
       ],
     );
     const out = await fn(client);
+    // Recorded only after the callback resolved, so a handler that threw has
+    // not "opened a transaction" as far as the request scope is concerned.
+    noteTenantTransaction(ctx.tenantId);
     await client.query("COMMIT");
     return out;
   } catch (e) {

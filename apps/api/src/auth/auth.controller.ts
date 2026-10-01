@@ -25,6 +25,7 @@ import {
 import { getConfig } from "../config.js";
 import { ZodValidationPipe } from "../http/zod-validation.pipe.js";
 import { Public, RequireStepUp, type RequestWithAuth } from "./auth-context.js";
+import { ModuleAllowlist } from "../rbac/module.guard.js";
 import {
   DEVICE_COOKIE,
   type AuthenticatedResult,
@@ -39,6 +40,12 @@ import type { MfaEnrollStartResponse, TokenPair } from "@clinic/contracts";
 type AuthedRequest = FastifyRequest & RequestWithAuth;
 
 @Controller("api/v1/auth")
+// Identity is not a tenant module: login, refresh, logout, step-up and MFA
+// management must work for a tenant whose modules are all DISABLED, otherwise a
+// lapsed tenant could never sign in to see why. `GET /session` is the
+// documented place where the entitled module set is returned (specification
+// §1014), so gating it on an entitlement would be circular.
+@ModuleAllowlist()
 export class AuthController {
   constructor(
     @Inject(AuthService) private readonly auth: AuthService,

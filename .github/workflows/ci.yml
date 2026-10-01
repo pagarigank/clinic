@@ -44,7 +44,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Boundary lint fixtures (violations must fail)
-        run: node tooling/boundary-fixtures/boundary.test.mjs
+        run: pnpm test:boundaries
 
       - name: Lint
         run: pnpm lint
@@ -64,8 +64,40 @@ jobs:
       - name: Seeds
         run: pnpm db:seed
 
+      # Role grants from the §2.2/§2.3 system-role templates. The permission
+      # catalogue itself is versioned by migration 0007, so this only supplies
+      # the per-tenant role_permissions the RBAC integration tests read.
+      - name: Seed system-role grants
+        run: pnpm db:seed:permissions
+
       - name: Unit + integration tests
         run: pnpm test
+
+      # todo 0.5 — coverage gates. Two separate invocations because vitest
+      # applies a threshold to the aggregate of whatever is included, so a
+      # shared 90% bar and a feature 60% bar cannot live in one run.
+      # Ratchet upward; never lower these without an ADR.
+      - name: Coverage gate (shared packages, 90%)
+        run: pnpm test:coverage
+
+      - name: Coverage gate (features, ratcheted)
+        run: pnpm test:coverage:apps
+
+      # todo 0.5 — pinned versions asserted. A floating range in a published
+      # workspace package is a supply-chain hole: the lockfile can be updated
+      # without review and CI keeps passing.
+      - name: Assert exact pinned versions
+        run: pnpm assert:pinned
+
+      - name: Dependency audit
+        run: pnpm audit --audit-level=high
+
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --no-banner --redact
 
       - name: Build
         run: pnpm -r --if-present build

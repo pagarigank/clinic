@@ -12,6 +12,12 @@ export default defineWorkspace([
       ],
       // tooling/boundary-fixtures/boundary.test.mjs is a standalone CI/pre-commit
       // script (spawns eslint); it does not run under vitest.
+      //
+      // Coverage is configured in the `test:coverage` npm script, NOT here.
+      // A `coverage` block nested in a defineWorkspace project is silently
+      // ignored (verified: setting lines:99 produced no threshold error, exit 0),
+      // because this workspace file is deprecated in favour of `test.projects`.
+      // Leaving thresholds here would be a gate that looks real and never fires.
     },
   },
   {

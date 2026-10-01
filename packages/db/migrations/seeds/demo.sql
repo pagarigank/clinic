@@ -7,15 +7,11 @@
 -- Password hashes are Argon2id for the demo credential "DemoPassw0rd!2026" (local dev/test only).
 
 -- Global catalogues (platform scope, no tenant context needed) -------------
-BEGIN;
-SELECT set_config('app.scope', 'platform', true);
-
-INSERT INTO permissions (code, description) VALUES
-  ('admin.users.manage',  'Manage tenant users and roles'),
-  ('admin.roles.manage',  'Manage roles and the permission matrix'),
-  ('patients.read',       'View patient records'),
-  ('patients.write',      'Register and edit patients')
-ON CONFLICT (code) DO NOTHING;
+-- Permissions: the full §2.3 catalogue is maintained in
+-- packages/contracts/src/permissions.ts (PERMISSION_CATALOGUE) and seeded by
+-- `pnpm db:seed` via seed-permissions.mjs (additive, idempotent). The legacy
+-- four-code demo grants below were superseded by the §2.3 role templates in
+-- the same script.
 
 INSERT INTO platform_users (email, name, password_hash) VALUES
   ('superadmin@clinic.local', 'Platform Superadmin', '$argon2id$v=19$m=19456,t=2,p=1$PJbfK+fX4INlaV6B1J1P9Q$r8KelzGMcN1aCKjlBfUifGfeT1j7Wnk7sl8WlLr624I')

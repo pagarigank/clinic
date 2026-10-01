@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export * from "./permissions.js";
+
 /** Ten tenant-facing module keys (specification §4.3 PLT-T7). */
 export const MODULE_KEYS = [
   "admin",
@@ -75,6 +77,70 @@ export const ProblemSchema = z.object({
   errors: z.array(z.object({ path: z.string(), message: z.string() })).optional(),
 });
 export type Problem = z.infer<typeof ProblemSchema>;
+
+/** ---- RBAC (Phase 1.3, specification §2.3) ---- */
+
+const RoleCodeSchema = z
+  .string()
+  .regex(/^[a-z][a-z0-9_]{1,63}$/, "lower_snake_case, 2–64 chars")
+  .refine((c) => !SYSTEM_ROLE_CODES.includes(c as (typeof SYSTEM_ROLE_CODES)[number]), {
+    message: "system role codes are reserved",
+  });
+const PermissionListSchema = z.array(z.string().regex(/^[a-z][a-z0-9_.]{2,99}$/)).max(500);
+
+export const RoleCreateSchema = z.object({
+  code: RoleCodeSchema,
+  name: z.string().min(1).max(120),
+  permissions: PermissionListSchema.default([]),
+});
+export type RoleCreate = z.infer<typeof RoleCreateSchema>;
+
+export const RoleCloneSchema = z.object({
+  code: RoleCodeSchema,
+  name: z.string().min(1).max(120),
+});
+export type RoleClone = z.infer<typeof RoleCloneSchema>;
+
+export const RoleUpdateSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  permissions: PermissionListSchema.optional(),
+  /** Optimistic concurrency: current row_version of the role (when known). */
+  rowVersion: z.number().int().positive().optional(),
+});
+export type RoleUpdate = z.infer<typeof RoleUpdateSchema>;
+
+export const RoleDtoSchema = z.object({
+  id: z.string().uuid(),
+  code: z.string(),
+  name: z.string(),
+  isSystem: z.boolean(),
+  permissions: z.array(z.string()),
+  rowVersion: z.number().int(),
+});
+export type RoleDto = z.infer<typeof RoleDtoSchema>;
+
+export const PermissionDtoSchema = z.object({
+  code: z.string(),
+  description: z.string(),
+});
+export type PermissionDto = z.infer<typeof PermissionDtoSchema>;
+
+export const EffectivePermissionsSchema = z.object({
+  permissions: z.array(z.string()),
+  roles: z.array(z.object({ id: z.string().uuid(), code: z.string(), name: z.string() })),
+  branchId: z.string().uuid().nullable(),
+});
+export type EffectivePermissions = z.infer<typeof EffectivePermissionsSchema>;
+
+export const UserRoleAssignSchema = z.object({
+  userId: z.string().uuid(),
+  roleIds: z.array(z.string().uuid()).max(50),
+  branchId: z.string().uuid().nullable().optional(),
+});
+export type UserRoleAssign = z.infer<typeof UserRoleAssignSchema>;
+
+/** Reusable `:id` param parser for NestJS param pipes. */
+export const zodUuid = z.string().uuid();
 
 /** ---- Phase 0 vertical-slice contract: /ping ---- */
 
@@ -161,6 +227,27 @@ export const ResetPasswordSchema = z.object({
   password: z.string().min(12).max(128),
 });
 export type ResetPasswordRequest = z.infer<typeof ResetPasswordSchema>;
+
+/** §2.1 system role templates — reserved codes, seeded per tenant. */
+export const SYSTEM_ROLE_CODES = [
+  "tenant_admin",
+  "branch_manager",
+  "doctor",
+  "nurse",
+  "encoder",
+  "cashier",
+  "pharmacist",
+  "pharmacy_assistant",
+  "phlebotomist",
+  "medtech",
+  "lab_manager",
+  "pathologist",
+  "supply_officer",
+  "purchaser",
+  "auditor",
+  "dpo",
+] as const;
+export type SystemRoleCode = (typeof SYSTEM_ROLE_CODES)[number];
 
 export const SessionInfoSchema = z.object({
   user: z.object({ id: z.string().uuid(), email: z.string(), name: z.string() }),

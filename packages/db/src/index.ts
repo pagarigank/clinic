@@ -11,3 +11,9 @@ export {
   type QueryResultRow,
 } from "./pool.js";
 export { withTenant, withTenantOnPool, type TenantContext } from "./withTenant.js";
+export {
+  runInTenantScope,
+  noteTenantTransaction,
+  tenantTransactionsInScope,
+  type TenantScopeHandle,
+} from "./tenant-scope.js";
