@@ -4,7 +4,7 @@
 -- (the global permissions catalogue is additive-only and never deleted).
 -- Runs as clinic_owner (or superuser); FORCE RLS applies to the owner, so
 -- each block sets its transaction-local context before touching its tables.
--- Password hashes are placeholders until Phase 1.2 ships Argon2id login.
+-- Password hashes are Argon2id for the demo credential "DemoPassw0rd!2026" (local dev/test only).
 
 -- Global catalogues (platform scope, no tenant context needed) -------------
 BEGIN;
@@ -18,7 +18,7 @@ INSERT INTO permissions (code, description) VALUES
 ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO platform_users (email, name, password_hash) VALUES
-  ('superadmin@clinic.local', 'Platform Superadmin', 'argon2id:$PLACEHOLDER-SEED-ONLY:not-a-real-password')
+  ('superadmin@clinic.local', 'Platform Superadmin', '$argon2id$v=19$m=19456,t=2,p=1$PJbfK+fX4INlaV6B1J1P9Q$r8KelzGMcN1aCKjlBfUifGfeT1j7Wnk7sl8WlLr624I')
 ON CONFLICT (email) DO NOTHING;
 
 INSERT INTO subscription_plans (id, code, name) VALUES
@@ -83,9 +83,9 @@ CROSS JOIN (SELECT '11111111-1111-4111-8111-111111111111'::uuid AS tenant_id) t;
 
 INSERT INTO users (id, tenant_id, email, name, password_hash, status) VALUES
   ('a3000000-0000-4000-8000-000000000001', '11111111-1111-4111-8111-111111111111',
-   'admin@demo-a.test', 'Demo A Admin', 'argon2id:$PLACEHOLDER-SEED-ONLY:not-a-real-password', 'ACTIVE'),
+   'admin@demo-a.test', 'Demo A Admin', '$argon2id$v=19$m=19456,t=2,p=1$PJbfK+fX4INlaV6B1J1P9Q$r8KelzGMcN1aCKjlBfUifGfeT1j7Wnk7sl8WlLr624I', 'ACTIVE'),
   ('a3000000-0000-4000-8000-000000000002', '11111111-1111-4111-8111-111111111111',
-   'doctor@demo-a.test', 'Demo A Doctor', 'argon2id:$PLACEHOLDER-SEED-ONLY:not-a-real-password', 'ACTIVE');
+   'doctor@demo-a.test', 'Demo A Doctor', '$argon2id$v=19$m=19456,t=2,p=1$PJbfK+fX4INlaV6B1J1P9Q$r8KelzGMcN1aCKjlBfUifGfeT1j7Wnk7sl8WlLr624I', 'ACTIVE');
 
 INSERT INTO user_roles (tenant_id, user_id, role_id) VALUES
   ('11111111-1111-4111-8111-111111111111', 'a3000000-0000-4000-8000-000000000001', 'a2000000-0000-4000-8000-000000000001'),
@@ -150,9 +150,9 @@ CROSS JOIN (SELECT '22222222-2222-4222-8222-222222222222'::uuid AS tenant_id) t;
 
 INSERT INTO users (id, tenant_id, email, name, password_hash, status) VALUES
   ('b3000000-0000-4000-8000-000000000001', '22222222-2222-4222-8222-222222222222',
-   'admin@demo-b.test', 'Demo B Admin', 'argon2id:$PLACEHOLDER-SEED-ONLY:not-a-real-password', 'ACTIVE'),
+   'admin@demo-b.test', 'Demo B Admin', '$argon2id$v=19$m=19456,t=2,p=1$PJbfK+fX4INlaV6B1J1P9Q$r8KelzGMcN1aCKjlBfUifGfeT1j7Wnk7sl8WlLr624I', 'ACTIVE'),
   ('b3000000-0000-4000-8000-000000000002', '22222222-2222-4222-8222-222222222222',
-   'doctor@demo-b.test', 'Demo B Doctor', 'argon2id:$PLACEHOLDER-SEED-ONLY:not-a-real-password', 'ACTIVE');
+   'doctor@demo-b.test', 'Demo B Doctor', '$argon2id$v=19$m=19456,t=2,p=1$PJbfK+fX4INlaV6B1J1P9Q$r8KelzGMcN1aCKjlBfUifGfeT1j7Wnk7sl8WlLr624I', 'ACTIVE');
 
 INSERT INTO user_roles (tenant_id, user_id, role_id) VALUES
   ('22222222-2222-4222-8222-222222222222', 'b3000000-0000-4000-8000-000000000001', 'b2000000-0000-4000-8000-000000000001'),

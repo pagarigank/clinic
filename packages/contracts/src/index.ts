@@ -32,6 +32,11 @@ export const ERROR_CODES = {
   TENANT_CONTEXT_MISSING: 400,
   VALIDATION_FAILED: 422,
   TENANT_MISMATCH: 403,
+  TENANT_SUSPENDED: 403,
+  INVALID_CREDENTIALS: 401,
+  ACCOUNT_LOCKED: 423,
+  ACCOUNT_DISABLED: 403,
+  RATE_LIMITED: 429,
   FORBIDDEN: 403,
   STEP_UP_REQUIRED: 401,
   BREAKGLASS_REQUIRED: 403,
@@ -79,6 +84,96 @@ export const PingResponseSchema = z.object({
   request_id: z.string().uuid(),
 });
 export type PingResponse = z.infer<typeof PingResponseSchema>;
+
+/** ---- Auth (Phase 1.2, architecture §10) ---- */
+
+export const LoginRequestSchema = z.object({
+  tenant: z.string().min(1).max(63).optional(), // slug; subdomain / X-Tenant header override
+  email: z.string().email().max(254),
+  password: z.string().min(1).max(1024),
+  rememberDevice: z.boolean().optional(),
+});
+export type LoginRequest = z.infer<typeof LoginRequestSchema>;
+
+export const LoginMfaRequiredSchema = z.object({
+  status: z.literal("MFA_REQUIRED"),
+  ticket: z.string().min(1), // short-lived mfa-ticket JWT
+});
+export type LoginMfaRequired = z.infer<typeof LoginMfaRequiredSchema>;
+
+export const TokenPairSchema = z.object({
+  status: z.literal("AUTHENTICATED"),
+  accessToken: z.string().min(1),
+  tokenType: z.literal("Bearer"),
+  expiresIn: z.number().int().positive(),
+});
+export type TokenPair = z.infer<typeof TokenPairSchema>;
+
+export const MfaLoginVerifySchema = z.object({
+  ticket: z.string().min(1),
+  code: z.string().min(6).max(10), // TOTP digits or recovery code
+  rememberDevice: z.boolean().optional(),
+});
+export type MfaLoginVerify = z.infer<typeof MfaLoginVerifySchema>;
+
+export const MfaEnrollStartSchema = z.object({});
+export const MfaEnrollStartResponseSchema = z.object({
+  otpauthUrl: z.string(),
+  secret: z.string(), // base32, shown once for manual entry
+});
+export type MfaEnrollStartResponse = z.infer<typeof MfaEnrollStartResponseSchema>;
+
+export const MfaConfirmSchema = z.object({ code: z.string().min(6).max(8) });
+export const MfaConfirmResponseSchema = z.object({
+  confirmed: z.literal(true),
+  recoveryCodes: z.array(z.string().min(1)), // shown once
+});
+export type MfaConfirmResponse = z.infer<typeof MfaConfirmResponseSchema>;
+
+export const StepUpRequestSchema = z.object({
+  password: z.string().min(1).max(1024).optional(),
+  totp: z.string().min(6).max(8).optional(),
+});
+export type StepUpRequest = z.infer<typeof StepUpRequestSchema>;
+
+export const StepUpResponseSchema = z.object({
+  stepUpToken: z.string().min(1),
+  expiresIn: z.number().int().positive(),
+});
+export type StepUpResponse = z.infer<typeof StepUpResponseSchema>;
+
+export const ForgotPasswordSchema = z.object({
+  tenant: z.string().min(1).max(63).optional(),
+  email: z.string().email().max(254),
+});
+export type ForgotPasswordRequest = z.infer<typeof ForgotPasswordSchema>;
+
+export const ForgotPasswordResponseSchema = z.object({
+  accepted: z.literal(true),
+  // dev/test affordance only — the API includes it solely outside production
+  // (config-gated); production responses never carry the token.
+  devResetToken: z.string().optional(),
+});
+export type ForgotPasswordResponse = z.infer<typeof ForgotPasswordResponseSchema>;
+
+export const ResetPasswordSchema = z.object({
+  token: z.string().min(16).max(256),
+  password: z.string().min(12).max(128),
+});
+export type ResetPasswordRequest = z.infer<typeof ResetPasswordSchema>;
+
+export const SessionInfoSchema = z.object({
+  user: z.object({ id: z.string().uuid(), email: z.string(), name: z.string() }),
+  tenant: z.object({ id: z.string().uuid(), slug: z.string() }),
+  sessionId: z.string().uuid(),
+  amr: z.array(z.string()),
+  branchId: z.string().uuid().nullable(),
+  expiresAt: z.string(), // ISO
+  // modules[]/modules_version carried from Phase 1.6 (entitlement cache)
+  modules: z.array(z.string()),
+  modulesVersion: z.number().int().nullable(),
+});
+export type SessionInfo = z.infer<typeof SessionInfoSchema>;
 
 /** ---- Shared list conventions (specification §18) ---- */
 

@@ -9,6 +9,10 @@ import pg from "pg";
  */
 export type DbRole = "owner" | "app" | "report";
 
+// Type-only re-exports: app code needs pg's client types for its own function
+// signatures but must never import `pg` itself (boundary rule, arch §21.2).
+export type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
+
 const urlEnvKeys: Record<DbRole, string> = {
   owner: "DATABASE_URL_MIGRATOR",
   app: "DATABASE_URL_APP",

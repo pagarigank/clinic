@@ -10,6 +10,7 @@ import { AppModule } from "./app.module.js";
 import { ProblemExceptionFilter } from "./http/problem.filter.js";
 import { attachCorrelationId } from "./http/request-context.js";
 import { getConfig } from "./config.js";
+import cookie from "@fastify/cookie";
 
 async function bootstrap(): Promise<void> {
   const config = getConfig();
@@ -18,6 +19,8 @@ async function bootstrap(): Promise<void> {
 
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(cors, { origin: config.CORS_ORIGIN, credentials: true });
+  // Refresh + remember-device cookies (Phase 1.2) are httpOnly SameSite=Strict.
+  await app.register(cookie);
 
   // Correlation id on every request (todo 0.3) — a Fastify onRequest hook,
   // not a Nest middleware, so it also covers framework-level 404s.

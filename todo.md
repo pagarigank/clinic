@@ -154,10 +154,10 @@ flowchart LR
 - [ ] Extended statistics for the correlated filter columns the hot queries use (e.g. `CREATE STATISTICS st_stock_tenant_branch (dependencies) ON tenant_id, branch_id FROM stock_movements;`), because the planner default assumes independence and mis-estimates these queries *(deferred until the first hot query exists — with the EXPLAIN guard in Phase 3+)*
 
 ### 1.2 Auth and sessions
-- [ ] Login, refresh (rotation + reuse detection), logout, forgot/reset password, generic responses, rate limits, lockout
-- [ ] TOTP MFA enroll/confirm/verify, recovery codes, remember-device
-- [ ] Step-up authentication (re-auth for high-risk actions) and a client hook for the passphrase modal
-- [ ] Password hashing (Argon2id) with parameters in config; service accounts and API keys
+- [x] Login, refresh (rotation + reuse detection), logout, forgot/reset password, generic responses, rate limits, lockout *(migrations 0006 + auth module: slug→tenant_directory pre-auth (§5.6), login in a tenant-scoped transaction, failure writes in their OWN transaction so lockout/login_attempts survive the throw; refresh rotates `sessions` (revoked 'rotation', replaced_by) and reuse of a revoked token kills the user's chain 'reuse_detected' — verified live + integration tests; in-memory sliding-window limiter on login/forgot/step-up, Redis swap noted for multi-replica)*
+- [x] TOTP MFA enroll/confirm/verify, recovery codes, remember-device *(dependency-free RFC 6238 TOTP with ±1-step window + per-user replay guard (`mfa_secrets.last_used_step`); secrets AES-256-GCM sealed with an HKDF key off JWT_SECRET; 10 single-use recovery codes; `mfa_trusted_devices` cookie skips the challenge; verified round-trip: enroll→confirm→login MFA_REQUIRED→recovery-code verify→remember-device skip)*
+- [x] Step-up authentication (re-auth for high-risk actions) and a client hook for the passphrase modal *(POST /auth/step-up (password and/or TOTP) → 5-min step-up JWT bound to user+session; `@RequireStepUp()` guard on mfa/enroll, recovery-codes, mfa delete; the web passphrase modal hook lands with the 1.7 shells — the 401 STEP_UP_REQUIRED contract is live)*
+- [x] Password hashing (Argon2id) with parameters in config; service accounts and API keys *(OWASP m=19MiB t=2 p=1 from config; policy min 12 + char mix; `@node-rs/argon2` prebuilt for Windows; ApiKey scheme `cka_<tenantId>_<secret>` with sha256 lookup + last_used_at inside the tenant context; seed hashes are real Argon2id — demo credential `DemoPassw0rd!2026`)*
 
 ### 1.3 RBAC and ABAC
 - [ ] Permission catalogue generated from [specification §2](specification.md); seeded system roles
