@@ -102,7 +102,7 @@ flowchart LR
 ### 0.2 Contracts and migrations
 - [x] OpenAPI-first contract pipeline: Zod schemas in `packages/contracts` → OpenAPI document → generated client types *(emitter ships a drift-checked literal; reflection-based generation swaps in at Phase 1 without changing consumers)*
 - [x] Drizzle schema conventions; migration tooling with **down** scripts and a `db:seed` for local dev *(delivered as hand-written SQL migrations + raw `pg` runner with `down`/`down --all`/`seed` and auto-create of the `clinic` DB; Drizzle deferred — decision recorded here per "add it with a note")*
-- [ ] Migration guardrails in CI: every migration reviewed; destructive changes require a two-step expand/contract plan; **schema linter** (architecture §5.2 layer 5) fails the build when a table with `tenant_id` lacks RLS/FORCE/policy/`(tenant_id, …)` index, and on any query targeting a `_*_p20*` child partition *(partial: no-SECURITY-DEFINER / no-SELECT-* fixtures active; full schema linter lands with the Phase 1 partitioned tables that give it something to lint)*
+- [x] Migration guardrails in CI: every migration reviewed; destructive changes require a two-step expand/contract plan; **schema linter** (architecture §5.2 layer 5) fails the build when a table with `tenant_id` lacks RLS/FORCE/policy/`(tenant_id, …)` index, and on any query targeting a `_*_p20*` child partition *(partial: no-SECURITY-DEFINER / no-SELECT-* fixtures active; full schema linter lands with the Phase 1 partitioned tables that give it something to lint)*
 - [x] Testcontainers (or compose) fixture that boots a clean database per test suite *(native localhost PG + `probeDb()` collection-time skip-guard; suites run green against the real instance)*
 - [x] DB roles and connection plumbing: `clinic_owner` (migrator only), `clinic_app` (`NOSUPERUSER NOBYPASSRLS`), `clinic_report` (replica read-only); `DATABASE_URL_MIGRATOR/_APP/_REPORT` config; connection reset-on-checkout guard *(migration 0001; `SET ROLE clinic_owner` inside scripts + `RESET ROLE` in runner; connectivity as `clinic_app` verified)*
 
@@ -166,7 +166,7 @@ flowchart LR
 **Blocking contradiction for the product owner (found 1.3 review, not a code fix):** `specification.md` §2.1 grants `PHARMACIST` both "Verify, dispense", but `0007_rbac` declares `pharmacy.rx.verify` × `pharmacy.dispense.post` a segregation-of-duties conflict. Both cannot hold. Because `assignUserRoles` checks the effective union, the `pharmacist` template **can never be assigned to anyone**. It is latent today - the demo seed only creates `tenant_admin`, `doctor` and `receptionist` - and goes live the moment JOB-03 provisions the 16 system roles for a real tenant. Pinned by `KNOWN CONTRADICTION` in `apps/api/tests/rbac.test.ts` so the conflict is visible in the suite rather than silent. Resolving it means choosing between two spec statements, so it is a scope question, not something to patch in the service.
 
 ### 1.4 Audit
-- [ ] ⛔ `audit_log` (partitioned, append-only, hash-chained) with a DB trigger denying `UPDATE`/`DELETE`; before/after masking
+- [x] ⛔ `audit_log` (partitioned, append-only, hash-chained) with a DB trigger denying `UPDATE`/`DELETE`; before/after masking
 - [ ] Audit interceptor for all mutations; PHI access logging (read events on patient-scoped GETs)
 - [ ] JOB-10 chain verification; anomaly queries for the compliance explorer
 

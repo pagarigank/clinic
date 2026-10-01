@@ -39,6 +39,7 @@ CREATE TABLE mfa_trusted_devices (
 );
 
 CREATE INDEX mfa_trusted_devices_expiry_idx ON mfa_trusted_devices (expires_at);
+CREATE INDEX mfa_trusted_devices_tenant_idx ON mfa_trusted_devices (tenant_id);
 
 -- Platform console sessions (Phase 1.7): same rotation chain semantics as
 -- tenant sessions (0005) — replaced_by + reuse detection — but keyed by

@@ -97,6 +97,18 @@ export default [
     },
   },
   {
+    files: ["**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "TemplateElement[value.raw=/_p20\\d{2}(m\\d{2})?/i]",
+          message: "No ad-hoc partition access (architecture §6.4). Target the parent table.",
+        },
+      ],
+    },
+  },
+  {
     // Real migrations live under packages/db; the boundary-fixture dir is
     // included too so the dedicated fixture proves these rules actually fire
     // (boundary.test.mjs asserts the violation fails and clean.ts passes).
@@ -111,6 +123,10 @@ export default [
         {
           selector: "TemplateElement[value.raw=/SELECT[\\s\\n]+\\*/i]",
           message: "No SELECT * in migrations (architecture §21.2).",
+        },
+        {
+          selector: "TemplateElement[value.raw=/_p20\\d{2}(m\\d{2})?/i]",
+          message: "No ad-hoc partition access (architecture §6.4). Target the parent table.",
         },
       ],
     },

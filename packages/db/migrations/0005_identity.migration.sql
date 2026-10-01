@@ -172,6 +172,8 @@ CREATE TABLE password_resets (
     FOREIGN KEY (tenant_id, user_id) REFERENCES users (tenant_id, id) ON DELETE CASCADE
 );
 
+CREATE INDEX password_resets_tenant_idx ON password_resets (tenant_id);
+
 CREATE TABLE api_keys (
   id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id    uuid        NOT NULL,
@@ -206,6 +208,7 @@ CREATE TABLE breakglass_sessions (
 
 CREATE INDEX breakglass_open_idx ON breakglass_sessions (expires_at)
   WHERE ended_at IS NULL;                        -- auto-expiry sweep (JOB-11)
+CREATE INDEX breakglass_tenant_idx ON breakglass_sessions (tenant_id);
 
 -- Policy B (tenant_or_platform) on administrative tables the platform
 -- console must list/manage: users, roles*, user_branches, breakglass_sessions.
