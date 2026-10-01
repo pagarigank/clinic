@@ -309,16 +309,47 @@ export class AuthService {
       const user = userRows.rows[0];
       if (!user) throw new ProblemException("INVALID_CREDENTIALS");
       const tenant = await this.resolver.resolveById(tenantId);
+
+      const assignedBranches = await tx.query<{ id: string; name: string }>(
+        `SELECT b.id, b.name
+         FROM user_branches ub
+         JOIN branches b ON b.tenant_id = ub.tenant_id AND b.id = ub.branch_id
+         WHERE ub.tenant_id = $1 AND ub.user_id = $2 AND b.deleted_at IS NULL`,
+        [tenantId, userId],
+      );
+
       return {
         user: { id: user.id, email: user.email, name: user.name },
         tenant: { id: tenantId, slug: tenant?.slug ?? "" },
         sessionId,
         amr,
         branchId: user.branch_id,
+        assignedBranches: assignedBranches.rows,
         expiresAt: new Date(Date.now() + getConfig().ACCESS_TTL_SECONDS * 1000).toISOString(),
         modules: [], // populated by the ModuleGuard/entitlement cache (Phase 1.6)
         modulesVersion: null,
       };
+    });
+  }
+
+  async switchBranch(tenantId: string, userId: string, sessionId: string, amr: string[], branchId: string): Promise<{ accessToken: string }> {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const branchRow = await tx.query(
+        `SELECT branch_id FROM user_branches WHERE tenant_id = $1 AND user_id = $2 AND branch_id = $3`,
+        [tenantId, userId, branchId],
+      );
+      if (branchRow.rowCount === 0) {
+        throw new ProblemException("NOT_FOUND", { detail: "not assigned to this branch" });
+      }
+
+      const accessToken = await this.tokens.issueAccessToken({
+        sub: userId,
+        tid: tenantId,
+        sid: sessionId,
+        brn: branchId,
+        amr,
+      });
+      return { accessToken };
     });
   }
 

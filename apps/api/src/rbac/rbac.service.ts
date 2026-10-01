@@ -347,6 +347,57 @@ export class RbacService {
   }
 
   /** Role ids currently granted to a user (all scopes). */
+  /**
+   * Replace the target user's branch assignments.
+   */
+  async assignUserBranches(
+    tenantId: string,
+    actorId: string,
+    userId: string,
+    dto: { branchIds: string[]; defaultBranchId?: string | null },
+  ): Promise<void> {
+    void actorId;
+    return withTenant({ tenantId, userId: actorId }, async (tx) => {
+      // 1. Verify branches exist
+      if (dto.branchIds.length > 0) {
+        const branches = await tx.query<{ id: string }>(
+          `SELECT id FROM branches
+           WHERE tenant_id = (SELECT app.tenant_id()) AND id = ANY($1) AND deleted_at IS NULL`,
+          [dto.branchIds],
+        );
+        if (branches.rows.length !== new Set(dto.branchIds).size) {
+          throw new ProblemException("NOT_FOUND", { detail: "one or more branches do not exist" });
+        }
+      }
+
+      // 2. Validate default branch is in the assigned branches
+      if (dto.defaultBranchId && !dto.branchIds.includes(dto.defaultBranchId)) {
+        throw new ProblemException("VALIDATION_FAILED", {
+          errors: [{ path: "defaultBranchId", message: "default branch must be assigned to the user" }]
+        });
+      }
+
+      // 3. Replace assignments
+      await tx.query(
+        `DELETE FROM user_branches WHERE tenant_id = (SELECT app.tenant_id()) AND user_id = $1`,
+        [userId],
+      );
+
+      if (dto.branchIds.length > 0) {
+        let paramIndex = 2;
+        const values = dto.branchIds.map((_id) => {
+           const str = `((SELECT app.tenant_id()), $1, $${paramIndex}, $${paramIndex} = $${dto.branchIds.length + 2})`;
+           paramIndex++;
+           return str;
+        }).join(', ');
+        await tx.query(
+          `INSERT INTO user_branches (tenant_id, user_id, branch_id, is_default) VALUES ${values}`,
+          [userId, ...dto.branchIds, dto.defaultBranchId ?? null],
+        );
+      }
+    });
+  }
+
   async roleIdsForUser(tenantId: string, userId: string, targetUserId: string): Promise<ReadonlySet<string>> {
     return withTenant({ tenantId, userId }, async (tx) => {
       const r = await tx.query<{ role_id: string }>(

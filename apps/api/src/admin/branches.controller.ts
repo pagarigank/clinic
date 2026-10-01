@@ -9,6 +9,7 @@ import { BranchesService, VALID_SERVICE_TYPES } from './branches.service.js';
 import type { FastifyRequest } from 'fastify';
 import type { RequestWithAuth } from '../auth/auth-context.js';
 import { ProblemException } from '../http/problem.exception.js';
+import { RequirePermission } from '../rbac/require-permission.decorator.js';
 
 const SERVICE_TYPES_ENUM = VALID_SERVICE_TYPES as unknown as [string, ...string[]];
 
@@ -25,6 +26,11 @@ const UpdateBranchDto = z.object({
   timezone: z.string().optional(),
 });
 
+const UpsertLicenceDtoSchema = z.object({
+  licenceNo: z.string().max(100).optional(),
+  expiresOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be YYYY-MM-DD').optional(),
+});
+
 @ApiTags('Admin — Branches')
 @ApiBearerAuth()
 @Controller('admin/branches')
@@ -33,6 +39,7 @@ const UpdateBranchDto = z.object({
 export class BranchesController {
   constructor(private readonly branches: BranchesService) {}
 
+  @RequirePermission('admin.branch.read')
   @Get()
   @ApiOperation({ summary: 'List branches' })
   async list(
@@ -45,6 +52,7 @@ export class BranchesController {
     return { branches: results };
   }
 
+  @RequirePermission('admin.branch.read')
   @Get(':id')
   @ApiOperation({ summary: 'Get branch' })
   async get(
@@ -57,6 +65,7 @@ export class BranchesController {
     return { branch };
   }
 
+  @RequirePermission('admin.branch.create')
   @Post()
   @ApiOperation({ summary: 'Create a branch' })
   async create(
@@ -69,6 +78,7 @@ export class BranchesController {
     return { branch };
   }
 
+  @RequirePermission('admin.branch.update')
   @Patch(':id')
   @ApiOperation({ summary: 'Update a branch' })
   @ApiHeader({ name: 'If-Match', description: 'Row version for optimistic concurrency', required: true })
@@ -86,6 +96,7 @@ export class BranchesController {
     return { branch };
   }
 
+  @RequirePermission('admin.branch.delete')
   @Delete(':id')
   @ApiOperation({ summary: 'Archive a branch (append-only; blocked on active users or open work)' })
   async archive(
@@ -98,6 +109,7 @@ export class BranchesController {
     return { archived: true };
   }
 
+  @RequirePermission('admin.branch.update')
   @Post(':id/reactivate')
   @ApiOperation({ summary: 'Reactivate an archived branch' })
   async reactivate(
@@ -108,5 +120,43 @@ export class BranchesController {
     if (!auth.tenantId) throw new ProblemException('TENANT_CONTEXT_MISSING', {});
     const branch = await this.branches.reactivateBranch(auth.tenantId, id, auth.userId ?? null);
     return { branch };
+  }
+
+  @RequirePermission('admin.branch.read')
+  @Get(':id/licences')
+  @ApiOperation({ summary: 'List licences for a branch' })
+  async listLicences(
+    @Req() request: FastifyRequest & RequestWithAuth,
+    @Param('id') id: string,
+  ) {
+    const auth = request.authContext!;
+    if (!auth.tenantId) throw new ProblemException('TENANT_CONTEXT_MISSING', {});
+    const licences = await this.branches.listLicences(auth.tenantId, id);
+    return { licences };
+  }
+
+  @RequirePermission('admin.branch.update')
+  @Patch(':id/licences/:type')
+  @ApiOperation({ summary: 'Upsert a branch licence' })
+  async upsertLicence(
+    @Req() request: FastifyRequest & RequestWithAuth,
+    @Param('id') id: string,
+    @Param('type') type: string,
+    @Body(new ZodValidationPipe(UpsertLicenceDtoSchema)) body: unknown,
+  ) {
+    const auth = request.authContext!;
+    if (!auth.tenantId) throw new ProblemException('TENANT_CONTEXT_MISSING', {});
+    if (!['BUSINESS_PERMIT', 'DOH_LTO', 'FDA_DRUGSTORE'].includes(type)) {
+      throw new ProblemException('VALIDATION_FAILED', {
+        errors: [{ path: 'type', message: 'invalid licence type' }]
+      });
+    }
+    const licence = await this.branches.upsertLicence(
+      auth.tenantId,
+      id,
+      type as 'BUSINESS_PERMIT' | 'DOH_LTO' | 'FDA_DRUGSTORE',
+      body as any,
+    );
+    return { licence };
   }
 }

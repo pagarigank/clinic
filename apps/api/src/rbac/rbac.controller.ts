@@ -15,6 +15,7 @@ import {
   RoleCloneSchema,
   RoleCreateSchema,
   RoleUpdateSchema,
+  UserBranchAssignSchema,
   UserRoleAssignSchema,
   zodUuid,
   type EffectivePermissions,
@@ -143,6 +144,19 @@ export class RbacController {
     const assignedIds = await this.rbac.roleIdsForUser(tenantId, userId, id);
     const all = await this.rbac.listRoles(tenantId, userId);
     return all.filter((r) => assignedIds.has(r.id));
+  }
+
+  @RequirePermission("admin.user.update")
+  @RequireStepUp()
+  @Put("admin/users/:id/branches")
+  async assignUserBranches(
+    @Req() request: AuthedRequest,
+    @Param("id", new ZodValidationPipe(zodUuid)) id: string,
+    @Body(new ZodValidationPipe(UserBranchAssignSchema)) dto: { branchIds: string[]; defaultBranchId?: string | null },
+  ): Promise<{ assigned: number }> {
+    const { tenantId, userId } = caller(request);
+    await this.rbac.assignUserBranches(tenantId, userId, id, dto);
+    return { assigned: dto.branchIds.length };
   }
 
   // ---- caller self-view (no admin permission required) ---------------------------

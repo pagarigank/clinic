@@ -18,9 +18,11 @@ import {
   MfaLoginVerifySchema,
   ResetPasswordSchema,
   StepUpRequestSchema,
+  SwitchBranchSchema,
   type ForgotPasswordRequest,
   type ResetPasswordRequest,
   type StepUpRequest,
+  type SwitchBranchRequest,
 } from "@clinic/contracts";
 import { getConfig } from "../config.js";
 import { ZodValidationPipe } from "../http/zod-validation.pipe.js";
@@ -155,6 +157,21 @@ export class AuthController {
       auth.userId!,
       auth.sessionId!,
       auth.amr,
+    );
+  }
+
+  @Post("switch-branch")
+  async switchBranch(
+    @Body(new ZodValidationPipe(SwitchBranchSchema)) dto: SwitchBranchRequest,
+    @Req() request: AuthedRequest,
+  ) {
+    const auth = request.authContext!;
+    return this.auth.switchBranch(
+      auth.tenantId!,
+      auth.userId!,
+      auth.sessionId!,
+      auth.amr,
+      dto.branchId,
     );
   }
 

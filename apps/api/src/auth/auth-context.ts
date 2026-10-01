@@ -6,7 +6,7 @@ import { SetMetadata } from "@nestjs/common";
  * module guard (1.6) and services building the withTenant() context.
  */
 export interface AuthContext {
-  kind: "user" | "apikey";
+  kind: "user" | "apikey" | "breakglass";
   userId: string | null;
   tenantId: string | null;
   sessionId: string | null;
@@ -19,6 +19,10 @@ export interface AuthContext {
   modules?: { module: string; status: string }[];
   /** Cache key for module entitlements. */
   modulesVersion?: number;
+  /** Break-glass session id (set when kind === 'breakglass'). */
+  breakglassId?: string | null;
+  /** Platform user id for break-glass sessions. */
+  platformUserId?: string | null;
 }
 
 export interface RequestWithAuth {

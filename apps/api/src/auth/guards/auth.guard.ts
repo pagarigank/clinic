@@ -14,7 +14,8 @@ import {
   type AuthContext,
   type RequestWithAuth,
 } from "../auth-context.js";
-import { type AccessClaims, TokenService } from "../crypto/tokens.js";
+import { type AccessClaims, type BreakglassClaims, TokenService } from "../crypto/tokens.js";
+import { getAppPool } from "@clinic/db";
 
 /**
  * Global authentication guard (APP_GUARD): Bearer access JWT or API key.
@@ -45,22 +46,30 @@ export class AuthGuard implements CanActivate {
     if (!header) throw new ProblemException("INVALID_CREDENTIALS", { detail: "missing bearer token" });
 
     if (header.startsWith("Bearer ")) {
-      const claims = await this.tokens.verify<AccessClaims>(header.slice(7).trim(), "access");
-      if (!claims) {
-        throw new ProblemException("INVALID_CREDENTIALS", { detail: "invalid or expired token" });
+      const raw = header.slice(7).trim();
+      const accessClaims = await this.tokens.verify<AccessClaims>(raw, "access");
+      if (accessClaims) {
+        request.authContext = {
+          kind: "user",
+          userId: accessClaims.sub,
+          tenantId: accessClaims.tid,
+          sessionId: accessClaims.sid,
+          branchId: accessClaims.brn,
+          amr: accessClaims.amr,
+          scopes: [],
+          modules: accessClaims.mod,
+          modulesVersion: accessClaims.mdv,
+        };
+        return true;
       }
-      request.authContext = {
-        kind: "user",
-        userId: claims.sub,
-        tenantId: claims.tid,
-        sessionId: claims.sid,
-        branchId: claims.brn,
-        amr: claims.amr,
-        scopes: [],
-        modules: claims.mod,
-        modulesVersion: claims.mdv,
-      };
-      return true;
+
+      const breakglassClaims = await this.tokens.verify<BreakglassClaims>(raw, "breakglass");
+      if (breakglassClaims) {
+        request.authContext = await this.authenticateBreakglass(breakglassClaims);
+        return true;
+      }
+
+      throw new ProblemException("INVALID_CREDENTIALS", { detail: "invalid or expired token" });
     }
 
     if (header.startsWith("ApiKey ")) {
@@ -113,6 +122,30 @@ export class AuthGuard implements CanActivate {
       branchId: null,
       amr: ["apikey"],
       scopes: row.scopes ?? [],
+    };
+  }
+
+  private async authenticateBreakglass(claims: BreakglassClaims): Promise<AuthContext> {
+    const pool = getAppPool();
+    const result = await pool.query(
+      `SELECT tenant_id, platform_user_id
+       FROM breakglass_sessions
+       WHERE id = $1 AND ended_at IS NULL AND expires_at > now()`,
+      [claims.bgl],
+    );
+    if ((result.rowCount ?? 0) === 0) {
+      throw new ProblemException("INVALID_CREDENTIALS", { detail: "break-glass session ended or expired" });
+    }
+    return {
+      kind: "breakglass",
+      userId: null,
+      tenantId: claims.tid,
+      sessionId: claims.bgl,
+      branchId: null,
+      amr: claims.amr,
+      scopes: [],
+      breakglassId: claims.bgl,
+      platformUserId: claims.sub,
     };
   }
 }

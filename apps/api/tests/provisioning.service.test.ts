@@ -4,7 +4,7 @@
  * - Plan restriction enforcement
  * - Suspend / reactivate state machine
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { ProvisioningService } from '../src/platform/provisioning.service.js';
 import { ProblemException } from '../src/http/problem.exception.js';
 import { probeDb } from '@clinic/db/tests/helpers.js';

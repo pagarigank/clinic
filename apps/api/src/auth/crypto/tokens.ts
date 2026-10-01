@@ -15,7 +15,7 @@ import { getConfig } from "../../config.js";
  *  - step-up     5 min;  recent re-auth proof for high-risk actions (arch §10)
  */
 
-export type TokenKind = "access" | "refresh" | "mfa-ticket" | "step-up";
+export type TokenKind = "access" | "refresh" | "mfa-ticket" | "step-up" | "breakglass";
 
 export interface AccessClaims {
   typ: "access";
@@ -52,7 +52,15 @@ export interface StepUpClaims {
   amr: string[]; // methods used for the re-auth
 }
 
-export type Claims = AccessClaims | RefreshClaims | MfaTicketClaims | StepUpClaims;
+export interface BreakglassClaims {
+  typ: "breakglass";
+  sub: string;       // platform_user id
+  tid: string;       // target tenant id
+  bgl: string;       // breakglass_sessions.id
+  amr: string[];
+}
+
+export type Claims = AccessClaims | RefreshClaims | MfaTicketClaims | StepUpClaims | BreakglassClaims;
 
 export class TokenService {
   // getConfig() is a cached singleton — no constructor DI (esbuild/tsx does
@@ -101,5 +109,11 @@ export class TokenService {
 
   async issueStepUpToken(claims: Omit<StepUpClaims, "typ">): Promise<string> {
     return this.sign<StepUpClaims>({ ...claims, typ: "step-up" }, getConfig().STEP_UP_TTL_SECONDS);
+  }
+
+  /** Break-glass session token: 8h ceiling enforced at issuance. */
+  async issueBreakglassToken(claims: Omit<BreakglassClaims, "typ">, ttlSeconds: number): Promise<string> {
+    const MAX = 8 * 3600;
+    return this.sign<BreakglassClaims>({ ...claims, typ: "breakglass" }, Math.min(ttlSeconds, MAX));
   }
 }

@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, SetMetadata } from "@nestjs/common";
 import type { CanActivate, ExecutionContext } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import type { FastifyRequest } from "fastify";
-import { withTenant } from "@clinic/db";
+import { withTenant, getAppPool } from "@clinic/db";
 import { ProblemException } from "../http/problem.exception.js";
 import { IS_PUBLIC_KEY, type AuthContext, type RequestWithAuth } from "../auth/auth-context.js";
 import { incCounter } from "../observability/metrics.js";
@@ -116,6 +116,26 @@ export class ModuleGuard implements CanActivate {
     const status = await this.statusOf(auth, module);
 
     if (status === null || status === "DISABLED") {
+      if (auth.kind === "breakglass") {
+        try {
+          const pool = getAppPool();
+          await pool.query(
+            `INSERT INTO audit_log (
+               tenant_id, actor_id, acting_as_platform, breakglass_id,
+               action, entity_type, entity_id, request_id, ip_address, user_agent, after
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            [
+              auth.tenantId, null, true, auth.breakglassId,
+              `${request.method.toUpperCase()} ${request.routeOptions?.url ?? request.url} (DENIED)`,
+              "system", "00000000-0000-0000-0000-000000000000",
+              request.id, request.ip, request.headers["user-agent"] ?? null,
+              JSON.stringify({ reason: "MODULE_NOT_ENTITLED", module })
+            ]
+          );
+        } catch (e) {
+          Logger.error("Failed to write audit log for breakglass denial", e instanceof Error ? e.stack : String(e));
+        }
+      }
       throw new ProblemException("MODULE_NOT_ENTITLED", {
         detail: `module not entitled: ${module}`,
       });

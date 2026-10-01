@@ -139,6 +139,12 @@ export const UserRoleAssignSchema = z.object({
 });
 export type UserRoleAssign = z.infer<typeof UserRoleAssignSchema>;
 
+export const UserBranchAssignSchema = z.object({
+  branchIds: z.array(z.string().uuid()),
+  defaultBranchId: z.string().uuid().nullable().optional(),
+});
+export type UserBranchAssign = z.infer<typeof UserBranchAssignSchema>;
+
 /** Reusable `:id` param parser for NestJS param pipes. */
 export const zodUuid = z.string().uuid();
 
@@ -255,12 +261,18 @@ export const SessionInfoSchema = z.object({
   sessionId: z.string().uuid(),
   amr: z.array(z.string()),
   branchId: z.string().uuid().nullable(),
+  assignedBranches: z.array(z.object({ id: z.string().uuid(), name: z.string() })),
   expiresAt: z.string(), // ISO
   // modules[]/modules_version carried from Phase 1.6 (entitlement cache)
   modules: z.array(z.string()),
   modulesVersion: z.number().int().nullable(),
 });
 export type SessionInfo = z.infer<typeof SessionInfoSchema>;
+
+export const SwitchBranchSchema = z.object({
+  branchId: z.string().uuid(),
+});
+export type SwitchBranchRequest = z.infer<typeof SwitchBranchSchema>;
 
 /** ---- Shared list conventions (specification §18) ---- */
 

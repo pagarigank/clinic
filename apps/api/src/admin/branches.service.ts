@@ -41,6 +41,21 @@ export interface UpdateBranchDto {
   timezone?: string;
 }
 
+export interface UpsertLicenceDto {
+  licenceNo?: string;
+  expiresOn?: string; // YYYY-MM-DD
+}
+
+export interface BranchLicenceRow {
+  id: string;
+  tenantId: string;
+  branchId: string;
+  licenceType: 'BUSINESS_PERMIT' | 'DOH_LTO' | 'FDA_DRUGSTORE';
+  licenceNo: string | null;
+  expiresOn: Date | null;
+  verifiedAt: Date | null;
+}
+
 /** Module required for each service profile value. */
 const SERVICE_MODULE_REQUIREMENTS: Partial<Record<ServiceType, string>> = {
   embedded_laboratory: 'laboratory',
@@ -298,5 +313,50 @@ export class BranchesService {
       updatedAt: row.updated_at,
       deletedAt: row.deleted_at,
     };
+  }
+
+  /**
+   * List licences for a branch.
+   */
+  async listLicences(tenantId: string, branchId: string): Promise<BranchLicenceRow[]> {
+    return withTenant({ tenantId }, async (tx) => {
+      const result = await tx.query<BranchLicenceRow>(
+        `SELECT id, tenant_id AS "tenantId", branch_id AS "branchId",
+                licence_type AS "licenceType", licence_no AS "licenceNo",
+                expires_on AS "expiresOn", verified_at AS "verifiedAt"
+         FROM branch_licences
+         WHERE tenant_id = $1 AND branch_id = $2`,
+        [tenantId, branchId],
+      );
+      return result.rows;
+    });
+  }
+
+  /**
+   * Upsert a licence for a branch.
+   */
+  async upsertLicence(
+    tenantId: string,
+    branchId: string,
+    licenceType: 'BUSINESS_PERMIT' | 'DOH_LTO' | 'FDA_DRUGSTORE',
+    dto: UpsertLicenceDto,
+  ): Promise<BranchLicenceRow> {
+    return withTenant({ tenantId }, async (tx) => {
+      const result = await tx.query<BranchLicenceRow>(
+        `INSERT INTO branch_licences (tenant_id, branch_id, licence_type, licence_no, expires_on)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (tenant_id, branch_id, licence_type)
+         DO UPDATE SET
+           licence_no = EXCLUDED.licence_no,
+           expires_on = EXCLUDED.expires_on,
+           updated_at = now(),
+           row_version = branch_licences.row_version + 1
+         RETURNING id, tenant_id AS "tenantId", branch_id AS "branchId",
+                   licence_type AS "licenceType", licence_no AS "licenceNo",
+                   expires_on AS "expiresOn", verified_at AS "verifiedAt"`,
+        [tenantId, branchId, licenceType, dto.licenceNo ?? null, dto.expiresOn ?? null],
+      );
+      return result.rows[0]!;
+    });
   }
 }

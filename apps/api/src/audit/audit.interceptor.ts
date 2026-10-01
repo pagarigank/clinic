@@ -49,7 +49,7 @@ export class AuditInterceptor implements NestInterceptor {
         }
 
         const entityType = routePath.split("/").filter(Boolean)[0] || "system";
-        const breakglassId = null; // not implemented in AuthContext yet
+        const breakglassId = auth.breakglassId ?? null;
         const actingAsPlatform = tenantId === null || breakglassId !== null;
 
         // Perform the audit log insert out-of-band using the app pool
