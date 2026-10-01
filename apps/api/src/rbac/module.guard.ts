@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, SetMetadata } from "@nestjs/common";
 import type { CanActivate, ExecutionContext } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import type { FastifyRequest } from "fastify";
-import { withTenant, getAppPool } from "@clinic/db";
+import { withTenant } from "@clinic/db";
 import { ProblemException } from "../http/problem.exception.js";
 import { IS_PUBLIC_KEY, type AuthContext, type RequestWithAuth } from "../auth/auth-context.js";
 import { incCounter } from "../observability/metrics.js";
@@ -185,12 +185,13 @@ export class ModuleGuard implements CanActivate {
     }
 
     try {
-      const pool = getAppPool();
-      const res = await pool.query('SELECT modules_version FROM tenants WHERE id = $1', [tenantId]);
-      if (res.rowCount === 0) {
-        throw new Error('TENANT_NOT_FOUND');
-      }
-      const version = res.rows[0].modules_version;
+      const version = await withTenant({ tenantId }, async (tx) => {
+        const res = await tx.query('SELECT modules_version FROM tenants WHERE id = $1', [tenantId]);
+        if (res.rowCount === 0) {
+          throw new Error('TENANT_NOT_FOUND');
+        }
+        return res.rows[0].modules_version;
+      });
       // modules_cache_ttl 60 s
       ModuleGuard.versionCache.set(tenantId, { version, expiresAt: now + 60000 });
       return version;

@@ -8,7 +8,12 @@ import { renderPrometheus } from "../src/observability/metrics.js";
 // The guard must never reach a real database in a unit test. `vi.mock` is
 // hoisted above the imports by vitest; vi.spyOn on an ES module namespace
 // would not intercept the guard's own import binding.
-vi.mock("@clinic/db", () => ({ withTenant: vi.fn() }));
+vi.mock("@clinic/db", () => ({ 
+  withTenant: vi.fn(),
+  getAppPool: vi.fn(() => ({
+    query: vi.fn().mockResolvedValue({ rowCount: 1, rows: [{ modules_version: 1 }] })
+  }))
+}));
 
 import {
   MODULE_KEY,
@@ -99,6 +104,9 @@ function expectCode(fn: () => Promise<boolean>, code: string, status: number) {
 
 beforeEach(() => {
   withTenantMock.mockReset();
+  // We need to clear the static cache, but it's private.
+  // We can use (ModuleGuard as any).versionCache.clear();
+  (ModuleGuard as any).versionCache.clear();
 });
 
 afterEach(() => {
@@ -197,7 +205,8 @@ describe("ModuleGuard - fail closed (AC-27)", () => {
   });
 
   it("exports an entitlement_evaluation_failure counter for alerting", async () => {
-    stubThrow(new Error("boom"));
+    withTenantMock.mockImplementationOnce((async () => 1) as never);
+    withTenantMock.mockImplementationOnce((async () => { throw new Error("boom"); }) as never);
     await new ModuleGuard(reflector).canActivate(ctxFor({ module: "reports" })).catch(() => {});
     expect(renderPrometheus()).toMatch(/entitlement_evaluation_failure\{module=reports\} 1/);
   });
