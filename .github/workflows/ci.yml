@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: clinic_owner
+          POSTGRES_PASSWORD: clinic_owner_dev
+          POSTGRES_DB: clinic
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U clinic_owner -d clinic"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DATABASE_URL_MIGRATOR: postgres://clinic_owner:clinic_owner_dev@localhost:5432/clinic
+      DATABASE_URL_APP: postgres://clinic_app:clinic_app_dev@localhost:5432/clinic
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Boundary lint fixtures (violations must fail)
+        run: node tooling/boundary-fixtures/boundary.test.mjs
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Contracts → OpenAPI → types
+        run: pnpm --filter @clinic/contracts build
+
+      - name: Migrations (up)
+        run: pnpm db:migrate
+
+      - name: Migrations (down → up proves rollback cleanly)
+        run: pnpm db:rollback --all && pnpm db:migrate
+
+      - name: Seeds
+        run: pnpm db:seed
+
+      - name: Unit + integration tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm -r --if-present build

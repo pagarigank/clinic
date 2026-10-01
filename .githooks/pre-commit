@@ -1,0 +1,8 @@
+#!/bin/sh
+# Phase 0.1 commit hooks: conventional commit message + fast checks before commit.
+set -e
+echo "[pre-commit] typecheck"
+pnpm typecheck
+echo "[pre-commit] boundary + lint"
+node tooling/boundary-fixtures/boundary.test.mjs
+pnpm lint
