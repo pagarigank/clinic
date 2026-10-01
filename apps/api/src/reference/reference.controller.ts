@@ -1,13 +1,16 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { getAppPool } from '@clinic/db';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { ModuleAllowlist } from '../rbac/module.guard.js';
+import { RequirePermission } from '../rbac/require-permission.decorator.js';
 
 @ApiTags('Reference Data')
+@ApiBearerAuth()
 @Controller('reference')
 @UseGuards(AuthGuard)
 @ModuleAllowlist()
+@RequirePermission('reference.read')
 export class ReferenceController {
   
   @Get('icd10')

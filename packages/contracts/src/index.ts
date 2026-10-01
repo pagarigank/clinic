@@ -356,7 +356,7 @@ export const CreatePatientSchema = z.object({
   middleName: z.string().max(120).optional(),
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD'),
   gender: PatientGenderSchema,
-  registrationType: z.enum(['STANDARD', 'EMERGENCY']).optional().default('STANDARD'),
+  registrationType: z.enum(['STANDARD', 'EMERGENCY']).optional(),
 });
 export type CreatePatientRequest = z.infer<typeof CreatePatientSchema>;
 
@@ -412,6 +412,13 @@ export const AddFlagSchema = z.object({
   level: PatientFlagLevelSchema,
 });
 export type AddFlagRequest = z.infer<typeof AddFlagSchema>;
+
+export const CheckDuplicatesSchema = z.object({
+  firstName: z.string().min(1).max(120),
+  lastName: z.string().min(1).max(120),
+  dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD'),
+});
+export type CheckDuplicatesRequest = z.infer<typeof CheckDuplicatesSchema>;
 
 export const AcknowledgeDuplicatesSchema = z.object({
   candidateIds: z.array(z.string().uuid()).min(1),
@@ -487,6 +494,21 @@ export const CreateHolidaySchema = z.object({
   name: z.string().min(1).max(200),
 });
 export type CreateHolidayRequest = z.infer<typeof CreateHolidaySchema>;
+
+export const CreateServiceUnitSchema = z.object({
+  code: z.string().min(1).max(50).regex(/^[a-z0-9_-]+$/i),
+  name: z.string().min(1).max(120),
+  description: z.string().max(500).optional(),
+});
+export type CreateServiceUnitRequest = z.infer<typeof CreateServiceUnitSchema>;
+
+export const CreateOperatingHoursSchema = z.object({
+  branchId: z.string().uuid(),
+  dayOfWeek: z.number().int().min(0).max(6),
+  openTime: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
+  closeTime: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
+});
+export type CreateOperatingHoursRequest = z.infer<typeof CreateOperatingHoursSchema>;
 
 /** ---- Templates (Phase 2.1) ---- */
 

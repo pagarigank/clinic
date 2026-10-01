@@ -24,16 +24,24 @@ export class TemplatesService {
   async createTemplate(tenantId: string, userId: string, dto: CreateTemplateRequest) {
     return withTenant({ tenantId, userId }, async (tx) => {
       const tmplRes = await tx.query(
-        `INSERT INTO templates (tenant_id, type, code, name) VALUES ($1, $2, $3, $4) RETURNING id`,
+        `INSERT INTO templates (tenant_id, type, code, name) VALUES ($1, $2, $3, $4) RETURNING id, code, name, type`,
         [tenantId, dto.type, dto.code, dto.name],
       );
-      const templateId = tmplRes.rows[0].id;
+      const template = tmplRes.rows[0];
       const verRes = await tx.query(
         `INSERT INTO template_versions (tenant_id, template_id, version_number, content, is_published)
          VALUES ($1, $2, 1, $3, false) RETURNING id, version_number, is_published`,
-        [tenantId, templateId, dto.content],
+        [tenantId, template.id, dto.content],
       );
-      return { templateId, ...verRes.rows[0] };
+      return {
+        id: template.id,
+        code: template.code,
+        name: template.name,
+        type: template.type,
+        versionId: verRes.rows[0].id,
+        version_number: verRes.rows[0].version_number,
+        is_published: verRes.rows[0].is_published,
+      };
     });
   }
 
@@ -62,14 +70,14 @@ export class TemplatesService {
         [versionId, templateId],
       );
       if ((res.rowCount ?? 0) === 0) throw new ProblemException('NOT_FOUND', { detail: 'Version not found' });
-      return res.rows[0];
+      return { ...res.rows[0], published: true };
     });
   }
 
   async previewVersion(tenantId: string, userId: string, templateId: string, versionId: string) {
     return withTenant({ tenantId, userId }, async (tx) => {
       const res = await tx.query(
-        `SELECT tv.content, tv.version_number, t.type, t.name
+        `SELECT tv.content, tv.version_number, tv.is_published, t.type, t.name
          FROM template_versions tv JOIN templates t ON t.id = tv.template_id
          WHERE tv.id = $1 AND tv.template_id = $2`,
         [versionId, templateId],

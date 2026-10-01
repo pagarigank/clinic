@@ -1,6 +1,5 @@
 import { Outlet, NavLink } from "react-router";
 import { Container, Nav } from "@clinic/ui";
-import "bootstrap/dist/css/bootstrap.min.css";
 
 /**
  * Shell regions (frontend §8): skip link → top bar → nav rail → main.

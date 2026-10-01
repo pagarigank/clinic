@@ -1,5 +1,11 @@
 {
   "extends": "../../tooling/tsconfig.base.json",
-  "compilerOptions": { "noEmit": true, "jsx": "react-jsx", "lib": ["ES2023", "DOM", "DOM.Iterable"] },
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
+  },
   "include": ["src", "tests"]
 }

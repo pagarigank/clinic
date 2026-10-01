@@ -33,6 +33,10 @@ describe("PhiAccessInterceptor", () => {
   });
 
   it("intercepts @PhiAccess requests and inserts phi_access_log", async () => {
+    const tenantId = "11111111-1111-4111-8111-111111111111";
+    const userId = "22222222-2222-4222-8222-222222222222";
+    const patientId = "33333333-3333-4333-8333-333333333333";
+
     const context = {
       getHandler: () => ({}),
       switchToHttp: () => ({
@@ -41,10 +45,10 @@ describe("PhiAccessInterceptor", () => {
           ip: "127.0.0.1",
           id: "req-123",
           headers: { "user-agent": "test-agent" },
-          params: { patientId: "pat-123" },
+          params: { patientId },
           authContext: {
-            tenantId: "t-1",
-            userId: "u-1",
+            tenantId,
+            userId,
             kind: "user",
           },
         }),
@@ -57,9 +61,9 @@ describe("PhiAccessInterceptor", () => {
     await lastValueFrom(interceptor.intercept(context, next));
     expect(queryMock).toHaveBeenCalled();
     const args = queryMock.mock.calls[0][1];
-    expect(args[0]).toBe("t-1"); // tenant_id
-    expect(args[1]).toBe("u-1"); // actor_id
-    expect(args[2]).toBe("pat-123"); // patient_id
+    expect(args[0]).toBe(tenantId); // tenant_id
+    expect(args[1]).toBe(userId); // actor_id
+    expect(args[2]).toBe(patientId); // patient_id
     expect(args[3]).toBe("patient_record"); // resource
   });
 });

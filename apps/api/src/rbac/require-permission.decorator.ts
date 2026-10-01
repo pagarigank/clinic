@@ -1,4 +1,4 @@
-import { SetMetadata } from "@nestjs/common";
+import { SetMetadata, type CustomDecorator } from "@nestjs/common";
 
 export const REQUIRED_PERMISSION_KEY = "requiredPermission";
 
@@ -14,5 +14,5 @@ export const REQUIRED_PERMISSION_KEY = "requiredPermission";
  * list() {}
  * ```
  */
-export const RequirePermission = (permission: string): MethodDecorator =>
+export const RequirePermission = (permission: string): CustomDecorator =>
   SetMetadata(REQUIRED_PERMISSION_KEY, permission);

@@ -4,6 +4,8 @@ import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
 import { Module } from '../rbac/module.guard.js';
+import { RequirePermission } from '../rbac/require-permission.decorator.js';
+import { PhiAccess } from '../audit/phi-access.decorator.js';
 import { PatientsService } from './patients.service.js';
 import type { RequestWithAuth } from '../auth/auth-context.js';
 import {
@@ -16,6 +18,7 @@ import {
   AddContactSchema, type AddContactRequest,
   AddAllergySchema, type AddAllergyRequest,
   AddFlagSchema, type AddFlagRequest,
+  CheckDuplicatesSchema, type CheckDuplicatesRequest,
   AcknowledgeDuplicatesSchema, type AcknowledgeDuplicatesRequest,
   MergePatientSchema, type MergePatientRequest,
   ConsentCaptureSchema, type ConsentCaptureRequest,
@@ -34,6 +37,7 @@ export class PatientsController {
 
   // ── Core patient CRUD ──────────────────────────────────────────────────────
 
+  @RequirePermission('patient.record.read')
   @Get()
   @ApiOperation({ summary: 'List / search patients (cursor-paginated)' })
   async listPatients(
@@ -44,6 +48,8 @@ export class PatientsController {
     return this.patientsService.listPatients(req.tenantId!, req.authContext!.userId!, q, cursor);
   }
 
+  @RequirePermission('patient.record.read')
+  @PhiAccess({ resource: 'patient', patientIdParam: 'id' })
   @Get(':id')
   @ApiOperation({ summary: 'Get a patient with sub-resources' })
   async getPatient(
@@ -53,6 +59,28 @@ export class PatientsController {
     return this.patientsService.getPatient(req.tenantId!, req.authContext!.userId!, id);
   }
 
+  @RequirePermission('patient.record.read')
+  @PhiAccess({ resource: 'patient', patientIdParam: 'id' })
+  @Get(':id/summary')
+  @ApiOperation({ summary: 'Get patient header summary (flags, allergies, philhealth, consent)' })
+  async getSummary(
+    @Req() req: RequestWithAuth,
+    @Param('id') id: string,
+  ) {
+    return this.patientsService.getSummary(req.tenantId!, req.authContext!.userId!, id);
+  }
+
+  @RequirePermission('compliance.access.read')
+  @Get(':id/access-log')
+  @ApiOperation({ summary: 'Get PHI access audit log for this patient' })
+  async getAccessLog(
+    @Req() req: RequestWithAuth,
+    @Param('id') id: string,
+  ) {
+    return this.patientsService.getAccessLog(req.tenantId!, req.authContext!.userId!, id);
+  }
+
+  @RequirePermission('patient.record.create')
   @Post()
   @ApiOperation({ summary: 'Create a patient (standard or emergency registration)' })
   async createPatient(
@@ -62,6 +90,7 @@ export class PatientsController {
     return this.patientsService.createPatient(req.tenantId!, req.authContext!.userId!, dto);
   }
 
+  @RequirePermission('patient.record.update')
   @Patch(':id')
   @ApiOperation({ summary: 'Update patient demographics (optimistic concurrency)' })
   async updatePatient(
@@ -72,7 +101,9 @@ export class PatientsController {
     return this.patientsService.updatePatient(req.tenantId!, req.authContext!.userId!, id, dto);
   }
 
+  @RequirePermission('patient.record.update')
   @Patch(':id/deactivate')
+  @Post(':id/deactivate')
   @ApiOperation({ summary: 'Deactivate a patient (append-only — no delete)' })
   async deactivatePatient(
     @Req() req: RequestWithAuth,
@@ -82,7 +113,9 @@ export class PatientsController {
     return this.patientsService.deactivatePatient(req.tenantId!, req.authContext!.userId!, id, dto);
   }
 
+  @RequirePermission('patient.record.update')
   @Patch(':id/mark-deceased')
+  @Post(':id/mark-deceased')
   @ApiOperation({ summary: 'Mark patient as deceased (no delete)' })
   async markDeceased(
     @Req() req: RequestWithAuth,
@@ -94,6 +127,7 @@ export class PatientsController {
 
   // ── Identifiers ────────────────────────────────────────────────────────────
 
+  @RequirePermission('patient.record.update')
   @Post(':id/identifiers')
   @ApiOperation({ summary: 'Add a patient identifier' })
   async addIdentifier(
@@ -104,6 +138,7 @@ export class PatientsController {
     return this.patientsService.addIdentifier(req.tenantId!, req.authContext!.userId!, id, dto);
   }
 
+  @RequirePermission('patient.record.read_sensitive')
   @Post(':id/identifiers/:iid/reveal')
   @ApiOperation({ summary: 'Reveal a masked identifier with audited reason' })
   async revealIdentifier(
@@ -117,6 +152,7 @@ export class PatientsController {
 
   // ── Contacts ───────────────────────────────────────────────────────────────
 
+  @RequirePermission('patient.record.update')
   @Post(':id/contacts')
   @ApiOperation({ summary: 'Add a patient contact' })
   async addContact(
@@ -129,6 +165,7 @@ export class PatientsController {
 
   // ── Allergies ──────────────────────────────────────────────────────────────
 
+  @RequirePermission('patient.record.update')
   @Post(':id/allergies')
   @ApiOperation({ summary: 'Add a patient allergy' })
   async addAllergy(
@@ -141,6 +178,7 @@ export class PatientsController {
 
   // ── Flags ──────────────────────────────────────────────────────────────────
 
+  @RequirePermission('patient.record.update')
   @Post(':id/flags')
   @ApiOperation({ summary: 'Add a patient flag' })
   async addFlag(
@@ -153,6 +191,17 @@ export class PatientsController {
 
   // ── Duplicate detection ────────────────────────────────────────────────────
 
+  @RequirePermission('patient.record.read')
+  @Post('check-duplicates')
+  @ApiOperation({ summary: 'Pre-registration check for duplicate candidates' })
+  async checkDuplicates(
+    @Req() req: RequestWithAuth,
+    @Body(new ZodValidationPipe(CheckDuplicatesSchema)) dto: CheckDuplicatesRequest,
+  ) {
+    return this.patientsService.checkDuplicates(req.tenantId!, req.authContext!.userId!, dto);
+  }
+
+  @RequirePermission('patient.record.read')
   @Get(':id/duplicates')
   @ApiOperation({ summary: 'Find duplicate candidates for a patient using trigram similarity' })
   async findDuplicates(
@@ -162,6 +211,7 @@ export class PatientsController {
     return this.patientsService.findDuplicates(req.tenantId!, req.authContext!.userId!, id);
   }
 
+  @RequirePermission('patient.record.update')
   @Post(':id/duplicates/acknowledge')
   @ApiOperation({ summary: 'Acknowledge duplicate candidates (records reason, no merge)' })
   async acknowledgeDuplicates(
@@ -174,6 +224,7 @@ export class PatientsController {
 
   // ── Merge / unmerge ────────────────────────────────────────────────────────
 
+  @RequirePermission('patient.record.merge')
   @Post('merges')
   @ApiOperation({ summary: 'Merge two patients (snapshot enables unmerge)' })
   async mergePatients(
@@ -183,6 +234,21 @@ export class PatientsController {
     return this.patientsService.mergePatients(req.tenantId!, req.authContext!.userId!, dto);
   }
 
+  @RequirePermission('patient.record.merge')
+  @Post(':id/merge')
+  @ApiOperation({ summary: 'Merge another patient into this patient' })
+  async mergeIntoThisPatient(
+    @Req() req: RequestWithAuth,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(MergePatientSchema)) dto: MergePatientRequest,
+  ) {
+    return this.patientsService.mergePatients(req.tenantId!, req.authContext!.userId!, {
+      ...dto,
+      survivingPatientId: id,
+    });
+  }
+
+  @RequirePermission('patient.record.merge')
   @Post('merges/:mergeId/unmerge')
   @ApiOperation({ summary: 'Reverse a merge within the allowed window' })
   async unmergePatients(
@@ -194,6 +260,7 @@ export class PatientsController {
 
   // ── Consents ───────────────────────────────────────────────────────────────
 
+  @RequirePermission('patient.record.update')
   @Post(':id/consents')
   @ApiOperation({ summary: 'Capture patient consent' })
   async captureConsent(
@@ -204,6 +271,7 @@ export class PatientsController {
     return this.patientsService.captureConsent(req.tenantId!, req.authContext!.userId!, id, dto);
   }
 
+  @RequirePermission('patient.record.update')
   @Patch(':id/consents/:cid/withdraw')
   @ApiOperation({ summary: 'Withdraw an active consent' })
   async withdrawConsent(
@@ -217,6 +285,7 @@ export class PatientsController {
 
   // ── PhilHealth ─────────────────────────────────────────────────────────────
 
+  @RequirePermission('patient.record.update')
   @Post(':id/philhealth')
   @ApiOperation({ summary: 'Upsert PhilHealth member data' })
   async upsertPhilHealth(
@@ -227,6 +296,7 @@ export class PatientsController {
     return this.patientsService.upsertPhilHealth(req.tenantId!, req.authContext!.userId!, id, dto);
   }
 
+  @RequirePermission('patient.record.update')
   @Post(':id/philhealth/dependents')
   @ApiOperation({ summary: 'Add a PhilHealth dependent' })
   async addPhilHealthDependent(

@@ -252,9 +252,9 @@ This is the gate every later phase builds on: a phase cannot ship a module's scr
 - [ ] Global patient search with permission filtering; recent patients; deep links
 
 ### Exit gate
-- [ ] AC-9, AC-12 pass
+- [x] AC-9, AC-12 pass
 - [ ] Patient search is fast at 50 k patients (frontend §21 budget met)
-- [ ] Masked identifiers cannot be revealed without an audited reason
+- [x] Masked identifiers cannot be revealed without an audited reason
 - [ ] No delete affordance exists anywhere in the patient UI
 
 ---

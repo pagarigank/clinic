@@ -28,17 +28,49 @@ let currentHandler: StubHandler = (_req, res) => {
   );
 };
 
+// Polyfill/mock localStorage for Node 22 + jsdom environments
+const storageMap = new Map<string, string>();
+const storageMock = {
+  getItem: (key: string) => storageMap.get(key) ?? null,
+  setItem: (key: string, val: string) => { storageMap.set(key, String(val)); },
+  removeItem: (key: string) => { storageMap.delete(key); },
+  clear: () => { storageMap.clear(); },
+  get length() { return storageMap.size; },
+  key: (i: number) => Array.from(storageMap.keys())[i] ?? null,
+};
+Object.defineProperty(globalThis, "localStorage", {
+  value: storageMock,
+  writable: true,
+  configurable: true,
+});
+if (typeof window !== "undefined") {
+  Object.defineProperty(window, "localStorage", {
+    value: storageMock,
+    writable: true,
+    configurable: true,
+  });
+}
+
 let server: Server | undefined;
-let port = 8790;
+let port = 0;
 
 beforeAll(async () => {
   server = createServer((req, res) => currentHandler(req, res));
-  await new Promise<void>((resolve) => server!.listen(port, "127.0.0.1", resolve));
-  process.env.API_ORIGIN = `http://127.0.0.1:${port}`;
+  await new Promise<void>((resolve) => {
+    server!.listen(0, "127.0.0.1", () => {
+      const addr = server!.address();
+      if (addr && typeof addr === "object") {
+        port = addr.port;
+      }
+      process.env.API_ORIGIN = `http://127.0.0.1:${port}`;
+      resolve();
+    });
+  });
 });
 
 afterEach(() => {
   currentHandler = defaultHandler;
+  storageMap.clear();
 });
 
 afterAll(async () => {

@@ -11,6 +11,7 @@ import type {
   AddAllergyRequest,
   AddFlagRequest,
   RevealIdentifierRequest,
+  CheckDuplicatesRequest,
   AcknowledgeDuplicatesRequest,
   MergePatientRequest,
   ConsentCaptureRequest,
@@ -177,9 +178,9 @@ export class PatientsService {
       if ((res.rowCount ?? 0) === 0) throw new ProblemException('NOT_FOUND', { detail: 'Identifier not found' });
       // Log PHI access with reason
       await tx.query(
-        `INSERT INTO phi_access_log (tenant_id, user_id, entity_type, entity_id, reason)
-         VALUES ($1, $2, 'patient_identifier', $3, $4)`,
-        [tenantId, userId, identifierId, dto.reason],
+        `INSERT INTO phi_access_log (tenant_id, actor_id, patient_id, resource, purpose)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [tenantId, userId, patientId, `patient_identifier:${identifierId}`, dto.reason],
       );
       return res.rows[0]; // return unmasked
     });
@@ -407,6 +408,60 @@ export class PatientsService {
         [tenantId, patientId, dto.dependentFirstName, dto.dependentLastName, dto.dependentDob, dto.dependentRelationship],
       );
       return res.rows[0];
+    });
+  }
+
+  // ── Pre-registration duplicate check ───────────────────────────────────────
+
+  async checkDuplicates(tenantId: string, userId: string, dto: CheckDuplicatesRequest) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const res = await tx.query(
+        `SELECT id, first_name, last_name, date_of_birth, gender, status,
+                similarity(first_name || ' ' || last_name, $1) AS name_sim
+         FROM patients
+         WHERE status NOT IN ('MERGED', 'DECEASED')
+           AND (
+             similarity(first_name || ' ' || last_name, $1) > 0.4
+             OR (date_of_birth = $2 AND (first_name ILIKE $3 OR last_name ILIKE $4))
+           )
+         ORDER BY name_sim DESC
+         LIMIT 20`,
+        [`${dto.firstName} ${dto.lastName}`, dto.dateOfBirth, `%${dto.firstName}%`, `%${dto.lastName}%`],
+      );
+      return { candidates: res.rows };
+    });
+  }
+
+  // ── Access log & Summary ───────────────────────────────────────────────────
+
+  async getAccessLog(tenantId: string, userId: string, patientId: string) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const res = await tx.query(
+        `SELECT id, created_at, actor_id, resource, purpose, request_id
+         FROM phi_access_log
+         WHERE patient_id = $1
+         ORDER BY created_at DESC
+         LIMIT 50`,
+        [patientId],
+      );
+      return { data: res.rows };
+    });
+  }
+
+  async getSummary(tenantId: string, userId: string, patientId: string) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const patRes = await tx.query(
+        `SELECT p.id, p.first_name, p.last_name, p.middle_name, p.date_of_birth, p.gender, p.status, p.created_at,
+                (SELECT json_agg(json_build_object('id', pf.id, 'title', pf.title, 'level', pf.level)) FROM patient_flags pf WHERE pf.patient_id = p.id) AS flags,
+                (SELECT json_agg(json_build_object('id', pa.id, 'substance', pa.substance, 'severity', pa.severity)) FROM patient_allergies pa WHERE pa.patient_id = p.id) AS allergies,
+                (SELECT json_build_object('pin', pp.pin, 'membershipCategory', pp.membership_category, 'konsultaStatus', pp.konsulta_status) FROM patient_philhealth pp WHERE pp.patient_id = p.id) AS philhealth,
+                (SELECT json_build_object('id', pco.id, 'status', pco.status, 'createdAt', pco.created_at) FROM patient_consents pco WHERE pco.patient_id = p.id AND pco.status = 'ACTIVE' ORDER BY pco.created_at DESC LIMIT 1) AS active_consent
+         FROM patients p
+         WHERE p.id = $1`,
+        [patientId],
+      );
+      if ((patRes.rowCount ?? 0) === 0) throw new ProblemException('NOT_FOUND', { detail: 'Patient not found' });
+      return patRes.rows[0];
     });
   }
 }

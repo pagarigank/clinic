@@ -48,12 +48,17 @@ export class PhiAccessInterceptor implements NestInterceptor {
         const paramName = options.patientIdParam ?? "patientId";
         let patientId = (request.params as any)?.[paramName];
         
-        if (!patientId && responseBody && responseBody.patientId) {
-          patientId = responseBody.patientId;
+        if (!patientId && (request.params as any)?.id) {
+          patientId = (request.params as any).id;
         }
 
-        if (!patientId) {
-          // If we still can't find a patient ID, we can't log PHI access effectively.
+        if (!patientId && responseBody && typeof responseBody === "object") {
+          patientId = responseBody.patientId ?? (options.resource === "patient" ? responseBody.id : undefined);
+        }
+
+        const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!patientId || !UUID_REGEX.test(patientId) || !tenantId || !UUID_REGEX.test(tenantId)) {
+          // If we still can't find a valid patient ID or tenant ID, we can't log PHI access effectively.
           return;
         }
 

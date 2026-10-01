@@ -8,3 +8,7 @@ tooling/dev.env.json
 pgdata/
 *.log
 .DS_Store
+
+# scratch dev notes
+clinic.txt
+*.local.txt

@@ -9,6 +9,10 @@ const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'ap-southeast-1',
   endpoint: process.env.S3_ENDPOINT, // Used for local MinIO if any
   forcePathStyle: !!process.env.S3_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'dummy-access-key-id',
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'dummy-secret-access-key',
+  },
 });
 
 const BUCKET = process.env.S3_BUCKET || 'clinic-files-dev';
@@ -93,6 +97,43 @@ export class FilesService {
       const downloadUrl = await getSignedUrl(s3Client, command, { expiresIn: 900 });
 
       return { downloadUrl };
+    });
+  }
+
+  /**
+   * Confirm file upload completed by client; transitions to READY.
+   */
+  async completeUpload(tenantId: string, userId: string, fileId: string) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const res = await tx.query(
+        `UPDATE files
+         SET status = 'READY', updated_at = now()
+         WHERE id = $1 AND tenant_id = $2
+         RETURNING id, object_key, file_name, mime_type, size_bytes, status, created_at`,
+        [fileId, tenantId],
+      );
+      if ((res.rowCount ?? 0) === 0) {
+        throw new ProblemException('NOT_FOUND', { detail: 'File not found' });
+      }
+      return res.rows[0];
+    });
+  }
+
+  /**
+   * Inspect file metadata and status.
+   */
+  async getFile(tenantId: string, userId: string, fileId: string) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const res = await tx.query(
+        `SELECT id, object_key, file_name, mime_type, size_bytes, status, created_at
+         FROM files
+         WHERE id = $1 AND tenant_id = $2`,
+        [fileId, tenantId],
+      );
+      if ((res.rowCount ?? 0) === 0) {
+        throw new ProblemException('NOT_FOUND', { detail: 'File not found' });
+      }
+      return res.rows[0];
     });
   }
 }

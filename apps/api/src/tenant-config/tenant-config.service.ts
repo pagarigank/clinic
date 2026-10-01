@@ -7,6 +7,8 @@ import type {
   CreateDiscountTypeRequest,
   CreatePaymentMethodRequest,
   CreateHolidayRequest,
+  CreateServiceUnitRequest,
+  CreateOperatingHoursRequest,
 } from '@clinic/contracts';
 
 @Injectable()
@@ -120,6 +122,53 @@ export class TenantConfigService {
       const res = await tx.query(
         `INSERT INTO holidays (tenant_id, date, name) VALUES ($1, $2, $3) RETURNING id, date, name`,
         [tenantId, dto.date, dto.name],
+      );
+      return res.rows[0];
+    });
+  }
+
+  // ── Service units ──────────────────────────────────────────────────────────
+
+  async listServiceUnits(tenantId: string, userId: string) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const res = await tx.query(`SELECT * FROM service_units ORDER BY name`);
+      return { data: res.rows };
+    });
+  }
+
+  async createServiceUnit(tenantId: string, userId: string, dto: CreateServiceUnitRequest) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const res = await tx.query(
+        `INSERT INTO service_units (tenant_id, code, name, description)
+         VALUES ($1, $2, $3, $4) RETURNING id, code, name, description, created_at`,
+        [tenantId, dto.code, dto.name, dto.description ?? null],
+      );
+      return res.rows[0];
+    });
+  }
+
+  // ── Operating hours ────────────────────────────────────────────────────────
+
+  async listOperatingHours(tenantId: string, userId: string, branchId?: string) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const params: unknown[] = [];
+      let where = '';
+      if (branchId) {
+        params.push(branchId);
+        where = `AND branch_id = $${params.length}`;
+      }
+      const res = await tx.query(`SELECT * FROM operating_hours WHERE true ${where} ORDER BY day_of_week`, params);
+      return { data: res.rows };
+    });
+  }
+
+  async setOperatingHours(tenantId: string, userId: string, dto: CreateOperatingHoursRequest) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const res = await tx.query(
+        `INSERT INTO operating_hours (tenant_id, branch_id, day_of_week, open_time, close_time)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, branch_id, day_of_week, open_time, close_time`,
+        [tenantId, dto.branchId, dto.dayOfWeek, dto.openTime, dto.closeTime],
       );
       return res.rows[0];
     });
