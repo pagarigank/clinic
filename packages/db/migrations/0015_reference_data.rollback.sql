@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS ref_drug_schedules;
+DROP TABLE IF EXISTS ref_loinc;
+DROP TABLE IF EXISTS ref_psgc;
+DROP TABLE IF EXISTS ref_icd10;

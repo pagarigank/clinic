@@ -298,3 +298,34 @@ export const JobPayloadBaseSchema = z.object({
   idempotencyKey: z.string().min(1).max(256).optional(),
 });
 export type JobPayloadBase = z.infer<typeof JobPayloadBaseSchema>;
+
+/** ---- Files ---- */
+
+export const FileRowSchema = z.object({
+  id: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  objectKey: z.string(),
+  fileName: z.string(),
+  mimeType: z.string(),
+  sizeBytes: z.number().int(),
+  status: z.enum(["SCAN_PENDING", "READY", "REJECTED"]),
+  scanReason: z.string().nullable(),
+  uploadedBy: z.string().uuid(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type FileRow = z.infer<typeof FileRowSchema>;
+
+export const CreateFileSchema = z.object({
+  fileName: z.string().min(1),
+  mimeType: z.string().min(1),
+  sizeBytes: z.number().int().min(1),
+});
+export type CreateFileRequest = z.infer<typeof CreateFileSchema>;
+
+export const FilePresignedResponseSchema = z.object({
+  fileId: z.string().uuid(),
+  uploadUrl: z.string(),
+  objectKey: z.string(),
+});
+export type FilePresignedResponse = z.infer<typeof FilePresignedResponseSchema>;

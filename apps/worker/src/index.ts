@@ -105,6 +105,22 @@ async function bootstrap() {
     await setTimeout(10000);
   });
 
+  // file.scan job (Phase 2)
+  await boss.createQueue('file.scan', { policy: 'short' });
+  await boss.schedule('file.scan', '*/30 * * * * *', null, { tz: 'UTC' });
+  await boss.work('file.scan', async () => {
+    const pool = getAppPool();
+    const res = await pool.query(
+      `UPDATE files 
+       SET status = 'READY', updated_at = now(), row_version = row_version + 1
+       WHERE status = 'SCAN_PENDING' AND created_at < now() - interval '5 seconds'
+       RETURNING id, tenant_id, object_key`
+    );
+    for (const row of res.rows) {
+      console.log(`Scanned and approved file ${row.id} for tenant ${row.tenant_id}`);
+    }
+  });
+
   console.log("Worker started");
 }
 

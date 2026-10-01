@@ -60,6 +60,34 @@ async function seedModule(pool: ReturnType<typeof getAppPool>, tenantId: string,
          ON CONFLICT (tenant_id, code) DO NOTHING`,
         [tenantId],
       );
+
+      // JOB-03 seeds private-practice defaults (Phase 1.7)
+      await pool.query(
+        `INSERT INTO service_catalog (tenant_id, code, name, is_active)
+         VALUES ($1, 'consult', 'General Consultation', true)
+         ON CONFLICT DO NOTHING`,
+        [tenantId]
+      );
+
+      await pool.query(
+        `INSERT INTO discount_types (tenant_id, name, percentage, is_active)
+         VALUES 
+           ($1, 'Senior Citizen', 20.00, true),
+           ($1, 'PWD', 20.00, true)
+         ON CONFLICT DO NOTHING`,
+        [tenantId]
+      );
+
+      await pool.query(
+        `INSERT INTO payment_methods (tenant_id, code, name, is_active)
+         VALUES 
+           ($1, 'cash', 'Cash', true),
+           ($1, 'card', 'Credit/Debit Card', true),
+           ($1, 'hmo', 'HMO', true)
+         ON CONFLICT DO NOTHING`,
+        [tenantId]
+      );
+
       break;
     }
     case 'patients': {

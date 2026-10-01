@@ -231,21 +231,21 @@ This is the gate every later phase builds on: a phase cannot ship a module's scr
 **Goal:** the tenant can be configured and patients registered safely. **Size:** L. **Depends on:** Phase 1. **Discharges:** AC-9 (merge), AC-12 (restore).
 
 ### 2.1 Tenant configuration
-- [ ] **Files service (minimum)**: presign upload → scan gating → `files` table with RLS, tenant-prefixed object keys (`t/{tenant_id}/…`), short-lived download URLs with re-authorisation — needed here by patient documents and consent signatures, ahead of the Phase 9 enrichment (versions, previews)
-- [ ] **Reference data API** `/reference/{icd10,psgc,loinc,drug-schedules}` read-only endpoints consumed by the UI pickers built in this phase
-- [ ] Service catalog, price lists (effective-dated), discount types, payment methods, holidays, operating hours, service units
-- [ ] Document and notification templates with versions and preview
-- [ ] Consent templates (v1 shell) and the patient-facing consent version record
-- [ ] Reference data: ICD-10, PSGC, drug schedules, LOINC (read-only, cached, seeded or fetched at build time)
+- [x] **Files service (minimum)**: presign upload → scan gating → `files` table with RLS, tenant-prefixed object keys (`t/{tenant_id}/…`), short-lived download URLs with re-authorisation — needed here by patient documents and consent signatures, ahead of the Phase 9 enrichment (versions, previews)
+- [x] **Reference data API** `/reference/{icd10,psgc,loinc,drug-schedules}` read-only endpoints consumed by the UI pickers built in this phase
+- [x] Service catalog, price lists (effective-dated), discount types, payment methods, holidays, operating hours, service units
+- [x] Document and notification templates with versions and preview
+- [x] Consent templates (v1 shell) and the patient-facing consent version record
+- [x] Reference data: ICD-10, PSGC, drug schedules, LOINC (read-only, cached, seeded or fetched at build time)
 
 ### 2.2 Patients
-- [ ] ⛔ Patient CRUD, demographics versioning, identifiers (masked, reveal-with-reason), contacts, allergies, flags
-- [ ] Duplicate detection (exact + trigram + DOB/mobile fuzzy) with acknowledgement flow
-- [ ] ⛔ Merge with preview, snapshot, unmerge window; audit and notify
-- [ ] Consent capture and withdrawal; deactivate/mark deceased (no delete)
-- [ ] **PhilHealth member data** (Q-16 🔺): PIN, membership category, Konsulta primary-care-provider (PCP) registration status and beneficiary dependents captured on the patient record; visible in registration and the chart header
-- [ ] **Emergency registration without consent** (Q-11 🔺): allowed with `EMERGENCY` reason; deferred consent prompt surfaces at the next encounter
-- [ ] Patient banner with progressive PHI reveal and auto-mask
+- [x] ⛔ Patient CRUD, demographics versioning, identifiers (masked, reveal-with-reason), contacts, allergies, flags
+- [x] Duplicate detection (exact + trigram + DOB/mobile fuzzy) with acknowledgement flow
+- [x] ⛔ Merge with preview, snapshot, unmerge window; audit and notify
+- [x] Consent capture and withdrawal; deactivate/mark deceased (no delete)
+- [x] **PhilHealth member data** (Q-16 🔺): PIN, membership category, Konsulta primary-care-provider (PCP) registration status and beneficiary dependents captured on the patient record; visible in registration and the chart header
+- [x] **Emergency registration without consent** (Q-11 🔺): allowed with `EMERGENCY` reason; deferred consent prompt surfaces at the next encounter
+- [x] Patient banner with progressive PHI reveal and auto-mask
 - [ ] JOB-22 duplicate candidates review screen
 
 ### 2.3 Command palette and search

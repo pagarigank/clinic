@@ -8,9 +8,12 @@ import { AuditModule } from "./audit/audit.module.js";
 import { TenantModulesModule } from "./tenant-modules/tenant-modules.module.js";
 import { PlatformModule } from "./platform/platform.module.js";
 import { AdminModule } from "./admin/admin.module.js";
+import { FilesModule } from "./files/files.module.js";
+import { ReferenceModule } from "./reference/reference.module.js";
+import { PatientsModule } from "./patients/patients.module.js";
 
 @Module({
-  imports: [PingModule, HealthModule, MetricsModule, AuthModule, RbacModule, AuditModule, TenantModulesModule, PlatformModule, AdminModule],
+  imports: [PingModule, HealthModule, MetricsModule, AuthModule, RbacModule, AuditModule, TenantModulesModule, PlatformModule, AdminModule, FilesModule, ReferenceModule, PatientsModule],
 })
 export class AppModule {}
 

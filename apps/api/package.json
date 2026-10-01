@@ -10,6 +10,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1144.0",
+    "@aws-sdk/s3-request-presigner": "^3.1144.0",
     "@clinic/contracts": "workspace:*",
     "@clinic/db": "workspace:*",
     "@fastify/cookie": "11.1.2",
