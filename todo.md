@@ -167,11 +167,11 @@ flowchart LR
 
 ### 1.4 Audit
 - [x] ⛔ `audit_log` (partitioned, append-only, hash-chained) with a DB trigger denying `UPDATE`/`DELETE`; before/after masking
-- [ ] Audit interceptor for all mutations; PHI access logging (read events on patient-scoped GETs)
+- [x] Audit interceptor for all mutations; PHI access logging (read events on patient-scoped GETs)
 - [ ] JOB-10 chain verification; anomaly queries for the compliance explorer
 
 ### 1.5 Jobs
-- [ ] ⛔ pg-boss setup, schema, per-tenant queues, `tenantId` schema validation on every payload, retry/DLQ policy, observability (`job_runs` view)
+- [x] ⛔ pg-boss setup, schema, per-tenant queues, `tenantId` schema validation on every payload, retry/DLQ policy, observability (`job_runs` view)
 - [ ] `JOB-01 outbox.dispatch` publishes the transactional outbox to queues and notifications (every 5 s); the outbox is the only bridge between a request transaction and async work
 - [ ] `JOB-08 audit.partition.maintain`, `JOB-15 retention.enforce` (safe default: nothing auto-deleted until a tenant enables enforcement), `JOB-11 session.cleanup` (also sweeps expired break-glass sessions), `JOB-12 user.inactive.deactivate`, `JOB-13 credential.expiry.remind` (PRC/S2/PDEA licences **and any branch licence on file** — reminders are per licence record, so a branch with no DOH LTO recorded gets no reminder)
 - [ ] Job runner conventions: idempotent handler, per-tenant concurrency caps, DLQ replay tool

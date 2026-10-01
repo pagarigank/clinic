@@ -276,3 +276,12 @@ export const PageMetaSchema = z.object({
   hasMore: z.boolean(),
 });
 export type PageMeta = z.infer<typeof PageMetaSchema>;
+
+/** ---- Jobs (Phase 1.5, architecture §12) ---- */
+
+export const JobPayloadBaseSchema = z.object({
+  tenantId: z.string().uuid(),
+  branchId: z.string().uuid().optional(),
+  idempotencyKey: z.string().min(1).max(256).optional(),
+});
+export type JobPayloadBase = z.infer<typeof JobPayloadBaseSchema>;
