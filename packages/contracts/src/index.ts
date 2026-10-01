@@ -262,6 +262,7 @@ export const SessionInfoSchema = z.object({
   amr: z.array(z.string()),
   branchId: z.string().uuid().nullable(),
   assignedBranches: z.array(z.object({ id: z.string().uuid(), name: z.string() })),
+  effectiveTimezone: z.string(),
   expiresAt: z.string(), // ISO
   // modules[]/modules_version carried from Phase 1.6 (entitlement cache)
   modules: z.array(z.string()),

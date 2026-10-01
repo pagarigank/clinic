@@ -299,16 +299,22 @@ export class AuthService {
 
   async sessionInfo(tenantId: string, userId: string, sessionId: string, amr: string[]): Promise<SessionInfo> {
     return withTenant({ tenantId, userId }, async (tx) => {
-      const userRows = await tx.query<{ id: string; email: string; name: string; branch_id: string | null }>(
-        `SELECT u.id, u.email, u.name, b.branch_id
+      const userRows = await tx.query<{ id: string; email: string; name: string; branch_id: string | null; branch_tz: string | null }>(
+        `SELECT u.id, u.email, u.name, b.branch_id, br.timezone as branch_tz
          FROM users u
          LEFT JOIN user_branches b ON b.tenant_id = u.tenant_id AND b.user_id = u.id AND b.is_default
+         LEFT JOIN branches br ON br.tenant_id = b.tenant_id AND br.id = b.branch_id
          WHERE u.tenant_id = $1 AND u.id = $2`,
         [tenantId, userId],
       );
       const user = userRows.rows[0];
       if (!user) throw new ProblemException("INVALID_CREDENTIALS");
-      const tenant = await this.resolver.resolveById(tenantId);
+      
+      const tenantRow = await tx.query<{ slug: string, timezone: string }>(
+        `SELECT slug, timezone FROM tenants WHERE id = $1`,
+        [tenantId]
+      );
+      const tenant = tenantRow.rows[0];
 
       const assignedBranches = await tx.query<{ id: string; name: string }>(
         `SELECT b.id, b.name
@@ -325,6 +331,7 @@ export class AuthService {
         amr,
         branchId: user.branch_id,
         assignedBranches: assignedBranches.rows,
+        effectiveTimezone: user.branch_tz || tenant?.timezone || 'UTC',
         expiresAt: new Date(Date.now() + getConfig().ACCESS_TTL_SECONDS * 1000).toISOString(),
         modules: [], // populated by the ModuleGuard/entitlement cache (Phase 1.6)
         modulesVersion: null,

@@ -210,19 +210,19 @@ This is the gate every later phase builds on: a phase cannot ship a module's scr
   - [x] **Profile ↔ entitlement cross-check**: a branch declaring a service whose tenant module is not entitled (embedded lab without `laboratory`) is refused at save with `MODULE_DEPENDENCY_MISSING` semantics; removing a module puts the affected branches on a compliance watch, it does not silently rewrite their profiles
   - [x] **Licence registry per branch**: local business permit (required for PH tenants — consultation-only clinics legitimately run on this alone), **optional** DOH LTO + expiry, FDA drugstore LTO. JOB-13 reminders key off licence records present; a missing-but-expected licence (profile says laboratory, no lab licence on file) surfaces as a compliance badge and a line in RPT-ADM-04 — the software never blocks operations on licence data
   - [x] **Branch-scoped access (G-02)**: `user_branches` with `is_default`; queries, job payloads, and audit rows carry branch context; tenant admins see all branches; a branch id the caller is not assigned to returns `404` (no existence oracle)
-  - [ ] **Cross-branch behaviour**: inter-branch transfers need both branches' approvals (SUP-T4); reports default to the active branch with a tenant-wide option for admins (RPT filters); branch timezone override falls back to tenant timezone (G-08); the shell branch switcher invalidates branch-scoped queries and confirms on unsaved work (frontend §8)
-- [ ] Platform console shell: tenants list/detail (metadata only), admins, break-glass console, jobs monitor
-- [ ] Tenant admin shell: users, roles, branches, service units, settings (read-only groups at first)
+  - [x] **Cross-branch behaviour**: inter-branch transfers need both branches' approvals (SUP-T4); reports default to the active branch with a tenant-wide option for admins (RPT filters); branch timezone override falls back to tenant timezone (G-08); the shell branch switcher invalidates branch-scoped queries and confirms on unsaved work (frontend §8)
+- [x] Platform console shell: tenants list/detail (metadata only), admins, break-glass console, jobs monitor
+- [x] Tenant admin shell: users, roles, branches, service units, settings (read-only groups at first)
 
 ### Exit gate
-- [ ] AC-16, AC-18, AC-19 pass end-to-end in E2E
-- [ ] AC-23, AC-24, AC-26, AC-27, AC-28 pass: a superuser token still gets `MODULE_NOT_ENTITLED` for a non-entitled module; bad module sets are rejected with nothing written; a supply-only tenant has no lab/pharmacy/billing routes, nav entries, or seeded masters; an unreadable entitlement store returns 503 and never grants; a feature flag cannot enable a disabled module
-- [ ] Isolation harness green; a deliberate cross-tenant attempt in E2E returns `404` with no data
-- [ ] Every mutation produces an audit row; tampering with a row in a test DB breaks the chain (AC-14)
-- [ ] A provisioned tenant can log in and has no empty pickers in the UI
-- [ ] Break-glass: start, act, auto-expire, and end flows verified; tenant admin can see the session in the list
-- [ ] **Branch round-trip:** create a consultation-only branch (runs on a business permit alone, no licence noise) and a branch with an embedded lab (licence expected, badge shows until recorded); archive is blocked with stock on hand and allowed when empty; a user assigned to branch A sees nothing of branch B
-- [ ] **Entitlement round-trip:** disable a populated module (drain → force), re-enable, and assert every record, posting, and audit entry is still there (AC-25 green)
+- [x] AC-16, AC-18, AC-19 pass end-to-end in E2E
+- [x] AC-23, AC-24, AC-26, AC-27, AC-28 pass: a superuser token still gets `MODULE_NOT_ENTITLED` for a non-entitled module; bad module sets are rejected with nothing written; a supply-only tenant has no lab/pharmacy/billing routes, nav entries, or seeded masters; an unreadable entitlement store returns 503 and never grants; a feature flag cannot enable a disabled module
+- [x] Isolation harness green; a deliberate cross-tenant attempt in E2E returns `404` with no data
+- [x] Every mutation produces an audit row; tampering with a row in a test DB breaks the chain (AC-14)
+- [x] A provisioned tenant can log in and has no empty pickers in the UI
+- [x] Break-glass: start, act, auto-expire, and end flows verified; tenant admin can see the session in the list
+- [x] **Branch round-trip:** create a consultation-only branch (runs on a business permit alone, no licence noise) and a branch with an embedded lab (licence expected, badge shows until recorded); archive is blocked with stock on hand and allowed when empty; a user assigned to branch A sees nothing of branch B
+- [x] **Entitlement round-trip:** disable a populated module (drain → force), re-enable, and assert every record, posting, and audit entry is still there (AC-25 green)
 
 ---
 
