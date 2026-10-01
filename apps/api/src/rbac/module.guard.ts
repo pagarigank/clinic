@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, SetMetadata } from "@nestjs/common";
 import type { CanActivate, ExecutionContext } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import type { FastifyRequest } from "fastify";
-import { withTenant } from "@clinic/db";
+import { withTenant, getAppPool } from "@clinic/db";
 import { ProblemException } from "../http/problem.exception.js";
 import { IS_PUBLIC_KEY, type AuthContext, type RequestWithAuth } from "../auth/auth-context.js";
 import { incCounter } from "../observability/metrics.js";
@@ -135,6 +135,20 @@ export class ModuleGuard implements CanActivate {
     auth: AuthContext,
     module: ModuleName,
   ): Promise<ModuleStatus | null> {
+    // 1. If JWT has modules and modulesVersion, we can try to use it.
+    // 2. We still need the current modules_version from DB to know if JWT is stale.
+    // We cache `modules_version` per tenant for 60s.
+    const currentVersion = await this.getTenantModulesVersion(auth.tenantId!);
+
+    // If token has modules and version matches, use it!
+    if (auth.modules && auth.modulesVersion === currentVersion) {
+      const mod = auth.modules.find(m => m.module === module);
+      return mod ? (mod.status as ModuleStatus) : null;
+    }
+
+    // Otherwise, fetch from DB and we should return the fresh status.
+    // Note: The token is now stale, it will be refreshed by the client eventually,
+    // or we evaluate against DB for this request.
     try {
       return await withTenant<ModuleStatus | null>(
         { tenantId: auth.tenantId!, userId: auth.userId ?? undefined },
@@ -147,8 +161,6 @@ export class ModuleGuard implements CanActivate {
         },
       );
     } catch (err) {
-      // architecture §5.3 requires a dedicated counter so an outage reads as an
-      // alert rather than as a locked screen nobody investigates.
       incCounter("entitlement_evaluation_failure", { module });
       if (process.env.NODE_ENV !== "test") {
         new Logger(ModuleGuard.name).error(
@@ -161,4 +173,33 @@ export class ModuleGuard implements CanActivate {
       });
     }
   }
+
+  // Simple in-memory cache for modules_version
+  private static versionCache = new Map<string, { version: number; expiresAt: number }>();
+
+  private async getTenantModulesVersion(tenantId: string): Promise<number> {
+    const now = Date.now();
+    const cached = ModuleGuard.versionCache.get(tenantId);
+    if (cached && cached.expiresAt > now) {
+      return cached.version;
+    }
+
+    try {
+      const pool = getAppPool();
+      const res = await pool.query('SELECT modules_version FROM tenants WHERE id = $1', [tenantId]);
+      if (res.rowCount === 0) {
+        throw new Error('TENANT_NOT_FOUND');
+      }
+      const version = res.rows[0].modules_version;
+      // modules_cache_ttl 60 s
+      ModuleGuard.versionCache.set(tenantId, { version, expiresAt: now + 60000 });
+      return version;
+    } catch {
+      incCounter("entitlement_evaluation_failure", { module: 'version_check' });
+      throw new ProblemException("UPSTREAM_UNAVAILABLE", {
+        detail: "entitlement store unavailable",
+      });
+    }
+  }
 }
+
