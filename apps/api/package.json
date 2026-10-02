@@ -14,6 +14,7 @@
     "@aws-sdk/s3-request-presigner": "3.1144.0",
     "@clinic/contracts": "workspace:*",
     "@clinic/db": "workspace:*",
+    "@clinic/print": "workspace:*",
     "@fastify/cookie": "11.1.2",
     "@fastify/cors": "11.3.0",
     "@fastify/helmet": "13.1.1",

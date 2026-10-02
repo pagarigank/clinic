@@ -13,10 +13,16 @@ import { ReferenceModule } from "./reference/reference.module.js";
 import { PatientsModule } from "./patients/patients.module.js";
 import { TenantConfigModule } from "./tenant-config/tenant-config.module.js";
 import { TemplatesModule } from "./templates/templates.module.js";
+import { ClinicalModule } from "./clinical/clinical.module.js";
+import { SupplyModule } from "./supply/supply.module.js";
+import { PharmacyModule } from "./pharmacy/pharmacy.module.js";
+import { LabModule } from "./lab/lab.module.js";
+import { BillingModule } from "./billing/billing.module.js";
 
 @Module({
-  imports: [PingModule, HealthModule, MetricsModule, AuthModule, RbacModule, AuditModule, TenantModulesModule, PlatformModule, AdminModule, FilesModule, ReferenceModule, PatientsModule, TenantConfigModule, TemplatesModule],
+  imports: [PingModule, HealthModule, MetricsModule, AuthModule, RbacModule, AuditModule, TenantModulesModule, PlatformModule, AdminModule, FilesModule, ReferenceModule, PatientsModule, TenantConfigModule, TemplatesModule, ClinicalModule, SupplyModule, PharmacyModule, LabModule, BillingModule],
 })
 export class AppModule {}
+
 
 

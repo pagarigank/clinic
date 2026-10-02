@@ -1,74 +1,50 @@
 import "bootstrap/dist/css/bootstrap.min.css";
-import Button from "react-bootstrap/Button";
 import Alert from "react-bootstrap/Alert";
 import Badge from "react-bootstrap/Badge";
-import Placeholder from "react-bootstrap/Placeholder";
+import Button from "react-bootstrap/Button";
+import ButtonGroup from "react-bootstrap/ButtonGroup";
 import Container from "react-bootstrap/Container";
+import Form from "react-bootstrap/Form";
+import Modal from "react-bootstrap/Modal";
 import Nav from "react-bootstrap/Nav";
+import Offcanvas from "react-bootstrap/Offcanvas";
+import Placeholder from "react-bootstrap/Placeholder";
 
-export { Button, Alert, Badge, Placeholder, Container, Nav };
+/**
+ * `@clinic/ui` — the ONLY place Bootstrap may be imported (architecture ADR-8,
+ * frontend.md §4, enforced by an ESLint `no-restricted-imports` rule in
+ * eslint.config.mjs).
+ *
+ * Every component below is either a react-bootstrap re-export or a composition
+ * of wrappers, so a Bootstrap/react-bootstrap major bump is a change in this
+ * package rather than across the application. That boundary is precisely what
+ * makes the ADR-8 decision low-risk (architecture §3.1).
+ */
 
-/** Status pill per frontend §5.1: status + text label, never colour alone. */
-export function StatusPill({
-  tone,
-  label,
-}: {
-  tone: "critical" | "high" | "normal" | "low" | "neutral" | "pending";
-  label: string;
-}) {
-  return (
-    <Badge bg={tone === "critical" ? "danger" : tone === "high" ? "warning" : tone === "normal" ? "success" : "secondary"} text={tone === "high" ? "dark" : undefined}>
-      {label}
-    </Badge>
-  );
-}
+export { Alert, Badge, Button, ButtonGroup, Container, Form, Modal, Nav, Offcanvas, Placeholder };
 
-/** Empty state per frontend §19: icon, headline, one-sentence explanation, action. */
-export function EmptyState({
-  headline,
-  explanation,
-  action,
-}: {
-  headline: string;
-  explanation: string;
-  action?: React.ReactNode;
-}) {
-  return (
-    <div className="text-center py-5" role="status">
-      <div style={{ fontSize: "2rem" }} aria-hidden="true">
-        ▢
-      </div>
-      <h2 className="h5 mt-2">{headline}</h2>
-      <p className="text-body-secondary mb-3">{explanation}</p>
-      {action}
-    </div>
-  );
-}
+/* Core set (frontend §5.2). */
+export {
+  AlertBanner,
+  DateField,
+  EmptyState,
+  FooterBar,
+  MoneyField,
+  PatientBanner,
+  QRSummary,
+  SkeletonTable,
+  StatusPill,
+  Timeline,
+} from "./primitives.js";
+export type { StatusTone } from "./primitives.js";
 
-/** Shape-stable loading (frontend §19): no layout shift while data arrives. */
-export function SkeletonTable({ rows = 3 }: { rows?: number }) {
-  return (
-    <div className="p-3" aria-busy="true" aria-live="polite">
-      {Array.from({ length: rows }, (_, i) => (
-        <Placeholder as="p" animation="glow" key={i}>
-          <Placeholder xs={7} /> <Placeholder xs={3} />
-        </Placeholder>
-      ))}
-    </div>
-  );
-}
+export { DataTable, SearchCombobox } from "./DataTable.js";
+export type { DataTableColumn, DataTableSort } from "./DataTable.js";
 
-/** Alert banner with role=alert for critical severity (frontend §5.2). */
-export function AlertBanner({
-  severity,
-  children,
-}: {
-  severity: "info" | "success" | "warning" | "danger";
-  children: React.ReactNode;
-}) {
-  return (
-    <Alert variant={severity} role={severity === "danger" ? "alert" : "status"}>
-      {children}
-    </Alert>
-  );
-}
+export { Money, Quantity, DateTime, Code } from "./renderers.js";
+export { SignaturePad } from "./SignaturePad.js";
+
+export { ScanButton, ScanInput } from "./ScanInput.js";
+
+export { ReasonModal } from "./ReasonModal.js";
+export { StepConfirmModal } from "./StepConfirmModal.js";

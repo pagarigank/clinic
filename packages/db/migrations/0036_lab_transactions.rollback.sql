@@ -1,0 +1,13 @@
+-- 0036_lab_transactions.rollback.sql
+DROP TABLE IF EXISTS lab_send_outs CASCADE;
+DROP TABLE IF EXISTS lab_qc_results CASCADE;
+DROP TABLE IF EXISTS lab_qc_runs CASCADE;
+DROP TABLE IF EXISTS lab_qc_materials CASCADE;
+DROP TABLE IF EXISTS lab_reports CASCADE;
+DROP TABLE IF EXISTS lab_critical_notifications CASCADE;
+DROP TABLE IF EXISTS lab_result_amendments CASCADE;
+DROP TABLE IF EXISTS lab_results CASCADE;
+DROP TABLE IF EXISTS specimen_events CASCADE;
+DROP TABLE IF EXISTS specimens CASCADE;
+DROP TABLE IF EXISTS lab_order_items CASCADE;
+DROP TABLE IF EXISTS lab_orders CASCADE;

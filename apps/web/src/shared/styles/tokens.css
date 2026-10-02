@@ -1,0 +1,333 @@
+/* ==========================================================================
+   Design tokens — frontend.md §5.1
+   --------------------------------------------------------------------------
+   The single source of colour, spacing, radius and type values. Nothing
+   outside this file may hard-code a hex value for a semantic concept.
+
+   Two rules the rest of the system depends on:
+
+   1. STATUS COLOUR IS NEVER THE SOLE CARRIER OF MEANING (P-5). Every
+      --status-* token is paired with a text label by StatusPill. Do not
+      build a status indicator that renders only a colour.
+
+   2. THE CLINICAL STATUS PALETTE IS FIXED. It never changes with the tenant
+      brand colour. A tenant brand may recolour primary buttons, links and
+      focus rings (--brand-*); it may not touch --status-*.
+
+   Light values live on :root; dark values on [data-bs-theme="dark"]. The
+   attribute is Bootstrap 5.3's native colour-mode switch (architecture
+   ADR-8), so `data-bs-theme` on <html> drives both this file and Bootstrap
+   in one move.
+   ========================================================================== */
+
+:root {
+  /* ─── Clinical status palette (fixed — frontend §5.1) ─────────────────── */
+  --status-critical: #b42318;  /* critical lab values, blocked, oversell   */
+  --status-high:     #b54708;  /* abnormal-high, near-expiry (<= 90d)      */
+  --status-normal:   #027a48;  /* normal ranges, released, posted          */
+  --status-low:      #175cd3;  /* abnormal-low, informational              */
+  --status-neutral:  #475467;  /* cancelled, voided, archived              */
+  --status-pending:  #6941c6;  /* awaiting verification, draft             */
+
+  /* Tinted backgrounds for pills/banners. Paired with the text colour below;
+     both are needed because a pill is text-on-tint, not colour-on-white. */
+  --status-critical-bg: #fef3f2;
+  --status-high-bg:     #fffaeb;
+  --status-normal-bg:   #ecfdf3;
+  --status-low-bg:      #eff8ff;
+  --status-neutral-bg:  #f2f4f7;
+  --status-pending-bg:  #f4f3ff;
+
+  /* ─── Tenant brand (recolourable; never carries status meaning) ───────── */
+  --brand-primary:        #007ba7;
+  --brand-primary-hover:  #0369a1;
+  --brand-primary-active: #075985;
+  --brand-primary-subtle: #e0f2fe;
+  --brand-primary-border: #bae6fd;
+  --brand-focus-ring:     #007ba7;
+
+  /* ─── Surfaces ────────────────────────────────────────────────────────── */
+  --surface-canvas:   #f8fafc;
+  --surface-raised:   #ffffff;
+  --surface-sunken:   #f1f5f9;
+  --surface-overlay:  rgba(15, 23, 42, 0.16);
+  --surface-inverse:  #0f172a;
+
+  /* ─── Text ────────────────────────────────────────────────────────────── */
+  --text-primary:   #0f172a;
+  --text-secondary: #475569;
+  --text-muted:     #64748b;
+  --text-inverse:   #f8fafc;
+  --text-link:      #007ba7;   /* 4.57:1 on --surface-canvas — the link token
+                                  must clear 4.5:1 as *text*, so it is darker
+                                  than --brand-primary's decorative use */
+  --text-link-hover:#0369a1;
+
+  /* ─── Borders ─────────────────────────────────────────────────────────────
+     Both clear the 3:1 non-text minimum against --surface-raised (§5.1).
+     --border-subtle is the lightest token that still does; the greys below it
+     fail 3:1 and are only usable for decorative separators. */
+  --border-subtle: #8492a6;   /* 3.16:1 on #ffffff */
+  --border-strong: #64748b;   /* 4.76:1 on #ffffff */
+  --border-focus:  #007ba7;
+
+  /* ─── Spacing — 4px base scale (frontend §5.1) ───────────────────────── */
+  --space-0:  0;
+  --space-1:  0.25rem;  /*  4px */
+  --space-2:  0.5rem;   /*  8px */
+  --space-3:  0.75rem;  /* 12px */
+  --space-4:  1rem;     /* 16px */
+  --space-5:  1.5rem;   /* 24px */
+  --space-6:  2rem;     /* 32px */
+  --space-7:  3rem;     /* 48px */
+  --space-8:  4rem;     /* 64px */
+
+  /* ─── Radius (frontend §5.1: 6/10/14; card 10, input 8) ──────────────── */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;   /* legacy pill/large-radius shape; not a §5.1 token */
+  --radius-input: 8px;
+  --radius-full: 9999px;
+
+  /* ─── Type (frontend §5.1) ────────────────────────────────────────────── */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  /* 14px base dense data; 16px body on mobile. */
+  --font-size-dense: 0.875rem;
+  --font-size-body:  1rem;
+  --font-size-sm:    0.8125rem;
+  --font-size-lg:    1.125rem;
+  --font-size-xl:    1.375rem;
+  --line-height-tight:  1.25;
+  --line-height-normal: 1.5;
+
+  /* ─── Density (frontend §5.1) ─────────────────────────────────────────── */
+  /* Default (comfortable) row heights; data-density="compact" overrides. */
+  --row-height:        44px;  /* touch minimum (P-10)                      */
+  --row-height-md:     36px;  /* desktop from md+                          */
+  --control-height:    44px;
+  --density-scale:     1;
+  --density-row-pad-y: 0.5rem;
+  --density-cell-pad-x: 0.75rem;
+
+  /* ─── Elevation ───────────────────────────────────────────────────────── */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.1);
+  --shadow-focus: 0 0 0 3px rgba(0, 123, 167, 0.35);
+
+  /* ─── Layering ────────────────────────────────────────────────────────── */
+  --z-sticky-footer: 1020;
+  --z-nav-rail: 1030;
+  --z-modal: 1055;
+  --z-toast: 1080;
+
+  color-scheme: light;
+}
+
+/* ==========================================================================
+   Dark mode — frontend §5.1 (clinical status palette has its own dark values)
+   ========================================================================== */
+
+[data-bs-theme="dark"] {
+  --status-critical: #f97066;
+  --status-high:     #fdb022;
+  --status-normal:   #47cd89;
+  --status-low:      #53b1fd;
+  --status-neutral:  #98a2b3;
+  --status-pending:  #b692f6;
+
+  --status-critical-bg: #3f1d1a;
+  --status-high-bg:     #3a2a0c;
+  --status-normal-bg:   #0d3323;
+  --status-low-bg:      #0d2c4d;
+  --status-neutral-bg:  #29303c;
+  --status-pending-bg:  #2a2350;
+
+  --surface-canvas:  #0b1220;
+  --surface-raised:  #131c2e;
+  --surface-sunken:  #1e293b;
+  --surface-inverse: #f8fafc;
+
+  --text-primary:   #f1f5f9;
+  --text-secondary: #cbd5e1;
+  --text-muted:     #94a3b8;
+  --text-inverse:   #0f172a;
+  /* A link must read as text on a dark canvas, so the light-mode cerulean is
+     far too dark here — the dark palette gets a light cerulean instead. */
+  --text-link:      #7dd3fc;   /* 11.23:1 on --surface-canvas */
+  --text-link-hover:#bae6fd;
+
+  /* Both clear 3:1 against --surface-raised in dark. */
+  --border-subtle: #64748b;   /* 3.58:1 on #131c2e */
+  --border-strong: #94a3b8;   /* 6.64:1 on #131c2e */
+  --border-focus:  #7dd3fc;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.55);
+
+  color-scheme: dark;
+}
+
+/* ==========================================================================
+   Density — frontend §5.1 "density setting"
+   Compact keeps every interactive target at or above the 44px touch minimum
+   for controls (P-10); only table rows tighten, and only from md+ where the
+   pointer is not a finger.
+   ========================================================================== */
+
+[data-density="compact"] {
+  --density-scale: 0.85;
+  --density-row-pad-y: 0.25rem;
+  --density-cell-pad-x: 0.5rem;
+}
+
+@media (min-width: 768px) {
+  [data-density="compact"] {
+    --row-height:    32px;
+    --row-height-md: 32px;
+  }
+}
+
+[data-density="comfortable"] {
+  --density-scale: 1;
+  --density-row-pad-y: 0.5rem;
+  --density-cell-pad-x: 0.75rem;
+}
+
+/* ==========================================================================
+   Bootstrap bridge — MUST be declared AFTER bootstrap.min.css.
+   --------------------------------------------------------------------------
+   Bootstrap ships its own `:root, [data-bs-theme=light] { --bs-primary: … }`
+   block. Both selectors have the same specificity as our `:root`, so the LAST
+   declaration in cascade order wins — and in the built bundle Bootstrap's block
+   lands after ours. Declaring the bridge inside tokens.css (imported first) was
+   therefore silently dead: `--bs-primary` stayed #0d6efd.
+   Verified in dist/assets/*.css: our bridge at ~offset 6.3k, Bootstrap's at
+   ~22.3k. This block restores the bridge by being last in the cascade.
+   ========================================================================== */
+
+:root,
+[data-bs-theme="light"],
+[data-bs-theme="dark"] {
+  --bs-primary:                  var(--brand-primary);
+  --bs-primary-text-emphasis:    var(--brand-primary-active);
+  --bs-primary-bg-subtle:        var(--brand-primary-subtle);
+  --bs-primary-border-subtle:    var(--brand-primary-border);
+  --bs-link-color:               var(--text-link);
+  --bs-link-hover-color:         var(--text-link-hover);
+  --bs-body-bg:                  var(--surface-canvas);
+  --bs-body-color:               var(--text-primary);
+  --bs-border-radius:            var(--radius-sm);
+  --bs-font-sans-serif:          var(--font-sans);
+}
+
+body {
+  background-color: var(--surface-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-normal);
+}
+
+/* P-5 / §5.1: quantity, price and result columns use tabular numerals so
+   digits align down a column. Never drop this on a numeric cell. */
+.tabular,
+.clinic-numeric {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+.clinic-mono {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+/* P-10: no hover-only information and 44px minimum targets on touch. */
+.clinic-touch-target {
+  min-height: var(--row-height);
+  min-width: var(--row-height);
+}
+
+/* Focus ring uses the token so a tenant brand recolour moves it too. */
+:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+  box-shadow: var(--shadow-focus);
+}
+
+/* ==========================================================================
+   Status pill — the token contract StatusPill and every status badge rely on.
+   Text label is always present; colour reinforces, never replaces (P-5).
+   ========================================================================== */
+
+.clinic-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0.125rem var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.clinic-status-critical { color: var(--status-critical); background-color: var(--status-critical-bg); border-color: currentColor; }
+.clinic-status-high     { color: var(--status-high);     background-color: var(--status-high-bg);     border-color: currentColor; }
+.clinic-status-normal   { color: var(--status-normal);   background-color: var(--status-normal-bg);   border-color: currentColor; }
+.clinic-status-low      { color: var(--status-low);      background-color: var(--status-low-bg);      border-color: currentColor; }
+.clinic-status-neutral  { color: var(--status-neutral);  background-color: var(--status-neutral-bg);  border-color: currentColor; }
+.clinic-status-pending  { color: var(--status-pending);  background-color: var(--status-pending-bg);  border-color: currentColor; }
+
+/* ==========================================================================
+   Print — frontend §6: receipts, lab reports, prescriptions, controlled
+   register pages and disposal certificates print black-on-white regardless
+   of theme, with navigation stripped and identifiers expanded.
+   ========================================================================== */
+
+@media print {
+  :root,
+  [data-bs-theme="dark"],
+  [data-bs-theme="light"] {
+    --surface-canvas: #ffffff;
+    --surface-raised: #ffffff;
+    --text-primary: #000000;
+    --text-secondary: #000000;
+    --text-muted: #000000;
+    --border-subtle: #000000;
+    --border-strong: #000000;
+    --status-critical: #000000;
+    --status-high: #000000;
+    --status-normal: #000000;
+    --status-low: #000000;
+    --status-neutral: #000000;
+    --status-pending: #000000;
+    color-scheme: light;
+  }
+
+  .clinic-status {
+    border: 1px solid #000000;
+    background: none !important;
+    color: #000000 !important;
+  }
+
+  .clinic-no-print,
+  nav,
+  .clinic-nav-rail,
+  .clinic-sticky-footer {
+    display: none !important;
+  }
+
+  .clinic-print-expand {
+    display: revert !important;
+  }
+}

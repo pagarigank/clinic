@@ -1,0 +1,25 @@
+-- 0040_phase7_rls_grants.rollback.sql
+DROP INDEX IF EXISTS credit_notes_tenant_invoice_idx;
+DROP INDEX IF EXISTS credit_notes_tenant_idx;
+DROP INDEX IF EXISTS payment_reprints_tenant_payment_idx;
+DROP INDEX IF EXISTS payment_reprints_tenant_idx;
+DROP INDEX IF EXISTS payment_allocations_tenant_invoice_idx;
+DROP INDEX IF EXISTS payment_allocations_tenant_payment_idx;
+DROP INDEX IF EXISTS payment_allocations_tenant_idx;
+DROP INDEX IF EXISTS payments_tenant_no_idx;
+DROP INDEX IF EXISTS payments_tenant_shift_idx;
+DROP INDEX IF EXISTS payments_tenant_invoice_idx;
+DROP INDEX IF EXISTS payments_tenant_idx;
+DROP INDEX IF EXISTS discount_applications_tenant_invoice_idx;
+DROP INDEX IF EXISTS discount_applications_tenant_idx;
+DROP INDEX IF EXISTS invoice_lines_tenant_invoice_idx;
+DROP INDEX IF EXISTS invoice_lines_tenant_idx;
+DROP INDEX IF EXISTS invoices_tenant_visit_idx;
+DROP INDEX IF EXISTS invoices_tenant_patient_idx;
+DROP INDEX IF EXISTS invoices_tenant_branch_status_idx;
+DROP INDEX IF EXISTS invoices_tenant_idx;
+DROP INDEX IF EXISTS daily_cashier_summaries_tenant_date_idx;
+DROP INDEX IF EXISTS daily_cashier_summaries_tenant_idx;
+DROP INDEX IF EXISTS cashier_shifts_tenant_cashier_idx;
+DROP INDEX IF EXISTS cashier_shifts_tenant_branch_status_idx;
+DROP INDEX IF EXISTS cashier_shifts_tenant_idx;

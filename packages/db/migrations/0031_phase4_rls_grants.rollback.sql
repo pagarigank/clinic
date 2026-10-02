@@ -1,0 +1,2 @@
+-- 0031_phase4_rls_grants.rollback.sql
+-- Grants are revoked on table drop, no-op rollback

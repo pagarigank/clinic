@@ -409,7 +409,7 @@ A tenant does not get the whole platform. At creation the superadmin ticks the m
 | `lab_results` | order_item_id, analyte_id, value_num/text/coded, unit, flag (`N/L/H/LL/HH/A`), ref_range_text, delta_flag, status (`ENTERED/VERIFIED/AMENDED`), entered_by/at, verified_by/at, instrument_id, version |
 | `lab_result_amendments` | result_id, old_value, new_value, reason, amended_by, notified_to, at |
 | `lab_critical_notifications` | result_id, detected_at, notified_to (person/role), notified_by, method, read_back_confirmed, acknowledged_at, escalated_at |
-| `lab_reports` | order_id, version, file_id, sha256, issued_at, issued_by, status (`PRELIMINARY/FINAL/CORRECTED`) |
+| `lab_reports` | order_id, version, file_id, sha256, issued_at, issued_by, status (`PRELIMINARY/FINAL/CORRECTED`) - `file_id` and `sha256` are NULL until JOB-43 renders the PDF; the digest is SHA-256 over the rendered document bytes, so a release alone records no hash |
 | `lab_qc_runs` / `lab_qc_results` | instrument, analyte, level, value, z-score, rule_violations (Westgard), status (accept/reject), run_by/at, corrective_action |
 | `lab_send_outs` | order_item_id, reference_lab, sent_at, tracking, result_received_at |
 

@@ -10,11 +10,14 @@ export default defineConfig({
   webServer: process.env.E2E_BASE_URL
     ? undefined
     : {
-        command: "pnpm dev",
-        cwd: "..",
+        command: "pnpm run dev",
+        cwd: ".",
         url: "http://localhost:5173",
         reuseExistingServer: true,
         timeout: 60_000,
       },
-  projects: [{ name: "smoke", testMatch: /smoke\.spec\.ts/ }],
+  projects: [
+    { name: "smoke", testMatch: /smoke\.spec\.ts/ },
+    { name: "billing", testMatch: /billing\.spec\.ts/ }
+  ],
 });

@@ -3,7 +3,39 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Clinic Platform</title>
+    <title>Clinic Platform — Clinical &amp; Practice Management System</title>
+    <meta name="description" content="Multi-tenant clinical and practice management system with PhilHealth Konsulta, DPA 2012, and HIPAA compliance." />
+
+    <!-- Google Fonts: Inter (Variable) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..800;1,14..32,300..700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23007ba7'/><text y='22' x='7' font-size='18' fill='white'>⚕</text></svg>" />
+  <!-- Apply the stored colour mode + density before first paint so a dark-mode
+         user never sees a white flash (frontend §5.1). Mirrors ThemeProvider. -->
+    <script>
+      (function () {
+        try {
+          var stored = JSON.parse(localStorage.getItem("clinic.preferences") || "{}");
+          var theme =
+            stored.theme === "dark" || stored.theme === "light"
+              ? stored.theme
+              : window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light";
+          var density = stored.density === "compact" ? "compact" : "comfortable";
+          document.documentElement.setAttribute("data-bs-theme", theme);
+          document.documentElement.setAttribute("data-density", density);
+        } catch (e) {
+          document.documentElement.setAttribute("data-bs-theme", "light");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

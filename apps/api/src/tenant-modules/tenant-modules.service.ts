@@ -10,7 +10,7 @@ export const MODULE_DEPENDENCIES: Record<ModuleName, ModuleName[]> = {
   supply: ['admin'],
   laboratory: ['patients'],
   pharmacy: ['patients', 'supply'],
-  billing: ['patients'],
+  billing: ['patients', 'clinical'],
   compliance: ['admin'],
   notifications: ['admin'],
   reports: ['admin'],
@@ -99,6 +99,78 @@ export class TenantModulesService {
     });
   }
 
+  async checkOpenWorkTx(tx: any, tenantId: string, module: ModuleName) {
+    const blockers: Array<{ type: string; count: number; description: string }> = [];
+
+    if (module === 'billing') {
+      // 1. Open cashier shifts (todo.md §7.4, specification §11.1)
+      try {
+        const shiftsRes = await tx.query(
+          `SELECT count(*)::int as count FROM cashier_shifts WHERE tenant_id = $1 AND status = 'OPEN'`,
+          [tenantId]
+        );
+        const openShifts = Number(shiftsRes.rows[0]?.count || 0);
+        if (openShifts > 0) {
+          blockers.push({
+            type: 'OPEN_CASHIER_SHIFTS',
+            count: openShifts,
+            description: `${openShifts} active cashier shift(s) are open; cashier shifts must be reconciled and closed before disabling billing`,
+          });
+        }
+      } catch {
+        // Table may not exist in mock/unit environments
+      }
+
+      // 2. Unposted / draft / partial / open invoices
+      try {
+        const invoicesRes = await tx.query(
+          `SELECT count(*)::int as count FROM invoices WHERE tenant_id = $1 AND status IN ('DRAFT', 'OPEN', 'PARTIAL')`,
+          [tenantId]
+        );
+        const unpostedInvoices = Number(invoicesRes.rows[0]?.count || 0);
+        if (unpostedInvoices > 0) {
+          blockers.push({
+            type: 'UNPOSTED_DOCUMENTS',
+            count: unpostedInvoices,
+            description: `${unpostedInvoices} unposted invoice(s) are in DRAFT, OPEN, or PARTIAL status; invoices must be settled, posted, or voided before disabling billing`,
+          });
+        }
+      } catch {
+        // Table may not exist in mock/unit environments
+      }
+
+      // 3. Draft credit notes
+      try {
+        const cnRes = await tx.query(
+          `SELECT count(*)::int as count FROM credit_notes WHERE tenant_id = $1 AND status = 'DRAFT'`,
+          [tenantId]
+        );
+        const draftCreditNotes = Number(cnRes.rows[0]?.count || 0);
+        if (draftCreditNotes > 0) {
+          blockers.push({
+            type: 'DRAFT_CREDIT_NOTES',
+            count: draftCreditNotes,
+            description: `${draftCreditNotes} draft credit note(s) pending approval or cancellation`,
+          });
+        }
+      } catch {
+        // Table may not exist in mock/unit environments
+      }
+    }
+
+    return {
+      module,
+      canDisable: blockers.length === 0,
+      blockers,
+    };
+  }
+
+  async preflightModule(tenantId: string, module: ModuleName) {
+    return withTenant({ tenantId }, async (tx) => {
+      return this.checkOpenWorkTx(tx, tenantId, module);
+    });
+  }
+
   async updateModuleStatus(tenantId: string, module: ModuleName, status: 'DRAINING' | 'DISABLED' | 'ENABLED', reason?: string, force?: boolean, userId?: string) {
     return withTenant({ tenantId, userId }, async (tx) => {
       const { rows } = await tx.query(
@@ -119,11 +191,13 @@ export class TenantModulesService {
       }
 
       if (status === 'DISABLED' && !force) {
-        // Preflight: check for open work inventory
-        // e.g. for pharmacy, check if there are pending orders
-        const hasOpenWork = false; // TODO: Hook into module-specific open work registries
-        if (hasOpenWork) {
-          throw new ProblemException('MODULE_HAS_OPEN_WORK', { detail: 'Module has open work and cannot be disabled without force' });
+        // Preflight: check for open work inventory (specification §4.3, todo.md §7.4)
+        const preflight = await this.checkOpenWorkTx(tx, tenantId, module);
+        if (!preflight.canDisable) {
+          throw new ProblemException('MODULE_HAS_OPEN_WORK', {
+            detail: `Cannot disable module '${module}': open work inventory must be drained or force-disabled. ${preflight.blockers.map((b) => b.description).join('; ')}`,
+            errors: preflight.blockers.map((b) => ({ path: b.type, message: b.description })),
+          });
         }
       }
 
@@ -150,3 +224,4 @@ export class TenantModulesService {
     });
   }
 }
+

@@ -36,6 +36,18 @@ const TITLES: Partial<Record<ErrorCode, string>> = {
   QUOTA_EXCEEDED: "Quota Exceeded",
   IDEMPOTENCY_CONFLICT: "Idempotency Conflict",
   UPSTREAM_UNAVAILABLE: "Upstream Unavailable",
+  SCHEDULE_OVERLAP: "Schedule Overlap",
+  PATIENT_MISMATCH: "Patient Mismatch",
+  APPOINTMENT_CONFLICT: "Appointment Conflict",
+  VISIT_CLOSED: "Visit Closed",
+  NOTE_LOCKED: "Note Locked",
+  RX_LOCKED: "Prescription Locked",
+  ACTIVE_SHIFT_REQUIRED: "Active Shift Required",
+  SHIFT_CLOSED: "Shift Closed",
+  DISCOUNT_ID_REQUIRED: "Discount Identification Required",
+  INSUFFICIENT_PAYMENT: "Insufficient Payment Tendered",
+  PAYMENT_EXCEEDS_BALANCE: "Payment Exceeds Outstanding Balance",
+  INVOICE_NOT_DRAFT: "Invoice Not In Draft Status",
 };
 
 export function statusForCode(code: string): number {

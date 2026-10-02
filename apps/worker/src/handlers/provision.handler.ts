@@ -70,21 +70,67 @@ async function seedModule(pool: ReturnType<typeof getAppPool>, tenantId: string,
       );
 
       await pool.query(
-        `INSERT INTO discount_types (tenant_id, name, percentage, is_active)
+        `INSERT INTO discount_types (tenant_id, code, name, percentage, requires_id, legal_basis, is_active)
          VALUES 
-           ($1, 'Senior Citizen', 20.00, true),
-           ($1, 'PWD', 20.00, true)
-         ON CONFLICT DO NOTHING`,
+           ($1, 'SENIOR', 'Senior Citizen Discount (20%)', 20.00, true, 'RA 9994 Expanded Senior Citizens Act of 2010', true),
+           ($1, 'PWD', 'Persons with Disability (20%)', 20.00, true, 'RA 10754 Act Expanding Benefits and Privileges of PWDs', true),
+           ($1, 'EMPLOYEE', 'Employee / Staff Welfare (50%)', 50.00, true, 'Clinic Staff Health Benefit Policy', true),
+           ($1, 'PROMO', 'Promotional Campaign (10%)', 10.00, false, 'Tenant Marketing Policy', true)
+         ON CONFLICT (tenant_id, name) DO UPDATE
+           SET code = EXCLUDED.code, requires_id = EXCLUDED.requires_id, legal_basis = EXCLUDED.legal_basis`,
         [tenantId]
       );
 
       await pool.query(
         `INSERT INTO payment_methods (tenant_id, code, name, is_active)
          VALUES 
-           ($1, 'cash', 'Cash', true),
-           ($1, 'card', 'Credit/Debit Card', true),
-           ($1, 'hmo', 'HMO', true)
-         ON CONFLICT DO NOTHING`,
+           ($1, 'CASH', 'Cash', true),
+           ($1, 'CARD', 'Credit / Debit Card', true),
+           ($1, 'GCASH', 'GCash', true),
+           ($1, 'MAYA', 'Maya', true),
+           ($1, 'BANK_TRANSFER', 'Bank Transfer', true),
+           ($1, 'HMO', 'HMO / Insurance', true),
+           ($1, 'PHILHEALTH', 'PhilHealth', true)
+         ON CONFLICT (tenant_id, code) DO NOTHING`,
+        [tenantId]
+      );
+
+      // Seed billing role-permissions for all system roles.
+      // Migration 0044 handles existing tenants; this block handles new ones
+      // provisioned after 0044 has been applied (todo.md audit note §450).
+      // SoD: billing.payment.void conflicts billing.payment.create, so cashier
+      // does NOT receive void (only branch_manager / tenant_admin).
+      await pool.query(
+        `INSERT INTO role_permissions (tenant_id, role_id, permission_id)
+         SELECT $1, ro.id, p.id
+         FROM roles ro
+         CROSS JOIN permissions p
+         WHERE ro.tenant_id = $1
+           AND (
+             (ro.code IN ('tenant_admin', 'branch_manager') AND p.code IN (
+               'billing.invoice.read',  'billing.invoice.create', 'billing.invoice.update',
+               'billing.invoice.void',  'billing.charge.create',
+               'billing.payment.read',  'billing.payment.create', 'billing.payment.void',
+               'billing.credit.read',   'billing.credit.create',  'billing.credit.approve',
+               'billing.shift.read',    'billing.shift.open',     'billing.shift.close',
+               'billing.discount.read', 'billing.discount.create','billing.discount.revoke'
+             ))
+             OR
+             (ro.code = 'cashier' AND p.code IN (
+               'billing.invoice.read',  'billing.invoice.create', 'billing.invoice.update',
+               'billing.charge.create',
+               'billing.payment.read',  'billing.payment.create',
+               'billing.credit.read',   'billing.credit.create',
+               'billing.shift.read',    'billing.shift.open',     'billing.shift.close',
+               'billing.discount.read', 'billing.discount.create','billing.discount.revoke'
+             ))
+             OR
+             (ro.code IN ('doctor', 'nurse', 'encoder') AND p.code IN (
+               'billing.invoice.read', 'billing.payment.read',
+               'billing.charge.create'
+             ))
+           )
+         ON CONFLICT (tenant_id, role_id, permission_id) DO NOTHING`,
         [tenantId]
       );
 
@@ -93,6 +139,46 @@ async function seedModule(pool: ReturnType<typeof getAppPool>, tenantId: string,
     case 'patients': {
       // No master data to seed at Phase 1; patient module relies on reference data
       // seeded separately (ICD-10, PSGC etc. are global catalogues, Phase 2)
+      break;
+    }
+    case 'supply': {
+      // Phase 4: Seed standard UOMs, Categories, and Central Store Location
+      await pool.query(
+        `INSERT INTO uoms (tenant_id, code, name)
+         VALUES 
+           ($1, 'PCS', 'Pieces'),
+           ($1, 'BOX', 'Box'),
+           ($1, 'BOTTLE', 'Bottle'),
+           ($1, 'VIAL', 'Vial'),
+           ($1, 'PACK', 'Pack')
+         ON CONFLICT (tenant_id, code) DO NOTHING`,
+        [tenantId],
+      );
+
+      await pool.query(
+        `INSERT INTO item_categories (tenant_id, name)
+         VALUES 
+           ($1, 'Medicines'),
+           ($1, 'Medical Supplies'),
+           ($1, 'Laboratory Reagents'),
+           ($1, 'Equipment')
+         ON CONFLICT DO NOTHING`,
+        [tenantId],
+      );
+
+      // Seed central store location for each branch
+      const branches = await pool.query(
+        `SELECT id FROM branches WHERE tenant_id = $1 AND status = 'ACTIVE'`,
+        [tenantId],
+      );
+      for (const branch of branches.rows) {
+        await pool.query(
+          `INSERT INTO stock_locations (tenant_id, branch_id, code, name, type)
+           VALUES ($1, $2, 'MAIN_STORE', 'Main Central Store', 'CENTRAL_STORE')
+           ON CONFLICT (tenant_id, branch_id, code) DO NOTHING`,
+          [tenantId, branch.id],
+        );
+      }
       break;
     }
     default: {

@@ -71,4 +71,33 @@ export class PlatformModulesController {
     await this.modulesService.updateModuleStatus(tenantId, module as ModuleName, body.status, body.reason, body.force, auth.userId ?? undefined);
     return { success: true };
   }
+
+  @Post(':module/preflight')
+  @ApiOperation({ summary: 'Preflight check for disabling a module', description: 'Returns open work inventory that blocks non-forced disable.' })
+  async preflight(
+    @Req() request: FastifyRequest & RequestWithAuth,
+    @Param('tenantId') tenantId: string,
+    @Param('module') module: string,
+  ) {
+    const auth = request.authContext!;
+    if (auth.tenantId && auth.tenantId !== tenantId) {
+      throw new ProblemException('FORBIDDEN', { detail: 'Cannot manage modules for other tenants' });
+    }
+    return this.modulesService.preflightModule(tenantId, module as ModuleName);
+  }
+
+  @Get(':module/preflight')
+  @ApiOperation({ summary: 'Preflight check for disabling a module (GET)', description: 'Returns open work inventory that blocks non-forced disable.' })
+  async preflightGet(
+    @Req() request: FastifyRequest & RequestWithAuth,
+    @Param('tenantId') tenantId: string,
+    @Param('module') module: string,
+  ) {
+    const auth = request.authContext!;
+    if (auth.tenantId && auth.tenantId !== tenantId) {
+      throw new ProblemException('FORBIDDEN', { detail: 'Cannot manage modules for other tenants' });
+    }
+    return this.modulesService.preflightModule(tenantId, module as ModuleName);
+  }
 }
+

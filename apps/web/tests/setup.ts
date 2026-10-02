@@ -2,6 +2,10 @@ import "@testing-library/jest-dom/vitest";
 import { afterAll, afterEach, beforeAll, expect } from "vitest";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { toHaveNoViolations } from "jest-axe";
+// Initialise i18n for every web suite: components call useTranslation(), and an
+// uninitialised instance renders raw keys (the `⟨theme.compact⟩` fallback) which
+// makes any assertion on user-visible text fail for the wrong reason.
+import "../src/shared/i18n/index.js";
 
 // Register jest-axe's matcher (the import shape is
 // { toHaveNoViolations: { toHaveNoViolations(): void } }) with a cast, since

@@ -156,6 +156,15 @@ describe.skipIf(!dbUp)("ModuleGuard against the real DB (todo 1.6)", () => {
         "MODULE_READ_ONLY",
       );
     }
+
+    // Billing cashier read-only in DRAINING mode without losing session (todo.md §7.4)
+    await setStatus(TENANT_A, "billing", "DRAINING");
+    expect(await codeOf(guard.canActivate(ctxFor("billing", TENANT_A, "GET")))).toBe("ALLOWED");
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      expect(await codeOf(guard.canActivate(ctxFor("billing", TENANT_A, method)))).toBe(
+        "MODULE_READ_ONLY",
+      );
+    }
   });
 
   it("allows TRIAL for both reads and writes (a trial is a real entitlement)", async () => {

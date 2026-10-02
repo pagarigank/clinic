@@ -8,7 +8,9 @@ export default defineWorkspace([
       include: [
         "packages/contracts/tests/**/*.test.ts",
         "packages/db/tests/**/*.test.ts",
+        "packages/print/tests/**/*.test.ts",
         "apps/api/tests/**/*.test.ts",
+        "apps/worker/tests/**/*.test.ts",
       ],
       // tooling/boundary-fixtures/boundary.test.mjs is a standalone CI/pre-commit
       // script (spawns eslint); it does not run under vitest.

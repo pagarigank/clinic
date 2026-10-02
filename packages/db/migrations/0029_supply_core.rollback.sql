@@ -1,0 +1,23 @@
+-- 0029_supply_core.rollback.sql
+SET ROLE clinic_owner;
+
+DROP TABLE IF EXISTS valuation_snapshots CASCADE;
+DROP TABLE IF EXISTS consumption_logs CASCADE;
+DROP TABLE IF EXISTS periods CASCADE;
+DROP TABLE IF EXISTS stock_movements CASCADE;
+DROP TABLE IF EXISTS stock_balances CASCADE;
+DROP TABLE IF EXISTS stock_batches CASCADE;
+DROP TABLE IF EXISTS location_item_params CASCADE;
+DROP TABLE IF EXISTS stock_locations CASCADE;
+DROP TABLE IF EXISTS supplier_items CASCADE;
+DROP TABLE IF EXISTS supplier_contacts CASCADE;
+DROP TABLE IF EXISTS suppliers CASCADE;
+DROP TABLE IF EXISTS item_barcodes CASCADE;
+DROP TABLE IF EXISTS uom_conversions CASCADE;
+DROP TABLE IF EXISTS items CASCADE;
+DROP TABLE IF EXISTS uoms CASCADE;
+DROP TABLE IF EXISTS item_categories CASCADE;
+
+DROP FUNCTION IF EXISTS app.stock_movements_append_only() CASCADE;
+
+RESET ROLE;

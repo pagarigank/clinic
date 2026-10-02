@@ -849,6 +849,18 @@ outage is visible as a dedicated metric + alert rather than as users reaching da
 
 **Transactional outbox:** domain events are inserted into `outbox` in the same transaction as the state change; `outbox.dispatch` (JOB-01) publishes to queues/notifications. No dual-write.
 
+**Outbox idempotency (`dedup_key`).** An outbox insert has no inherent uniqueness, so a scheduled job that writes one event per qualifying row rewrites it on every run forever. `outbox.dedup_key` (migration `0043`) is the producer's optional natural key for "this event about this thing":
+
+- `NULL` — the producer does not deduplicate (default; existing producers unchanged).
+- A value — at most one row per `(tenant_id, event_type, dedup_key)` may ever exist, enforced by the partial unique index `uq_outbox_dedup_key`.
+
+Two rules make this hold rather than merely appear to:
+
+- **The index covers processed rows.** `JOB-01` marks events `processed_at = now()` in the same sweep that dispatches them, so a `WHERE processed_at IS NULL` index would release the uniqueness slot immediately and the next run would duplicate. Idempotency has to outlive the consumer.
+- **Re-notifying is an explicit act, never a side effect of a schedule.** A producer re-arms a key by `UPDATE outbox SET dedup_key = NULL WHERE tenant_id = $1 AND event_type = $2 AND dedup_key = $3`, which releases the key without deleting event history and keeps the outbox append-only.
+
+`ON CONFLICT DO NOTHING` is not a substitute: without a unique index or constraint there is no conflict to suppress, so it silently succeeds on every run. `JOB-49 billing.overdue.flag` carried exactly that bug.
+
 ---
 
 ## 13. Notifications
