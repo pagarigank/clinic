@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Param, UseGuards, Req } from '@nestjs/common';
+import { Inject, Controller, Post, Get, Body, Param, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
@@ -15,7 +15,9 @@ import type { RequestWithAuth } from '../auth/auth-context.js';
 @UseGuards(AuthGuard, TenantContextGuard)
 @Module('admin')
 export class FilesController {
-  constructor(private readonly filesService: FilesService) {}
+  constructor(
+    @Inject(FilesService) private readonly filesService: FilesService,
+  ) {}
 
   @RequirePermission('files.write')
   @Post('presign')

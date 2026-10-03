@@ -7,8 +7,13 @@ export function LoginPage() {
   const navigate = useNavigate();
   const { login, error: authError } = useAuth();
 
-  const [slug, setSlug] = useState("demo");
-  const [email, setEmail] = useState("admin@example.com");
+  // Defaults MUST match packages/db/migrations/seeds/demo.sql. The seed creates
+  // tenants `demo-a` / `demo-b` with users `admin@demo-a.test` /
+  // `doctor@demo-a.test` — there is no `demo` slug and no `admin@example.com`.
+  // A mismatch here is invisible in dev until someone presses Submit, and then
+  // it looks like the login endpoint is broken when it is not.
+  const [slug, setSlug] = useState("demo-a");
+  const [email, setEmail] = useState("admin@demo-a.test");
   const [password, setPassword] = useState("DemoPassw0rd!2026");
   const [rememberDevice, setRememberDevice] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
@@ -187,14 +192,14 @@ export function LoginPage() {
               <button
                 type="button"
                 className="btn btn-sm btn-outline-secondary"
-                onClick={() => fillCredentials("demo", "admin@example.com", "DemoPassw0rd!2026")}
+                onClick={() => fillCredentials("demo-a", "admin@demo-a.test", "DemoPassw0rd!2026")}
               >
                 Tenant Admin
               </button>
               <button
                 type="button"
                 className="btn btn-sm btn-outline-secondary"
-                onClick={() => fillCredentials("demo", "doctor@example.com", "DemoPassw0rd!2026")}
+                onClick={() => fillCredentials("demo-a", "doctor@demo-a.test", "DemoPassw0rd!2026")}
               >
                 Attending Doctor
               </button>

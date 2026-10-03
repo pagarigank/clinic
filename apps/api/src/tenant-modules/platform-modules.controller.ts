@@ -1,4 +1,4 @@
-import { Controller, Post, Patch, Body, Param, Get, UseGuards, Req } from '@nestjs/common';
+import { Inject, Controller, Post, Patch, Body, Param, Get, UseGuards, Req } from '@nestjs/common';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
 import { Module, ModuleGuard, type ModuleName, MODULES } from '../rbac/module.guard.js';
@@ -29,7 +29,9 @@ type UpdateModuleStatusDtoType = z.infer<typeof UpdateModuleStatusDto>;
 @UseGuards(AuthGuard, TenantContextGuard, ModuleGuard)
 @Module('admin')
 export class PlatformModulesController {
-  constructor(private readonly modulesService: TenantModulesService) {}
+  constructor(
+    @Inject(TenantModulesService) private readonly modulesService: TenantModulesService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List tenant modules for platform', description: 'Platform-facing view of a tenant\'s modules.' })

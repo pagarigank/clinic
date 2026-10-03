@@ -75,6 +75,12 @@ export class TenantContextInterceptor implements NestInterceptor {
             });
           }
           subscriber.next(value);
+          // COMPLETE is required, not cosmetic. Nest resolves the HTTP response
+          // when the source observable completes; without it every tenant-scoped
+          // route that *succeeds* hangs until the client times out, while
+          // routes that throw still return (an error terminates the stream).
+          // That asymmetry is what made this look like a slow query.
+          subscriber.complete();
         })
         .catch((e) => subscriber.error(e));
     });

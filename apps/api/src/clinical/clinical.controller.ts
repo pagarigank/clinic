@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Inject, Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
@@ -50,7 +50,9 @@ import {
 @UseGuards(AuthGuard, TenantContextGuard)
 @Module('clinical')
 export class ClinicalController {
-  constructor(private readonly svc: ClinicalService) {}
+  constructor(
+    @Inject(ClinicalService) private readonly svc: ClinicalService,
+  ) {}
 
   // ── Schedules ─────────────────────────────────────────────────────────────
   @RequirePermission('clinical.schedule.read')

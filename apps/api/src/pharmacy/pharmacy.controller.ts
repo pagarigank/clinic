@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Inject, Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
@@ -35,7 +35,9 @@ function getRequestId(req: RequestWithAuth): string {
 @UseGuards(AuthGuard, TenantContextGuard)
 @Module('pharmacy')
 export class PharmacyController {
-  constructor(private readonly svc: PharmacyService) {}
+  constructor(
+    @Inject(PharmacyService) private readonly svc: PharmacyService,
+  ) {}
 
   // ── Generics (PHM-T1) ──────────────────────────────────────────────────────
 

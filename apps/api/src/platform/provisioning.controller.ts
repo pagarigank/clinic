@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Param, UseGuards, Req, HttpCode, Query } from '@nestjs/common';
+import { Inject, Controller, Post, Get, Body, Param, UseGuards, Req, HttpCode, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { z } from 'zod';
 import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
@@ -28,7 +28,9 @@ const SuspendDto = z.object({
 @UseGuards(AuthGuard)
 @ModuleAllowlist()
 export class ProvisioningController {
-  constructor(private readonly provisioning: ProvisioningService) {}
+  constructor(
+    @Inject(ProvisioningService) private readonly provisioning: ProvisioningService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List all tenants (platform console)' })

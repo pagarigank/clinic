@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Inject, Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
@@ -31,7 +31,9 @@ import {
 @UseGuards(AuthGuard, TenantContextGuard)
 @Module('billing')
 export class BillingController {
-  constructor(private readonly svc: BillingService) {}
+  constructor(
+    @Inject(BillingService) private readonly svc: BillingService,
+  ) {}
 
   // ── 1. Invoices (BIL-T1) ───────────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-import { Controller, Post, Delete, Get, Body, Param, UseGuards, Req, HttpCode } from '@nestjs/common';
+import { Inject, Controller, Post, Delete, Get, Body, Param, UseGuards, Req, HttpCode } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { z } from 'zod';
 import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
@@ -22,7 +22,9 @@ type EnterDtoType = z.infer<typeof EnterDto>;
 @UseGuards(AuthGuard)
 @ModuleAllowlist()
 export class BreakglassController {
-  constructor(private readonly breakglass: BreakglassService) {}
+  constructor(
+    @Inject(BreakglassService) private readonly breakglass: BreakglassService,
+  ) {}
 
   /** POST /platform/tenants/{id}/enter — start a break-glass session (AC-16) */
   @Post()

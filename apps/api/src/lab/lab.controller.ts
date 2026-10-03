@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Put, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Inject, Controller, Get, Post, Patch, Delete, Put, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
@@ -38,7 +38,9 @@ import {
 @UseGuards(AuthGuard, TenantContextGuard)
 @Module('laboratory')
 export class LabController {
-  constructor(private readonly svc: LabService) {}
+  constructor(
+    @Inject(LabService) private readonly svc: LabService,
+  ) {}
 
   // ── Configuration: Sections ────────────────────────────────────────────────
 

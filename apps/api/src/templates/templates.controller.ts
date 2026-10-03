@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Inject, Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { z } from 'zod';
 import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
@@ -18,7 +18,9 @@ const AddVersionSchema = z.object({ content: z.string().min(1) });
 @Module('admin')
 @Controller('templates')
 export class TemplatesController {
-  constructor(private readonly svc: TemplatesService) {}
+  constructor(
+    @Inject(TemplatesService) private readonly svc: TemplatesService,
+  ) {}
 
   @RequirePermission('admin.template.read')
   @Get()

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Inject, Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
@@ -33,7 +33,9 @@ import {
 @UseGuards(AuthGuard, TenantContextGuard)
 @Module('patients')
 export class PatientsController {
-  constructor(private readonly patientsService: PatientsService) {}
+  constructor(
+    @Inject(PatientsService) private readonly patientsService: PatientsService,
+  ) {}
 
   // ── Core patient CRUD ──────────────────────────────────────────────────────
 

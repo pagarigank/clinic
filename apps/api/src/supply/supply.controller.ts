@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Put, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Inject, Controller, Get, Post, Patch, Put, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
@@ -52,7 +52,9 @@ function getRequestId(req: RequestWithAuth): string {
 @UseGuards(AuthGuard, TenantContextGuard)
 @Module('supply')
 export class SupplyController {
-  constructor(private readonly svc: SupplyService) {}
+  constructor(
+    @Inject(SupplyService) private readonly svc: SupplyService,
+  ) {}
 
   // ── Masters: Categories, UOMs, Items ──────────────────────────────────────
 

@@ -37,8 +37,12 @@ describe("LoginPage", () => {
     const demoBtn = screen.getByRole("button", { name: /Tenant Admin/i });
     fireEvent.click(demoBtn);
 
+    // Must be the credentials demo.sql actually seeds (see
+    // tests/seed-credentials.test.ts, which enforces that contract).
+    const slugInput = screen.getByLabelText(/CLINIC IDENTIFIER/i) as HTMLInputElement;
     const emailInput = screen.getByLabelText(/WORK EMAIL ADDRESS/i) as HTMLInputElement;
-    expect(emailInput.value).toBe("admin@example.com");
+    expect(slugInput.value).toBe("demo-a");
+    expect(emailInput.value).toBe("admin@demo-a.test");
   });
 });
 

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, UseGuards, Req, Headers, Query } from '@nestjs/common';
+import { Inject, Controller, Get, Post, Patch, Delete, Body, Param, UseGuards, Req, Headers, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiHeader } from '@nestjs/swagger';
 import { z } from 'zod';
 import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
@@ -37,7 +37,9 @@ const UpsertLicenceDtoSchema = z.object({
 @UseGuards(AuthGuard, TenantContextGuard, ModuleGuard)
 @Module('admin')
 export class BranchesController {
-  constructor(private readonly branches: BranchesService) {}
+  constructor(
+    @Inject(BranchesService) private readonly branches: BranchesService,
+  ) {}
 
   @RequirePermission('admin.branch.read')
   @Get()
