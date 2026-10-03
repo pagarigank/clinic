@@ -464,6 +464,12 @@ This is the gate every later phase builds on: a phase cannot ship a module's scr
   - Background jobs in `apps/worker`: implemented `JOB-15 retention.enforce`, `JOB-16 dsr.deadline.remind`, `JOB-17 breach.clock.remind`.
   - API endpoints in `apps/api/src/compliance`: audit explorer with state diffs, PHI access logging, consent lifecycle, DSR intake and verification, **AC-15 patient data export pack** with audited access, breach incident register with 72h countdown (Q-2), retention policies & legal holds enforcement, quarterly access reviews (ADM-T5), and notifiable disease surveillance registry with CIF fields (PIDSR / RA 11332, Q-16).
   - Web UI in `apps/web/src/features/compliance`: `CompliancePage.tsx` with 7 dedicated tabs, live 72h regulatory clock, DSR verification and one-click AC-15 download, legal hold release, bulk candidate approvals with hold checks, and CIF reporting.
+- **Phase 9 Notifications, Files, Reports, and Platform Console Completion**:
+  - Migration `0050_notifications_reports_platform.migration.sql`: created `notification_delivery_logs`, `file_versions`, `report_definitions`, `report_runs`, `report_schedules`, `plan_modules`, `tenant_lifecycle_history`, `platform_system_settings`, enriched `files` table (`scan_status`, `preview_object_key`, `current_version`), and seeded 35 master reports + standard tier module definitions with forced RLS and tenant isolation.
+  - Worker jobs in `apps/worker`: implemented `JOB-02 notification.send` (with quiet hours enforcement & `CRITICAL`/`CLINICAL_ALERT` bypass), `JOB-04 tenant.export.bundle`, `JOB-05 tenant.offboard.purge` (strictly blocking purge under active legal hold), `JOB-06 subscription.check` (`TRIAL` → `DRAINING` → `DISABLED`, Q-14), `JOB-07 usage.metering.rollup`, `JOB-19 report.materialized.refresh`, `JOB-20 report.scheduled.deliver`, `JOB-21 report.export.generate`.
+  - Shared contracts in `packages/contracts`: added `notifications.ts`, `reports.ts`, `platform.ts` with Zod validation.
+  - API endpoints in `apps/api`: notification center & preferences (`/notifications`, `/me/preferences`), ClamAV scan gating & short-lived audited download URLs (`/files`), reports catalogue & runner (`/reports/catalog`, `/reports/:id/run`, `/reports/:id/export`, `/reports/schedules`) enforcing AC-21 module entitlement, and platform console completion (`/platform/plans/:id/modules`, Q-15 downgrade orphan check, DLQ replay, `RPT-PLT-09` transparency report).
+  - Web UI in `apps/web`: `MainLayout.tsx` with notification bell badge, drawer with deep links, quiet hours modal; `ReportsCatalogPage.tsx` with search, category filtering, runner modal & table, and delivery scheduling; `TenantDetailPage.tsx` with Subscription & Lifecycle tab, DLQ Job Monitor tab, and `RPT-PLT-09` Transparency tab (verified free of PHI).
 ---
 
 ## Phase 8 — Compliance, audit, consent, DSR, retention
@@ -500,34 +506,34 @@ This is the gate every later phase builds on: a phase cannot ship a module's scr
 **Goal:** the connective tissue and the management surface are complete. **Size:** M–L. **Depends on:** Phase 1; enriches through P7. Parallel with P7/P8. **Discharges:** AC-25 (disable/re-enable round trip under real data).
 
 ### 9.1 Notifications
-- [ ] In-app centre, deep links, preferences, quiet hours (clinical alerts bypass)
-- [ ] `JOB-02 notification.send` for email/SMS/push with delivery log; breach clock reminders (`JOB-17`); digests as scheduled reports (`JOB-20`); templates with variables
+- [x] In-app centre, deep links, preferences, quiet hours (clinical alerts bypass)
+- [x] `JOB-02 notification.send` for email/SMS/push with delivery log; breach clock reminders (`JOB-17`); digests as scheduled reports (`JOB-20`); templates with variables
 
 ### 9.2 Files
-- [ ] Presign upload, scan gating (ClamAV), preview, versions, audited downloads (short-lived URLs) — **enriching the Phase 2 minimum**: version history and previews land here
+- [x] Presign upload, scan gating (ClamAV), preview, versions, audited downloads (short-lived URLs) — **enriching the Phase 2 minimum**: version history and previews land here
 
 ### 9.3 Reports
-- [ ] Report catalog, runner, async exports (`JOB-21 report.export.generate`), scheduled delivery (`JOB-20`), materialized refresh (`JOB-19`), permitted fields
-- [ ] RPT-SUP, RPT-PHM, RPT-LAB shipped with their filters and exports
-- [ ] `reports` as an entitlement: the catalog returns only entitled modules' reports, running a report re-checks both the `reports` entitlement and the underlying module, and scheduled reports for a disabled module are suspended rather than failed
+- [x] Report catalog, runner, async exports (`JOB-21 report.export.generate`), scheduled delivery (`JOB-20`), materialized refresh (`JOB-19`), permitted fields
+- [x] RPT-SUP, RPT-PHM, RPT-LAB shipped with their filters and exports
+- [x] `reports` as an entitlement: the catalog returns only entitled modules' reports, running a report re-checks both the `reports` entitlement and the underlying module, and scheduled reports for a disabled module are suspended rather than failed
 
 ### 9.4 Platform console completion
-- [ ] Plans and subscriptions, feature flags, announcements, system settings (versioned, audited)
-- [ ] Plan module sets: each plan declares its allowed modules and per-module caps; `GET /platform/plans/{id}/modules` feeds the tenant wizard
-- [ ] Downgrade is blocked while a module outside the new plan is still entitled, with a "disable the module first" path (Q-15) — never a silent automatic disable
-- [ ] `TRIAL` module expiry in `JOB-06` (trial → draining → disabled) and the `TRIAL`/`expires_at` path in the console (Q-14)
-- [ ] Module entitlement transparency report RPT-PLT-09, visible to the tenant's admins and DPO
-- [ ] Job monitor with replay for idempotent jobs, DLQ tooling, security events (canary failures)
-- [ ] Tenant export (`JOB-04`), offboard purge (`JOB-05`) with a retention-hold check, subscription checks (`JOB-06`), usage metering (`JOB-07`)
+- [x] Plans and subscriptions, feature flags, announcements, system settings (versioned, audited)
+- [x] Plan module sets: each plan declares its allowed modules and per-module caps; `GET /platform/plans/{id}/modules` feeds the tenant wizard
+- [x] Downgrade is blocked while a module outside the new plan is still entitled, with a "disable the module first" path (Q-15) — never a silent automatic disable
+- [x] `TRIAL` module expiry in `JOB-06` (trial → draining → disabled) and the `TRIAL`/`expires_at` path in the console (Q-14)
+- [x] Module entitlement transparency report RPT-PLT-09, visible to the tenant's admins and DPO
+- [x] Job monitor with replay for idempotent jobs, DLQ tooling, security events (canary failures)
+- [x] Tenant export (`JOB-04`), offboard purge (`JOB-05`) with a retention-hold check, subscription checks (`JOB-06`), usage metering (`JOB-07`)
 
 ### Exit gate
-- [ ] Every report in the catalog runs, exports, and schedules; exports are tenant-scoped (AC-21)
-- [ ] A supply-only tenant's catalog contains no `RPT-LAB-*`, `RPT-PHM-*`, `RPT-CLN-*`, or `RPT-BIL-*`, and requesting one by id is refused
-- [ ] AC-25 passes against a tenant with real data: drain → force-disable → re-enable leaves every record, posting, and audit entry intact
-- [ ] A plan downgrade that would orphan an entitled module is refused with an actionable message
-- [ ] Notification preferences and quiet hours verified; clinical alerts bypass quiet hours
-- [ ] Offboarding refuses to purge while a legal hold exists
-- [ ] Platform console surfaces no PHI (verified by an automated scan of API responses)
+- [x] Every report in the catalog runs, exports, and schedules; exports are tenant-scoped (AC-21)
+- [x] A supply-only tenant's catalog contains no `RPT-LAB-*`, `RPT-PHM-*`, `RPT-CLN-*`, or `RPT-BIL-*`, and requesting one by id is refused
+- [x] AC-25 passes against a tenant with real data: drain → force-disable → re-enable leaves every record, posting, and audit entry intact
+- [x] A plan downgrade that would orphan an entitled module is refused with an actionable message
+- [x] Notification preferences and quiet hours verified; clinical alerts bypass quiet hours
+- [x] Offboarding refuses to purge while a legal hold exists
+- [x] Platform console surfaces no PHI (verified by an automated scan of API responses)
 
 ---
 

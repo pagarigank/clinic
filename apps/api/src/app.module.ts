@@ -19,9 +19,34 @@ import { PharmacyModule } from "./pharmacy/pharmacy.module.js";
 import { LabModule } from "./lab/lab.module.js";
 import { BillingModule } from "./billing/billing.module.js";
 import { ComplianceModule } from "./compliance/compliance.module.js";
+import { NotificationsModule } from "./notifications/notifications.module.js";
+import { ReportsModule } from "./reports/reports.module.js";
 
 @Module({
-  imports: [PingModule, HealthModule, MetricsModule, AuthModule, RbacModule, AuditModule, TenantModulesModule, PlatformModule, AdminModule, FilesModule, ReferenceModule, PatientsModule, TenantConfigModule, TemplatesModule, ClinicalModule, SupplyModule, PharmacyModule, LabModule, BillingModule, ComplianceModule],
+  imports: [
+    PingModule,
+    HealthModule,
+    MetricsModule,
+    AuthModule,
+    RbacModule,
+    AuditModule,
+    TenantModulesModule,
+    PlatformModule,
+    AdminModule,
+    FilesModule,
+    ReferenceModule,
+    PatientsModule,
+    TenantConfigModule,
+    TemplatesModule,
+    ClinicalModule,
+    SupplyModule,
+    PharmacyModule,
+    LabModule,
+    BillingModule,
+    ComplianceModule,
+    NotificationsModule,
+    ReportsModule,
+  ],
 })
 export class AppModule {}
 

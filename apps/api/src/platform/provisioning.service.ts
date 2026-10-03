@@ -3,6 +3,7 @@ import { ProblemException } from '../http/problem.exception.js';
 import { withTenant } from '@clinic/db';
 import type { ModuleName } from '../rbac/module.guard.js';
 import { MODULE_DEPENDENCIES } from '../tenant-modules/tenant-modules.service.js';
+import { runTenantExport } from '../../../worker/src/handlers/platform-jobs.handler.js';
 
 export interface CreateTenantDto {
   name: string;
@@ -21,9 +22,6 @@ export interface TenantRow {
   modules_version: number;
   created_at: Date;
 }
-
-/** Modules allowed on the 'starter' plan (consultation + patients only). */
-const STARTER_PLAN_MODULES: ModuleName[] = ['admin', 'patients', 'notifications'];
 
 @Injectable()
 export class ProvisioningService {
@@ -53,7 +51,6 @@ export class ProvisioningService {
       if ((planRows.rowCount ?? 0) === 0) {
         throw new ProblemException('NOT_FOUND', { detail: 'subscription plan not found' });
       }
-      const plan = planRows.rows[0]!;
 
       // Validate module dependencies
       const moduleSet = new Set<ModuleName>(dto.modules);
@@ -63,7 +60,7 @@ export class ProvisioningService {
 
       // Dependency validation
       for (const module of moduleSet) {
-        const deps = MODULE_DEPENDENCIES[module];
+        const deps = MODULE_DEPENDENCIES[module] || [];
         for (const dep of deps) {
           if (!moduleSet.has(dep)) {
             throw new ProblemException('MODULE_DEPENDENCY_MISSING', {
@@ -73,12 +70,17 @@ export class ProvisioningService {
         }
       }
 
-      // Starter plan restrictions
-      if (plan.code === 'starter') {
-        for (const module of moduleSet) {
-          if (!STARTER_PLAN_MODULES.includes(module)) {
+      // Validate against plan_modules if defined
+      const planModulesRes = await tx.query<{ module: string }>(
+        `SELECT module FROM plan_modules WHERE plan_id = $1`,
+        [dto.planId],
+      );
+      if ((planModulesRes.rowCount ?? 0) > 0) {
+        const allowed = new Set(planModulesRes.rows.map((r) => r.module));
+        for (const mod of moduleSet) {
+          if (!allowed.has(mod)) {
             throw new ProblemException('PLAN_MODULE_NOT_ALLOWED', {
-              detail: `Module '${module}' is not available on the starter plan.`,
+              detail: `Module '${mod}' is not allowed on this plan.`,
             });
           }
         }
@@ -93,7 +95,7 @@ export class ProvisioningService {
       );
       const tenant = result.rows[0]!;
 
-      // Now set the tenant context so RLS allows inserts into isolated tables
+      // Set tenant context for RLS
       await tx.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenant.id]);
 
       // Create subscription
@@ -103,7 +105,7 @@ export class ProvisioningService {
         [tenant.id, dto.planId],
       );
 
-      // Create tenant_modules rows (all start as PENDING / seed_status PENDING)
+      // Create tenant_modules rows
       for (const module of Array.from(moduleSet)) {
         await tx.query(
           `INSERT INTO tenant_modules (tenant_id, module, status, seed_status)
@@ -112,7 +114,7 @@ export class ProvisioningService {
         );
       }
 
-      // Enqueue JOB-03 (tenant.provision) to seed and activate
+      // Enqueue JOB-03 (tenant.provision)
       await tx.query(
         `INSERT INTO outbox (tenant_id, event_type, payload)
          VALUES ($1, 'tenant.provision', $2)`,
@@ -131,7 +133,6 @@ export class ProvisioningService {
 
   /**
    * Retry provisioning for a PROVISIONING_FAILED or stuck tenant.
-   * Re-enqueues JOB-03 for any module with seed_status = FAILED | PENDING.
    */
   async retryProvisioning(tenantId: string): Promise<void> {
     return withTenant({ scope: 'platform', tenantId }, async (tx) => {
@@ -147,7 +148,6 @@ export class ProvisioningService {
         throw new ProblemException('CONFLICT', { detail: `tenant is in ${tenantStatus} status; cannot retry` });
       }
 
-      // Get modules needing seeding
       const modulesRows = await tx.query<{ module: string }>(
         `SELECT module FROM tenant_modules WHERE tenant_id = $1 AND seed_status IN ('FAILED', 'PENDING')`,
         [tenantId],
@@ -163,9 +163,7 @@ export class ProvisioningService {
   }
 
   /**
-   * Suspend a tenant (G-15, PLT-T2, AC-3):
-   * - Sets status = SUSPENDED
-   * - Revokes all active sessions
+   * Suspend a tenant.
    */
   async suspendTenant(tenantId: string, reason: string, actorId?: string | null): Promise<void> {
     if (!reason || reason.trim().length < 5) {
@@ -192,15 +190,12 @@ export class ProvisioningService {
         });
       }
 
-      // Revoke all active sessions for the tenant
-      // We can do this in the same transaction, setting the tenant id context for RLS is not required if we are platform scoped
       await tx.query(
         `UPDATE sessions SET revoked_at = now(), revoked_reason = 'tenant_suspended'
          WHERE tenant_id = $1 AND revoked_at IS NULL`,
         [tenantId],
       );
 
-      // Audit log
       await tx.query(
         `INSERT INTO outbox (tenant_id, event_type, payload)
          VALUES ($1, 'tenant.suspended', $2)`,
@@ -265,6 +260,215 @@ export class ProvisioningService {
         throw new ProblemException('NOT_FOUND', { detail: 'tenant not found' });
       }
       return rows.rows[0]!;
+    });
+  }
+
+  /**
+   * List available subscription plans.
+   */
+  async listPlans() {
+    return withTenant({ scope: 'platform' }, async (tx) => {
+      const res = await tx.query(
+        `SELECT id, code, name, description, is_active, created_at
+         FROM subscription_plans
+         WHERE is_active = true
+         ORDER BY created_at ASC`,
+      );
+      return { plans: res.rows };
+    });
+  }
+
+  /**
+   * Get allowed modules and limits for a plan (feeds the tenant wizard).
+   * GET /platform/plans/:id/modules
+   */
+  async getPlanModules(planId: string) {
+    return withTenant({ scope: 'platform' }, async (tx) => {
+      const res = await tx.query<{ module: string; limits: any }>(
+        `SELECT module, limits
+         FROM plan_modules
+         WHERE plan_id = $1
+         ORDER BY module ASC`,
+        [planId],
+      );
+      return {
+        planId,
+        modules: res.rows.map((r) => r.module),
+        limits: res.rows.reduce((acc, r) => ({ ...acc, [r.module]: r.limits }), {}),
+      };
+    });
+  }
+
+  /**
+   * Change tenant subscription plan with Q-15 downgrade orphan protection.
+   * POST /platform/tenants/:id/plan
+   */
+  async changePlan(tenantId: string, newPlanId: string, actorId?: string | null) {
+    return withTenant({ scope: 'platform', tenantId, userId: actorId ?? undefined }, async (tx) => {
+      // 1. Fetch target plan details
+      const planRes = await tx.query<{ id: string; name: string }>(
+        `SELECT id, name FROM subscription_plans WHERE id = $1`,
+        [newPlanId],
+      );
+      if ((planRes.rowCount ?? 0) === 0) {
+        throw new ProblemException('NOT_FOUND', { detail: 'Subscription plan not found' });
+      }
+
+      // 2. Fetch allowed modules for the target plan
+      const targetModulesRes = await tx.query<{ module: string }>(
+        `SELECT module FROM plan_modules WHERE plan_id = $1`,
+        [newPlanId],
+      );
+      const targetAllowed = new Set(targetModulesRes.rows.map((r) => r.module));
+
+      // 3. Fetch currently entitled (ENABLED or TRIAL) modules for this tenant
+      const activeModulesRes = await tx.query<{ module: string; status: string }>(
+        `SELECT module, status FROM tenant_modules WHERE tenant_id = $1 AND status IN ('ENABLED', 'TRIAL')`,
+        [tenantId],
+      );
+
+      // 4. Invariant (Q-15): Reject if any active module would be orphaned by the downgrade!
+      for (const row of activeModulesRes.rows) {
+        if (!targetAllowed.has(row.module)) {
+          throw new ProblemException('CONFLICT', {
+            detail: `Cannot downgrade plan: module '${row.module}' is still entitled. Please drain or disable the module first.`,
+          });
+        }
+      }
+
+      // 5. Update subscription
+      await tx.query(
+        `UPDATE subscriptions
+         SET plan_id = $1, updated_at = now(), updated_by = $2
+         WHERE tenant_id = $3 AND status IN ('ACTIVE', 'TRIAL')`,
+        [newPlanId, actorId ?? null, tenantId],
+      );
+
+      // 6. Record audit
+      await tx.query(
+        `INSERT INTO module_entitlement_audit (tenant_id, module, action, reason, actor_id, is_forced)
+         VALUES ($1, 'platform', 'TICK', 'Subscription plan updated to ' || $2, $3, false)`,
+        [tenantId, planRes.rows[0]?.name || newPlanId, actorId ?? null],
+      );
+
+      return {
+        tenantId,
+        planId: newPlanId,
+        message: 'Plan successfully updated',
+      };
+    });
+  }
+
+  /**
+   * Export tenant bundle (JOB-04).
+   * POST /platform/tenants/:id/export
+   */
+  async exportTenant(tenantId: string, actorId: string) {
+    const res = await runTenantExport(tenantId, actorId);
+    return {
+      message: 'Tenant export initiated',
+      fileId: res.fileId,
+      fileName: res.fileName,
+      status: 'COMPLETED',
+    };
+  }
+
+  /**
+   * Offboard tenant with legal hold check (JOB-05).
+   * POST /platform/tenants/:id/offboard
+   */
+  async offboardTenant(tenantId: string, reason: string, actorId?: string | null) {
+    return withTenant({ scope: 'platform', tenantId, userId: actorId ?? undefined }, async (tx) => {
+      // 1. Check legal holds
+      const holdsRes = await tx.query<{ id: string; hold_no: string }>(
+        `SELECT id, hold_no FROM legal_holds WHERE tenant_id = $1 AND released_at IS NULL`,
+        [tenantId],
+      );
+
+      if ((holdsRes.rowCount ?? 0) > 0) {
+        throw new ProblemException('CONFLICT', {
+          detail: `Cannot purge tenant data while ${holdsRes.rowCount} active legal hold(s) exist.`,
+        });
+      }
+
+      // 2. Mark tenant as OFFBOARDED
+      await tx.query(
+        `UPDATE tenants
+         SET status = 'OFFBOARDED', updated_at = now(), updated_by = $2
+         WHERE id = $1`,
+        [tenantId, actorId ?? null],
+      );
+
+      return {
+        tenantId,
+        status: 'OFFBOARDED',
+        reason,
+        offboardedAt: new Date().toISOString(),
+      };
+    });
+  }
+
+  /**
+   * Module Entitlement Transparency Report (RPT-PLT-09).
+   * Surfaces no PHI!
+   */
+  async getEntitlementTransparencyReport(tenantId?: string) {
+    return withTenant({ scope: 'platform' }, async (tx) => {
+      const filter = tenantId ? 'WHERE a.tenant_id = $1' : '';
+      const params = tenantId ? [tenantId] : [];
+
+      const res = await tx.query(
+        `SELECT a.id, a.tenant_id, t.name as tenant_name, a.module, a.action, a.reason, a.is_forced, a.created_at, a.actor_id
+         FROM module_entitlement_audit a
+         JOIN tenants t ON t.id = a.tenant_id
+         ${filter}
+         ORDER BY a.created_at DESC
+         LIMIT 500`,
+        params,
+      );
+
+      return {
+        reportId: 'RPT-PLT-09',
+        name: 'Module Entitlement Transparency Audit',
+        rows: res.rows,
+        meta: {
+          total: res.rowCount ?? 0,
+          containsPhi: false,
+        },
+      };
+    });
+  }
+
+  /**
+   * Job monitor and DLQ replay for idempotent jobs.
+   */
+  async listJobs() {
+    return withTenant({ scope: 'platform' }, async (tx) => {
+      const res = await tx.query(
+        `SELECT id, tenant_id, event_type, created_at, processed_at
+         FROM outbox
+         ORDER BY created_at DESC
+         LIMIT 100`,
+      );
+      return { jobs: res.rows };
+    });
+  }
+
+  async replayJob(jobId: string) {
+    return withTenant({ scope: 'platform' }, async (tx) => {
+      const res = await tx.query(
+        `UPDATE outbox
+         SET processed_at = NULL
+         WHERE id = $1
+         RETURNING id, event_type`,
+        [jobId],
+      );
+
+      if ((res.rowCount ?? 0) === 0) {
+        throw new ProblemException('NOT_FOUND', { detail: 'Job not found' });
+      }
+
+      return { replayed: true, job: res.rows[0] };
     });
   }
 }

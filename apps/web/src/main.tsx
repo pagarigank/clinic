@@ -48,6 +48,7 @@ import { CashierShiftsPage } from "./features/billing/CashierShiftsPage.js";
 import { CreditNotesPage } from "./features/billing/CreditNotesPage.js";
 import { DailyClosePage } from "./features/billing/DailyClosePage.js";
 import { CompliancePage } from "./features/compliance/CompliancePage.js";
+import { ReportsCatalogPage } from "./features/reports/ReportsCatalogPage.js";
 import { PingPage } from "./features/ping/PingPage.js";
 import { PlatformShell } from "./shell/PlatformShell.js";
 import { TenantsPage } from "./features/platform/TenantsPage.js";
@@ -143,6 +144,7 @@ const router = createBrowserRouter([
         ],
       },
       { path: "compliance", element: <CompliancePage /> },
+      { path: "reports", element: <ReportsCatalogPage /> },
       { path: "ping", element: <PingPage /> },
     ],
   },

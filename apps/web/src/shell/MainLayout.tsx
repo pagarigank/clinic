@@ -3,6 +3,7 @@ import { Outlet, NavLink, useLocation, useNavigate, Navigate } from "react-route
 import { useAuth } from "../shared/auth/AuthContext.js";
 import { CommandPalette } from "../shared/search/CommandPalette.js";
 import { getRegistrationRequests } from "../shared/services/registrationStore.js";
+import { apiGet, apiPost, apiPut } from "../shared/api/client.js";
 
 interface NavItem {
   to: string;
@@ -28,6 +29,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/dashboard", icon: "📊", label: "Dashboard" },
       { to: "/patients", icon: "👥", label: "Patient Registry" },
       { to: "/patients/duplicates", icon: "🧬", label: "Duplicate Candidates" },
+      { to: "/reports", icon: "📑", label: "Report Catalogue & Runs" },
     ],
   },
   {
@@ -147,6 +149,86 @@ export function MainLayout() {
   const location = useLocation();
 
   const [isBranchModalOpen, setIsBranchModalOpen] = useState(false);
+
+  // Notification center & quiet hours state
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [isNotifDrawerOpen, setIsNotifDrawerOpen] = useState(false);
+  const [isPrefModalOpen, setIsPrefModalOpen] = useState(false);
+  const [quietHoursEnabled, setQuietHoursEnabled] = useState(false);
+  const [quietHoursStart, setQuietHoursStart] = useState("22:00:00");
+  const [quietHoursEnd, setQuietHoursEnd] = useState("07:00:00");
+  const [channels, setChannels] = useState({ in_app: true, email: true, sms: false });
+
+  const loadNotifications = async () => {
+    try {
+      const res = await apiGet<{ data: any[]; meta?: { unreadCount: number } }>('/notifications');
+      if (res?.data) {
+        setNotifications(res.data);
+        setUnreadCount(res.meta?.unreadCount ?? res.data.filter((n: any) => !n.read_at).length);
+      }
+    } catch {
+      // fallback
+    }
+  };
+
+  const loadPreferences = async () => {
+    try {
+      const res = await apiGet<any>('/me/preferences');
+      if (res) {
+        setQuietHoursEnabled(res.quiet_hours_enabled ?? false);
+        setQuietHoursStart(res.quiet_hours_start ?? "22:00:00");
+        setQuietHoursEnd(res.quiet_hours_end ?? "07:00:00");
+        if (res.channels) setChannels(res.channels);
+      }
+    } catch {
+      // fallback
+    }
+  };
+
+  useEffect(() => {
+    loadNotifications();
+    loadPreferences();
+    const interval = setInterval(loadNotifications, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleMarkAsRead = async (id: string) => {
+    try {
+      await apiPost(`/notifications/${id}/read`, {});
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString() } : n)),
+      );
+      setUnreadCount((c) => Math.max(0, c - 1));
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleMarkAllAsRead = async () => {
+    try {
+      await apiPost('/notifications/read-all', {});
+      setNotifications((prev) => prev.map((n) => ({ ...n, read_at: new Date().toISOString() })));
+      setUnreadCount(0);
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleSavePreferences = async () => {
+    try {
+      await apiPut('/me/preferences', {
+        channels,
+        quietHoursEnabled,
+        quietHoursStart,
+        quietHoursEnd,
+      });
+      setIsPrefModalOpen(false);
+    } catch {
+      // fallback
+    }
+  };
+
   const requests = getRegistrationRequests();
   const pendingApprovalsCount = requests.filter((r) => r.status === "PENDING_APPROVAL").length;
 
@@ -280,6 +362,34 @@ export function MainLayout() {
             <span aria-hidden="true">🔍</span>
             <span>Search…</span>
             <kbd style={{ fontSize: "0.65rem" }}>Ctrl K</kbd>
+          </button>
+
+          {/* In-App Notification Center Bell (todo.md §9.1) */}
+          <button
+            type="button"
+            className="btn btn-sm position-relative d-inline-flex align-items-center justify-content-center"
+            style={{
+              background: "var(--grey-100, #f1f5f9)",
+              border: "1px solid var(--grey-200)",
+              borderRadius: "var(--radius-sm)",
+              width: 34,
+              height: 34,
+              padding: 0,
+              fontSize: "1rem",
+            }}
+            onClick={() => setIsNotifDrawerOpen(!isNotifDrawerOpen)}
+            aria-label="Open notifications"
+            title="Notifications & Alerts"
+          >
+            <span aria-hidden="true">🔔</span>
+            {unreadCount > 0 && (
+              <span
+                className="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
+                style={{ fontSize: "0.62rem" }}
+              >
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
           </button>
           <span
             className="badge d-none d-sm-inline-flex align-items-center gap-1"
@@ -512,6 +622,213 @@ export function MainLayout() {
                   onClick={() => setIsBranchModalOpen(false)}
                 >
                   Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── 3. Notification Center Drawer / Popover ───────────────── */}
+      {isNotifDrawerOpen && (
+        <div
+          className="position-fixed shadow-lg bg-white border"
+          style={{
+            top: 56,
+            right: 16,
+            width: 380,
+            maxHeight: 520,
+            borderRadius: "var(--radius-md)",
+            zIndex: 1050,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <div className="d-flex justify-content-between align-items-center p-3 border-bottom bg-light">
+            <div className="d-flex align-items-center gap-2">
+              <span className="fw-bold fs-6">🔔 Notifications</span>
+              {unreadCount > 0 && (
+                <span className="badge bg-danger rounded-pill">{unreadCount} new</span>
+              )}
+            </div>
+            <div className="d-flex gap-1">
+              <button
+                type="button"
+                className="btn btn-sm btn-link p-0 text-decoration-none text-muted"
+                style={{ fontSize: "0.75rem" }}
+                onClick={() => setIsPrefModalOpen(true)}
+                title="Quiet Hours & Notification Settings"
+              >
+                ⚙️ Quiet Hours
+              </button>
+              <span className="text-muted">·</span>
+              <button
+                type="button"
+                className="btn btn-sm btn-link p-0 text-decoration-none"
+                style={{ fontSize: "0.75rem" }}
+                onClick={handleMarkAllAsRead}
+                disabled={unreadCount === 0}
+              >
+                Mark all read
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-auto flex-grow-1 p-2" style={{ maxHeight: 420 }}>
+            {notifications.map((n) => (
+              <div
+                key={n.id}
+                className={`p-2 mb-2 rounded border ${
+                  !n.read_at ? "bg-white border-primary-subtle shadow-sm" : "bg-light border-light"
+                }`}
+                style={{ fontSize: "0.82rem" }}
+              >
+                <div className="d-flex justify-content-between align-items-start mb-1">
+                  <span
+                    className={`badge ${
+                      n.severity === "CLINICAL_ALERT" || n.severity === "CRITICAL"
+                        ? "bg-danger"
+                        : n.severity === "WARNING"
+                        ? "bg-warning text-dark"
+                        : "bg-info text-dark"
+                    }`}
+                    style={{ fontSize: "0.65rem" }}
+                  >
+                    {n.severity}
+                  </span>
+                  <span className="text-muted" style={{ fontSize: "0.68rem" }}>
+                    {new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+                <div className="fw-semibold text-dark">{n.title}</div>
+                <div className="text-muted small mb-2">{n.body}</div>
+                <div className="d-flex justify-content-between align-items-center pt-1 border-top">
+                  {n.deep_link ? (
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-link p-0 text-decoration-none"
+                      style={{ fontSize: "0.75rem" }}
+                      onClick={() => {
+                        navigate(n.deep_link);
+                        setIsNotifDrawerOpen(false);
+                      }}
+                    >
+                      View details →
+                    </button>
+                  ) : <span />}
+                  {!n.read_at && (
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-secondary py-0 px-1"
+                      style={{ fontSize: "0.7rem" }}
+                      onClick={() => handleMarkAsRead(n.id)}
+                    >
+                      Mark read
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+            {notifications.length === 0 && (
+              <div className="text-center text-muted py-4 small">
+                No notifications right now.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── 4. Notification Preferences & Quiet Hours Modal ─────────── */}
+      {isPrefModalOpen && (
+        <div className="modal show d-block" tabIndex={-1} style={{ backgroundColor: "rgba(0,0,0,0.5)", zIndex: 1060 }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content shadow">
+              <div className="modal-header">
+                <h5 className="modal-title h6 fw-bold">⚙️ Notification Channels & Quiet Hours</h5>
+                <button type="button" className="btn-close" onClick={() => setIsPrefModalOpen(false)} />
+              </div>
+              <div className="modal-body">
+                <div className="mb-3">
+                  <label className="form-label fw-semibold small">Delivery Channels</label>
+                  <div className="d-flex flex-column gap-2">
+                    <div className="form-check form-switch">
+                      <input
+                        className="form-check-input"
+                        type="checkbox"
+                        checked={channels.in_app}
+                        onChange={(e) => setChannels({ ...channels, in_app: e.target.checked })}
+                      />
+                      <label className="form-check-label small">In-App Notification Center</label>
+                    </div>
+                    <div className="form-check form-switch">
+                      <input
+                        className="form-check-input"
+                        type="checkbox"
+                        checked={channels.email}
+                        onChange={(e) => setChannels({ ...channels, email: e.target.checked })}
+                      />
+                      <label className="form-check-label small">Email Alerts</label>
+                    </div>
+                    <div className="form-check form-switch">
+                      <input
+                        className="form-check-input"
+                        type="checkbox"
+                        checked={channels.sms}
+                        onChange={(e) => setChannels({ ...channels, sms: e.target.checked })}
+                      />
+                      <label className="form-check-label small">SMS Text Notifications</label>
+                    </div>
+                  </div>
+                </div>
+
+                <hr />
+
+                <div className="mb-3">
+                  <div className="form-check form-switch mb-2">
+                    <input
+                      className="form-check-input"
+                      type="checkbox"
+                      checked={quietHoursEnabled}
+                      onChange={(e) => setQuietHoursEnabled(e.target.checked)}
+                    />
+                    <label className="form-check-label fw-semibold small">Enable Quiet Hours</label>
+                  </div>
+                  <p className="text-muted small">
+                    During quiet hours, routine notifications are suppressed.
+                  </p>
+                  <div className="alert alert-info py-2 px-3 small mb-3">
+                    <strong>Note:</strong> <code>CLINICAL_ALERT</code> panics and <code>CRITICAL</code> system emergencies bypass quiet hours and deliver immediately.
+                  </div>
+
+                  {quietHoursEnabled && (
+                    <div className="row g-2">
+                      <div className="col-6">
+                        <label className="form-label small fw-semibold">Start Time</label>
+                        <input
+                          type="time"
+                          className="form-control form-control-sm"
+                          value={quietHoursStart}
+                          onChange={(e) => setQuietHoursStart(e.target.value)}
+                        />
+                      </div>
+                      <div className="col-6">
+                        <label className="form-label small fw-semibold">End Time</label>
+                        <input
+                          type="time"
+                          className="form-control form-control-sm"
+                          value={quietHoursEnd}
+                          onChange={(e) => setQuietHoursEnd(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-sm btn-secondary" onClick={() => setIsPrefModalOpen(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="btn btn-sm btn-primary" onClick={handleSavePreferences}>
+                  Save Preferences
                 </button>
               </div>
             </div>

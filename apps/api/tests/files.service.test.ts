@@ -59,7 +59,7 @@ describe.skipIf(!hasDb)('FilesService (todo 2.1)', () => {
 
     // Complete upload
     const completed = await service.completeUpload(TENANT_A, USER_A, uploadRes.fileId);
-    expect(completed.status).toBe('READY');
+    expect(completed?.status).toBe('READY');
 
     // Fetch metadata again
     const readyMeta = await service.getFile(TENANT_A, USER_A, uploadRes.fileId);

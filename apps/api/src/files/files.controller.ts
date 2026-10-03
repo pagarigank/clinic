@@ -1,9 +1,9 @@
-import { Inject, Controller, Post, Get, Body, Param, UseGuards, Req } from '@nestjs/common';
+import { Inject, Controller, Post, Get, Body, Param, UseGuards, Req, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
-import { Module } from '../rbac/module.guard.js';
+import { ModuleAllowlist } from '../rbac/module.guard.js';
 import { RequirePermission } from '../rbac/require-permission.decorator.js';
 import { FilesService } from './files.service.js';
 import { CreateFileSchema, type CreateFileRequest } from '@clinic/contracts';
@@ -13,11 +13,12 @@ import type { RequestWithAuth } from '../auth/auth-context.js';
 @ApiBearerAuth()
 @Controller('files')
 @UseGuards(AuthGuard, TenantContextGuard)
-@Module('admin')
+@ModuleAllowlist()
 export class FilesController {
   constructor(
     @Inject(FilesService) private readonly filesService: FilesService,
   ) {}
+
   @RequirePermission('files.write')
   @Post('presign')
   @ApiOperation({ summary: 'Request a presigned URL to upload a file directly to S3.' })
@@ -50,11 +51,15 @@ export class FilesController {
 
   @RequirePermission('files.read')
   @Get(':fileId/download')
-  @ApiOperation({ summary: 'Get a short-lived download URL for a file.' })
+  @ApiOperation({ summary: 'Get a short-lived download URL for a file (gated by scan status).' })
   async getDownloadUrl(
     @Req() req: RequestWithAuth,
     @Param('fileId') fileId: string,
+    @Query('patientId') patientId?: string,
   ) {
+    if (patientId) {
+      return this.filesService.getDownloadUrl(req.tenantId!, req.authContext!.userId!, fileId, patientId);
+    }
     return this.filesService.getDownloadUrl(req.tenantId!, req.authContext!.userId!, fileId);
   }
 
@@ -64,7 +69,31 @@ export class FilesController {
   async getDownloadUrlAlias(
     @Req() req: RequestWithAuth,
     @Param('fileId') fileId: string,
+    @Query('patientId') patientId?: string,
   ) {
+    if (patientId) {
+      return this.filesService.getDownloadUrl(req.tenantId!, req.authContext!.userId!, fileId, patientId);
+    }
     return this.filesService.getDownloadUrl(req.tenantId!, req.authContext!.userId!, fileId);
+  }
+
+  @RequirePermission('files.read')
+  @Get(':fileId/preview')
+  @ApiOperation({ summary: 'Get preview URL for inline display.' })
+  async getPreviewUrl(
+    @Req() req: RequestWithAuth,
+    @Param('fileId') fileId: string,
+  ) {
+    return this.filesService.getPreviewUrl(req.tenantId!, req.authContext!.userId!, fileId);
+  }
+
+  @RequirePermission('files.read')
+  @Get(':fileId/versions')
+  @ApiOperation({ summary: 'List version history for a file.' })
+  async listVersions(
+    @Req() req: RequestWithAuth,
+    @Param('fileId') fileId: string,
+  ) {
+    return this.filesService.listVersions(req.tenantId!, req.authContext!.userId!, fileId);
   }
 }

@@ -38,6 +38,13 @@ import {
   runBillingOverdueFlag,
   runBillingReceiptGenerate,
 } from './handlers/billing-jobs.handler.js';
+import {
+  runNotificationSend,
+  runSubscriptionCheck,
+  runUsageMetering,
+  runReportMaterializedRefresh,
+  runReportScheduledDeliver,
+} from './handlers/platform-jobs.handler.js';
 
 async function bootstrap() {
   const boss = new PgBoss({
@@ -365,6 +372,51 @@ async function bootstrap() {
     // Surfaced, not thrown: one bad receipt must not stop the queue. Unrendered
     // payments keep a NULL pointer and are retried on the next tick.
     if (r.failedCount > 0) console.error(`JOB-50: ${r.failedCount} receipts failed and will be retried`);
+  });
+
+  // JOB-02: notification.send (every 10s sweep)
+  await boss.createQueue('notification.send', { policy: 'singleton' });
+  await boss.schedule('notification.send', '*/10 * * * * *', null, { tz: 'UTC' });
+  await boss.work('notification.send', async () => {
+    const r = await runNotificationSend();
+    if (r.deliveredCount > 0 || r.suppressedCount > 0) {
+      console.log(`JOB-02: delivered ${r.deliveredCount}, suppressed ${r.suppressedCount} notifications`);
+    }
+  });
+
+  // JOB-06: subscription.check (hourly sweep)
+  await boss.createQueue('subscription.check', { policy: 'singleton' });
+  await boss.schedule('subscription.check', '0 * * * *', null, { tz: 'UTC' });
+  await boss.work('subscription.check', async () => {
+    const r = await runSubscriptionCheck();
+    if (r.expiredCount > 0) {
+      console.log(`JOB-06: transitioned ${r.expiredCount} expired trial modules`);
+    }
+  });
+
+  // JOB-07: usage.metering (daily 02:00 UTC)
+  await boss.createQueue('usage.metering', { policy: 'singleton' });
+  await boss.schedule('usage.metering', '0 2 * * *', null, { tz: 'UTC' });
+  await boss.work('usage.metering', async () => {
+    const r = await runUsageMetering();
+    console.log(`JOB-07: metered usage for ${r.tenantsMetered} tenants`);
+  });
+
+  // JOB-19: report.materialized.refresh (hourly)
+  await boss.createQueue('report.materialized.refresh', { policy: 'singleton' });
+  await boss.schedule('report.materialized.refresh', '0 * * * *', null, { tz: 'UTC' });
+  await boss.work('report.materialized.refresh', async () => {
+    await runReportMaterializedRefresh();
+  });
+
+  // JOB-20: report.scheduled.deliver (daily 06:00 UTC)
+  await boss.createQueue('report.scheduled.deliver', { policy: 'singleton' });
+  await boss.schedule('report.scheduled.deliver', '0 6 * * *', null, { tz: 'UTC' });
+  await boss.work('report.scheduled.deliver', async () => {
+    const r = await runReportScheduledDeliver();
+    if (r.deliveredCount > 0 || r.suspendedCount > 0) {
+      console.log(`JOB-20: delivered ${r.deliveredCount} scheduled reports, suspended ${r.suspendedCount}`);
+    }
   });
 
   console.log("Worker started");

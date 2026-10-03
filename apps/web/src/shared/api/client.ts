@@ -129,6 +129,19 @@ export async function apiPatch<T, B = unknown>(path: string, body?: B, signal?: 
   return handleResponse<T>(res);
 }
 
+export async function apiPut<T, B = unknown>(path: string, body?: B, signal?: AbortSignal): Promise<T> {
+  const isJsdom = typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
+  const headers = buildHeaders(body !== undefined ? { "Content-Type": "application/json" } : undefined);
+  const res = await fetch(`${apiBase()}${path}`, {
+    method: "PUT",
+    headers,
+    credentials: "include",
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    ...(signal && !isJsdom ? { signal } : {}),
+  });
+  return handleResponse<T>(res);
+}
+
 export async function apiDelete<T>(path: string, signal?: AbortSignal): Promise<T> {
   const isJsdom = typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
   const res = await fetch(`${apiBase()}${path}`, {

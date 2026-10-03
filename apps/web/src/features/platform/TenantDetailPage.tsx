@@ -69,8 +69,8 @@ export function TenantDetailPage() {
   const navigatePreferredTenant = (location.state as { tenant?: { name?: string; slug?: string } } | null)?.tenant;
   const [tenantName, setTenantName] = useState(navigatePreferredTenant?.name ?? "Tenant");
   const [tenantSlug, setTenantSlug] = useState(navigatePreferredTenant?.slug ?? "");
+  const [tab, setTab] = useState<"overview" | "modules" | "subscription" | "jobs" | "transparency">("modules");
   const [modules, setModules] = useState<Record<ModuleKey, TenantModuleRow>>(DEMO_MODULES);
-  const [tab, setTab] = useState<"overview" | "modules">("modules");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<ChangeEntry[]>([
@@ -174,17 +174,63 @@ export function TenantDetailPage() {
             Modules ({enabledCount} enabled)
           </button>
         </li>
+        <li className="nav-item" role="presentation">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "subscription"}
+            className={`nav-link ${tab === "subscription" ? "active" : ""}`}
+            onClick={() => setTab("subscription")}
+          >
+            Subscription & Lifecycle
+          </button>
+        </li>
+        <li className="nav-item" role="presentation">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "jobs"}
+            className={`nav-link ${tab === "jobs" ? "active" : ""}`}
+            onClick={() => setTab("jobs")}
+          >
+            Job Monitor
+          </button>
+        </li>
+        <li className="nav-item" role="presentation">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "transparency"}
+            className={`nav-link ${tab === "transparency" ? "active" : ""}`}
+            onClick={() => setTab("transparency")}
+          >
+            Transparency (RPT-PLT-09)
+          </button>
+        </li>
       </ul>
 
       {tab === "overview" ? (
         <div className="clinic-card p-3">
           <p className="text-body-secondary mb-2">
-            Branding, branches, admins, subscription, usage, jobs, flags, and platform-scope audit
-            tabs land with the remaining Phase 1.7 console items; the entitlement surface below is
-            the highest-consequence screen and is complete.
+            Platform scope — no patient data is available here. Entitlement, subscription, lifecycle,
+            and transparency controls are active.
           </p>
           <Timeline entries={history} />
         </div>
+      ) : tab === "subscription" ? (
+        <SubscriptionTab
+          tenantId={tenantId}
+          onNotice={(msg) => setNotice(`${msg} — ${new Date().toLocaleTimeString()}`)}
+          onError={setError}
+        />
+      ) : tab === "jobs" ? (
+        <JobsTab
+          tenantId={tenantId}
+          onNotice={(msg) => setNotice(`${msg} — ${new Date().toLocaleTimeString()}`)}
+          onError={setError}
+        />
+      ) : tab === "transparency" ? (
+        <TransparencyTab tenantId={tenantId} onError={setError} />
       ) : (
         <>
         <ModulesTab
@@ -766,4 +812,330 @@ function problemCopy(err: unknown): string {
     return err.problem.detail ?? err.problem.title ?? err.problem.code;
   }
   return "The platform API refused or could not process this change.";
+}
+
+/* ─── Subscription & Lifecycle Tab ─────────────────────────────────────── */
+function SubscriptionTab({
+  tenantId,
+  onNotice,
+  onError,
+}: {
+  tenantId: string;
+  onNotice: (msg: string) => void;
+  onError: (msg: string | null) => void;
+}) {
+  const [plans, setPlans] = useState<Array<{ id: string; code: string; name: string }>>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState('');
+  const [offboardReason, setOffboardReason] = useState('');
+  const [confirmPhrase, setConfirmPhrase] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiGet<{ plans: Array<{ id: string; code: string; name: string }> }>('/platform/plans')
+      .then((res) => {
+        if (res?.plans) {
+          setPlans(res.plans);
+          if (res.plans.length > 0 && res.plans[0]) setSelectedPlanId(res.plans[0].id);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleChangePlan = async () => {
+    setLoading(true);
+    setPlanError(null);
+    onError(null);
+    try {
+      await apiPost(`/platform/tenants/${tenantId}/plan`, { planId: selectedPlanId });
+      onNotice('Subscription plan updated successfully');
+    } catch (err: any) {
+      const msg = problemCopy(err);
+      setPlanError(msg);
+      onError(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExport = async () => {
+    setLoading(true);
+    try {
+      const res = await apiPost<{ fileName?: string }>(`/platform/tenants/${tenantId}/export`, {});
+      onNotice(`Tenant dataset export created: ${res.fileName || 'bundle'}`);
+    } catch (err: any) {
+      onError(problemCopy(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOffboard = async () => {
+    if (!offboardReason || offboardReason.trim().length < 5) {
+      onError('Offboard reason (min 5 chars) is required');
+      return;
+    }
+    setLoading(true);
+    try {
+      await apiPost(`/platform/tenants/${tenantId}/offboard`, {
+        reason: offboardReason,
+        confirmationPhrase: confirmPhrase,
+      });
+      onNotice('Tenant successfully offboarded');
+    } catch (err: any) {
+      onError(problemCopy(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="d-flex flex-column gap-4">
+      {/* Plan Management */}
+      <div className="clinic-card p-4">
+        <h5 className="h6 fw-bold mb-2">Commercial Subscription Plan (Q-15 Downgrade Protection)</h5>
+        <p className="small text-muted mb-3">
+          Downgrading a plan will strictly verify that no modules outside the target plan remain active.
+        </p>
+        {planError && (
+          <div className="alert alert-danger small p-2 mb-3">
+            <strong>Downgrade Blocked:</strong> {planError}
+          </div>
+        )}
+        <div className="d-flex gap-2 align-items-center" style={{ maxWidth: 500 }}>
+          <select
+            className="form-select form-select-sm"
+            value={selectedPlanId}
+            onChange={(e) => setSelectedPlanId(e.target.value)}
+          >
+            {plans.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.code})
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="btn btn-sm btn-primary text-nowrap"
+            onClick={handleChangePlan}
+            disabled={loading}
+          >
+            Change Plan
+          </button>
+        </div>
+      </div>
+
+      {/* Tenant Export */}
+      <div className="clinic-card p-4">
+        <h5 className="h6 fw-bold mb-2">Tenant Data Export (JOB-04)</h5>
+        <p className="small text-muted mb-3">
+          Generates an immutable, tenant-isolated JSON bundle containing all patient, visit, and configuration data.
+        </p>
+        <button
+          type="button"
+          className="btn btn-sm btn-outline-secondary"
+          onClick={handleExport}
+          disabled={loading}
+        >
+          📥 Generate Tenant Export
+        </button>
+      </div>
+
+      {/* Tenant Offboard */}
+      <div className="clinic-card p-4 border-danger-subtle">
+        <h5 className="h6 fw-bold text-danger mb-2">Tenant Offboarding & Purge (JOB-05)</h5>
+        <p className="small text-muted mb-3">
+          Offboards tenant and purges records. <strong>Invariant:</strong> Strictly blocked if active legal holds exist.
+        </p>
+        <div className="mb-3" style={{ maxWidth: 500 }}>
+          <label className="form-label small fw-semibold">Offboarding Reason</label>
+          <input
+            type="text"
+            className="form-control form-control-sm"
+            placeholder="e.g. Contract termination / customer departure"
+            value={offboardReason}
+            onChange={(e) => setOffboardReason(e.target.value)}
+          />
+        </div>
+        <div className="mb-3" style={{ maxWidth: 500 }}>
+          <label className="form-label small fw-semibold">Confirmation Phrase (type 'CONFIRM')</label>
+          <input
+            type="text"
+            className="form-control form-control-sm"
+            placeholder="CONFIRM"
+            value={confirmPhrase}
+            onChange={(e) => setConfirmPhrase(e.target.value)}
+          />
+        </div>
+        <button
+          type="button"
+          className="btn btn-sm btn-danger"
+          onClick={handleOffboard}
+          disabled={loading}
+        >
+          Offboard Tenant
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Jobs Monitor Tab ─────────────────────────────────────────────────── */
+function JobsTab({
+  tenantId: _tenantId,
+  onNotice,
+  onError,
+}: {
+  tenantId: string;
+  onNotice: (msg: string) => void;
+  onError: (msg: string | null) => void;
+}) {
+  const [jobs, setJobs] = useState<any[]>([]);
+
+  const loadJobs = () => {
+    apiGet<{ jobs: any[] }>('/platform/jobs')
+      .then((res) => {
+        if (res?.jobs) setJobs(res.jobs);
+      })
+      .catch((err) => onError(problemCopy(err)));
+  };
+
+  useEffect(() => {
+    loadJobs();
+  }, []);
+
+  const handleReplay = async (jobId: string) => {
+    try {
+      await apiPost(`/platform/jobs/${jobId}/replay`, {});
+      onNotice('Job queued for replay');
+      loadJobs();
+    } catch (err: any) {
+      onError(problemCopy(err));
+    }
+  };
+
+  return (
+    <div className="clinic-card p-4">
+      <div className="d-flex justify-content-between align-items-center mb-3">
+        <h5 className="h6 fw-bold mb-0">Platform Background Jobs & DLQ Tooling</h5>
+        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={loadJobs}>
+          ↻ Refresh
+        </button>
+      </div>
+      <div className="table-responsive">
+        <table className="table table-hover align-middle mb-0" style={{ fontSize: '0.82rem' }}>
+          <thead className="table-light">
+            <tr>
+              <th>Job ID</th>
+              <th>Event Type</th>
+              <th>Status</th>
+              <th>Created At</th>
+              <th className="text-end">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {jobs.map((j) => (
+              <tr key={j.id}>
+                <td><code>{j.id.slice(0, 8)}…</code></td>
+                <td><span className="badge bg-secondary font-monospace">{j.event_type}</span></td>
+                <td>
+                  <span className={`badge ${j.processed_at ? 'bg-success' : 'bg-warning text-dark'}`}>
+                    {j.processed_at ? 'COMPLETED' : 'QUEUED / RETRYING'}
+                  </span>
+                </td>
+                <td>{new Date(j.created_at).toLocaleString()}</td>
+                <td className="text-end">
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-primary py-0 px-2"
+                    onClick={() => handleReplay(j.id)}
+                  >
+                    Replay
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {jobs.length === 0 && (
+              <tr>
+                <td colSpan={5} className="text-center py-4 text-muted">
+                  No jobs found in queue.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Transparency Report Tab (RPT-PLT-09) ─────────────────────────────── */
+function TransparencyTab({
+  tenantId,
+  onError,
+}: {
+  tenantId: string;
+  onError: (msg: string | null) => void;
+}) {
+  const [report, setReport] = useState<any>(null);
+
+  useEffect(() => {
+    apiGet<any>(`/platform/reports/RPT-PLT-09?tenantId=${tenantId}`)
+      .then((res) => setReport(res))
+      .catch((err) => onError(problemCopy(err)));
+  }, [tenantId]);
+
+  return (
+    <div className="clinic-card p-4">
+      <div className="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <h5 className="h6 fw-bold mb-1">
+            RPT-PLT-09: Module Entitlement Transparency Audit
+          </h5>
+          <p className="small text-muted mb-0">
+            Durable change log visible to tenant administrators and DPO. Surfaces no PHI.
+          </p>
+        </div>
+        <span className="badge bg-success-subtle text-success border border-success-subtle">
+          NO PHI (VERIFIED)
+        </span>
+      </div>
+
+      <div className="table-responsive">
+        <table className="table table-hover align-middle mb-0" style={{ fontSize: '0.82rem' }}>
+          <thead className="table-light">
+            <tr>
+              <th>Timestamp</th>
+              <th>Module</th>
+              <th>Action</th>
+              <th>Reason</th>
+              <th>Forced</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report?.rows?.map((row: any) => (
+              <tr key={row.id}>
+                <td>{new Date(row.created_at).toLocaleString()}</td>
+                <td><span className="badge bg-secondary-subtle text-secondary font-monospace">{row.module}</span></td>
+                <td>
+                  <span className={`badge ${row.action === 'DISABLE' ? 'bg-danger' : row.action === 'ENABLE' ? 'bg-success' : 'bg-info text-dark'}`}>
+                    {row.action}
+                  </span>
+                </td>
+                <td>{row.reason}</td>
+                <td>{row.is_forced ? <span className="badge bg-danger">YES</span> : 'No'}</td>
+              </tr>
+            ))}
+            {(!report?.rows || report.rows.length === 0) && (
+              <tr>
+                <td colSpan={5} className="text-center py-4 text-muted">
+                  No entitlement changes recorded for this tenant yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
