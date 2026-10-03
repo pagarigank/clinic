@@ -1320,14 +1320,14 @@ export type UpdateGenericNameRequest = z.infer<typeof UpdateGenericNameSchema>;
 // Drug Products (PHM-T1)
 export const CreateDrugProductSchema = z.object({
   code: z.string().min(1).max(50),
-  name: z.string().min(1).max(200),
+  name: z.string().min(1).max(200).optional(),
   genericId: z.string().uuid(),
   brandName: z.string().min(1).max(200),
   strength: z.string().min(1).max(100),
   dosageForm: z.string().min(1).max(100),
   route: z.string().min(1).max(100),
   packSize: z.number().int().positive().default(1),
-  baseUomId: z.string().uuid(),
+  baseUomId: z.string().uuid().optional(),
   fdaRegNo: z.string().max(100).optional(),
   rxRequired: z.enum(['OTC', 'RX', 'CONTROLLED']).default('RX'),
   controlledSchedule: z.enum([
@@ -1338,6 +1338,7 @@ export const CreateDrugProductSchema = z.object({
   highAlert: z.boolean().default(false),
   allergyClass: z.string().max(100).optional(),
   standardCost: z.number().min(0).default(0),
+  price: z.number().min(0).optional(),
   minShelfLifeDays: z.number().int().min(0).default(30),
 });
 export type CreateDrugProductRequest = z.input<typeof CreateDrugProductSchema>;
@@ -1354,6 +1355,7 @@ export const UpdateDrugProductSchema = z.object({
   highAlert: z.boolean().optional(),
   allergyClass: z.string().max(100).optional(),
   standardCost: z.number().min(0).optional(),
+  price: z.number().min(0).optional(),
 });
 export type UpdateDrugProductRequest = z.infer<typeof UpdateDrugProductSchema>;
 

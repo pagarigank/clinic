@@ -81,7 +81,7 @@ export class TenantConfigService {
           `SELECT sc.id
            FROM service_catalog sc
            WHERE sc.tenant_id = $1 AND sc.deleted_at IS NULL
-             AND sc.id IN (SELECT service_id FROM items WHERE item_type = 'MEDICINE' AND service_id IS NOT NULL AND tenant_id = $1)`,
+             AND (sc.code LIKE 'RX-%' OR sc.id IN (SELECT service_id FROM items WHERE item_type = 'MEDICINE' AND service_id IS NOT NULL AND tenant_id = $1))`,
           [tenantId],
         );
         targetServiceIds = res.rows.map((r) => r.id);
@@ -90,7 +90,7 @@ export class TenantConfigService {
           `SELECT sc.id
            FROM service_catalog sc
            WHERE sc.tenant_id = $1 AND sc.deleted_at IS NULL
-             AND sc.id IN (SELECT service_id FROM items WHERE item_type IN ('SUPPLY', 'CONSUMABLE', 'EQUIPMENT', 'REAGENT') AND service_id IS NOT NULL AND tenant_id = $1)`,
+             AND (sc.code LIKE 'SUP-%' OR sc.id IN (SELECT service_id FROM items WHERE item_type IN ('SUPPLY', 'CONSUMABLE', 'EQUIPMENT', 'REAGENT') AND service_id IS NOT NULL AND tenant_id = $1))`,
           [tenantId],
         );
         targetServiceIds = res.rows.map((r) => r.id);
@@ -146,22 +146,22 @@ export class TenantConfigService {
       ]);
 
       // 3. Insert effective-dated entries into price_lists
-      const effectiveDate = dto.effectiveFrom ?? new Date().toISOString().slice(0, 10);
       for (const row of updated.rows) {
         await tx.query(
           `INSERT INTO price_lists (tenant_id, service_id, amount, effective_from)
-           VALUES ($1, $2, $3, $4)`,
-          [tenantId, row.id, Number(row.default_price), effectiveDate],
+           VALUES ($1, $2, $3, COALESCE($4::date, CURRENT_DATE))`,
+          [tenantId, row.id, Number(row.default_price), dto.effectiveFrom ?? null],
         );
       }
 
       return {
         adjustedCount: updated.rowCount ?? 0,
+        count: updated.rowCount ?? 0,
         target: dto.target,
         direction: dto.direction,
         adjustmentType: dto.adjustmentType,
         value: dto.value,
-        effectiveFrom: effectiveDate,
+        effectiveFrom: dto.effectiveFrom ?? new Date().toISOString().slice(0, 10),
         message: `Successfully adjusted ${updated.rowCount ?? 0} item prices for ${dto.target} (${isIncrease ? '+' : '-'}${dto.value}${isPercent ? '%' : ''}).`,
       };
     });

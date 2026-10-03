@@ -37,6 +37,7 @@ import { DispenseWorkbenchPage } from "./features/pharmacy/DispenseWorkbenchPage
 import { ControlledRegisterPage } from "./features/pharmacy/ControlledRegisterPage.js";
 import { OtcSalesPage } from "./features/pharmacy/OtcSalesPage.js";
 import { MedicationAdminPage } from "./features/pharmacy/MedicationAdminPage.js";
+import { DrugCatalogPage } from "./features/pharmacy/DrugCatalogPage.js";
 import { LabWorklistPage } from "./features/laboratory/LabWorklistPage.js";
 import { ResultEntryPage } from "./features/laboratory/ResultEntryPage.js";
 import { VerificationQueuePage } from "./features/laboratory/VerificationQueuePage.js";
@@ -97,6 +98,7 @@ const router = createBrowserRouter([
           { path: "sales", element: <OtcSalesPage /> },
           { path: "sales/:id", element: <OtcSalesPage /> },
           { path: "administrations", element: <MedicationAdminPage /> },
+          { path: "catalog", element: <DrugCatalogPage /> },
         ],
       },
       {

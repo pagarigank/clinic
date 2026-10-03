@@ -115,6 +115,7 @@ export class SupplyService {
         FROM items i
         LEFT JOIN uoms u ON u.id = i.base_uom_id
         LEFT JOIN item_categories c ON c.id = i.category_id
+        LEFT JOIN service_catalog sc ON sc.id = i.service_id AND sc.tenant_id = i.tenant_id
         WHERE i.tenant_id = $1
       `;
       const params: unknown[] = [tenantId];
@@ -127,18 +128,40 @@ export class SupplyService {
         query += ` AND (i.name ILIKE $${params.length} OR i.code ILIKE $${params.length})`;
       }
       query += ` ORDER BY i.name ASC`;
-      const res = await tx.query(query, params);
+      const res = await tx.query(
+        `SELECT i.*, u.code as uom_code, c.name as category_name,
+                COALESCE(
+                  (SELECT pl.amount FROM price_lists pl
+                   WHERE pl.service_id = i.service_id AND pl.tenant_id = i.tenant_id
+                     AND pl.effective_from <= CURRENT_DATE
+                          ORDER BY pl.effective_from DESC, pl.created_at DESC LIMIT 1),
+                  sc.default_price,
+                  0
+                )::numeric as price
+          ${query.slice(query.indexOf('FROM items i'))}`,
+        params,
+      );
       return res.rows;
     });
   }
 
-  async getItem(tenantId: string, id: string) {
-    return withTenant({ tenantId }, async (tx) => {
-      const res = await tx.query(
-        `SELECT i.*, u.code as uom_code, c.name as category_name
+  async getItem(tenantId: string, id: string, tx?: any) {
+    const runner = async (client: any) => {
+      const res = await client.query(
+        `SELECT i.*, u.code as uom_code, c.name as category_name,
+                COALESCE(
+                  (SELECT pl.amount FROM price_lists pl
+                   WHERE pl.service_id = i.service_id AND pl.tenant_id = i.tenant_id
+                     AND pl.effective_from <= CURRENT_DATE
+                     AND (pl.effective_to IS NULL OR pl.effective_to >= CURRENT_DATE)
+                   ORDER BY pl.effective_from DESC, pl.created_at DESC LIMIT 1),
+                  sc.default_price,
+                  0
+                )::numeric as price
          FROM items i
          LEFT JOIN uoms u ON u.id = i.base_uom_id
          LEFT JOIN item_categories c ON c.id = i.category_id
+         LEFT JOIN service_catalog sc ON sc.id = i.service_id AND sc.tenant_id = i.tenant_id
          WHERE i.tenant_id = $1 AND i.id = $2`,
         [tenantId, id],
       );
@@ -146,33 +169,55 @@ export class SupplyService {
         throw new ProblemException('NOT_FOUND', { detail: 'Item not found' });
       }
       return res.rows[0];
-    });
+    };
+
+    if (tx) return runner(tx);
+    return withTenant({ tenantId }, runner);
   }
 
   async createItem(tenantId: string, dto: CreateItemRequest) {
     return withTenant({ tenantId }, async (tx) => {
+      let serviceId: string | null = null;
+      const scRes = await tx.query(
+        `INSERT INTO service_catalog (tenant_id, code, name, category, default_price, is_active)
+         VALUES ($1, $2, $3, 'other', $4, true)
+         ON CONFLICT (tenant_id, code) DO UPDATE SET name = EXCLUDED.name, default_price = EXCLUDED.default_price
+         RETURNING id`,
+        [tenantId, `SUP-${dto.code.trim().toUpperCase()}`, dto.name.trim(), dto.price ?? 0],
+      );
+      serviceId = scRes.rows[0]?.id ?? null;
+
+      if (serviceId && dto.price !== undefined && dto.price > 0) {
+        await tx.query(
+          `INSERT INTO price_lists (tenant_id, service_id, amount, effective_from)
+           VALUES ($1, $2, $3, CURRENT_DATE)`,
+          [tenantId, serviceId, dto.price],
+        );
+      }
+
       const res = await tx.query(
         `INSERT INTO items (
            tenant_id, code, name, item_type, category_id, base_uom_id,
            is_batch_tracked, is_expiry_tracked, storage_conditions, is_hazardous,
-           standard_cost, min_shelf_life_days_on_receipt
+           standard_cost, min_shelf_life_days_on_receipt, service_id
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          RETURNING *`,
         [
-          tenantId, dto.code, dto.name, dto.itemType, dto.categoryId ?? null, dto.baseUomId,
+          tenantId, dto.code.trim().toUpperCase(), dto.name.trim(), dto.itemType, dto.categoryId ?? null, dto.baseUomId,
           dto.isBatchTracked ?? false, dto.isExpiryTracked ?? false, dto.storageConditions ?? null,
           dto.isHazardous ?? false, dto.standardCost ?? 0, dto.minShelfLifeDaysOnReceipt ?? 0,
+          serviceId,
         ],
       );
-      return res.rows[0];
+      return { ...res.rows[0], price: dto.price ?? 0 };
     });
   }
 
   async updateItem(tenantId: string, id: string, dto: UpdateItemRequest) {
     return withTenant({ tenantId }, async (tx) => {
       const existing = await this.getItem(tenantId, id);
-      const res = await tx.query(
+      await tx.query(
         `UPDATE items
          SET name = COALESCE($1, name),
              storage_conditions = COALESCE($2, storage_conditions),
@@ -189,7 +234,41 @@ export class SupplyService {
           dto.categoryId ?? null, tenantId, id,
         ],
       );
-      return res.rows[0];
+
+      let serviceId = existing.service_id;
+      if (dto.price !== undefined) {
+        if (!serviceId) {
+          const scRes = await tx.query(
+            `INSERT INTO service_catalog (tenant_id, code, name, category, default_price, is_active)
+             VALUES ($1, $2, $3, 'other', $4, true)
+             ON CONFLICT (tenant_id, code) DO UPDATE SET default_price = EXCLUDED.default_price
+             RETURNING id`,
+            [tenantId, `SUP-${existing.code}`, dto.name ?? existing.name, dto.price],
+          );
+          serviceId = scRes.rows[0]?.id;
+          if (serviceId) {
+            await tx.query(
+              `UPDATE items SET service_id = $1 WHERE tenant_id = $2 AND id = $3`,
+              [serviceId, tenantId, id],
+            );
+          }
+        } else {
+          await tx.query(
+            `UPDATE service_catalog SET default_price = $1, name = COALESCE($2, name), updated_at = now() WHERE tenant_id = $3 AND id = $4`,
+            [dto.price, dto.name ?? null, tenantId, serviceId],
+          );
+        }
+
+        if (serviceId && dto.price > 0) {
+          await tx.query(
+            `INSERT INTO price_lists (tenant_id, service_id, amount, effective_from)
+             VALUES ($1, $2, $3, CURRENT_DATE)`,
+            [tenantId, serviceId, dto.price],
+          );
+        }
+      }
+
+      return this.getItem(tenantId, id, tx);
     });
   }
 

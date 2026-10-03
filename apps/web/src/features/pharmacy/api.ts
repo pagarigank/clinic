@@ -1,10 +1,48 @@
-import { apiGet, apiPost } from "../../shared/api/client.js";
+import { apiGet, apiPost, apiPatch, apiDelete } from "../../shared/api/client.js";
 import type {
   CreateDispenseRequest,
   PostDispenseRequest,
   VoidDispenseRequest,
   DispenseItemInput,
+  CreateDrugProductRequest,
+  UpdateDrugProductRequest,
+  BulkPriceAdjustRequest,
 } from "@clinic/contracts";
+
+export interface DrugProductRow {
+  id: string;
+  item_id: string;
+  generic_id: string;
+  generic_name: string;
+  atc_code?: string | null;
+  brand_name: string;
+  strength: string;
+  dosage_form: string;
+  route: string;
+  pack_size: number;
+  fda_reg_no?: string | null;
+  rx_required: "OTC" | "RX" | "CONTROLLED";
+  controlled_schedule?: string | null;
+  storage: "ROOM" | "COLD";
+  is_formulary: boolean;
+  high_alert: boolean;
+  allergy_class?: string | null;
+  item_code: string;
+  item_name: string;
+  standard_cost: number | string;
+  price: number | string;
+  base_uom_id: string;
+  uom_code?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface GenericNameRow {
+  id: string;
+  name: string;
+  atc_code?: string | null;
+  description?: string | null;
+}
 
 export interface PharmacyQueueRow {
   id: string;
@@ -129,6 +167,23 @@ export interface StockLocation {
 }
 
 export const pharmacyApi = {
+  // Drug Products / Formulary Catalog
+  listProducts: () => apiGet<DrugProductRow[]>("/pharmacy/products"),
+
+  getProduct: (id: string) => apiGet<DrugProductRow>(`/pharmacy/products/${id}`),
+
+  createProduct: (data: CreateDrugProductRequest) =>
+    apiPost<DrugProductRow, CreateDrugProductRequest>("/pharmacy/products", data),
+
+  updateProduct: (id: string, data: UpdateDrugProductRequest) =>
+    apiPatch<DrugProductRow, UpdateDrugProductRequest>(`/pharmacy/products/${id}`, data),
+
+  deleteProduct: (id: string) =>
+    apiDelete<{ deleted: boolean }>(`/pharmacy/products/${id}`),
+
+  listGenerics: () => apiGet<GenericNameRow[]>("/pharmacy/generics"),
+
+  // Dispensing & Queue
   getQueue: (status = "ISSUED") =>
     apiGet<PharmacyQueueRow[]>(`/pharmacy/queue?status=${encodeURIComponent(status)}`),
 
@@ -164,6 +219,16 @@ export const pharmacyApi = {
 
   getDispenseLabel: (id: string) =>
     apiGet<Record<string, unknown>>(`/pharmacy/dispenses/${id}/label`),
+
+  bulkAdjustPricing: (data: BulkPriceAdjustRequest) =>
+    apiPost<{ adjustedCount: number; message: string }>("/admin/pricing/bulk-adjust", data),
 };
 
-export type { CreateDispenseRequest, PostDispenseRequest, DispenseItemInput };
+export type {
+  CreateDispenseRequest,
+  PostDispenseRequest,
+  DispenseItemInput,
+  CreateDrugProductRequest,
+  UpdateDrugProductRequest,
+  BulkPriceAdjustRequest,
+};

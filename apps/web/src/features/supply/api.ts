@@ -1,5 +1,10 @@
-import { apiGet, apiPost } from "../../shared/api/client.js";
-import type { PostConsumptionRequest } from "@clinic/contracts";
+import { apiGet, apiPost, apiPatch } from "../../shared/api/client.js";
+import type {
+  PostConsumptionRequest,
+  CreateItemRequest,
+  UpdateItemRequest,
+  BulkPriceAdjustRequest,
+} from "@clinic/contracts";
 
 export interface SupplyItemRow {
   id: string;
@@ -8,11 +13,29 @@ export interface SupplyItemRow {
   item_type: string;
   base_uom_id: string;
   uom_code?: string | null;
+  category_id?: string | null;
   category_name?: string | null;
-  total_on_hand: number | string;
+  total_on_hand?: number | string;
   is_batch_tracked: boolean;
   is_expiry_tracked: boolean;
   is_hazardous?: boolean;
+  standard_cost: number | string;
+  price: number | string;
+  service_id?: string | null;
+  min_shelf_life_days_on_receipt?: number | string;
+  is_active?: boolean;
+}
+
+export interface SupplyUom {
+  id: string;
+  code: string;
+  name: string;
+}
+
+export interface SupplyCategory {
+  id: string;
+  name: string;
+  description?: string | null;
 }
 
 export interface SupplyLocation {
@@ -42,11 +65,23 @@ export interface SupplyStockRow {
 export const supplyApi = {
   listItems: (params?: { itemType?: string; search?: string }) => {
     const qs = new URLSearchParams();
-    if (params?.itemType) qs.set("itemType", params.itemType);
+    if (params?.itemType && params.itemType !== "ALL") qs.set("itemType", params.itemType);
     if (params?.search) qs.set("search", params.search);
     const suffix = qs.toString();
     return apiGet<SupplyItemRow[]>(`/supply/items${suffix ? `?${suffix}` : ""}`);
   },
+
+  getItem: (id: string) => apiGet<SupplyItemRow>(`/supply/items/${id}`),
+
+  createItem: (data: CreateItemRequest) =>
+    apiPost<SupplyItemRow, CreateItemRequest>("/supply/items", data),
+
+  updateItem: (id: string, data: UpdateItemRequest) =>
+    apiPatch<SupplyItemRow, UpdateItemRequest>(`/supply/items/${id}`, data),
+
+  listUoms: () => apiGet<SupplyUom[]>("/supply/uoms"),
+
+  listCategories: () => apiGet<SupplyCategory[]>("/supply/categories"),
 
   listLocations: (branchId?: string) =>
     apiGet<SupplyLocation[]>(
@@ -64,6 +99,9 @@ export const supplyApi = {
 
   postConsumption: (data: PostConsumptionRequest) =>
     apiPost<Record<string, unknown>, PostConsumptionRequest>("/supply/consumption", data),
+
+  bulkAdjustPricing: (data: BulkPriceAdjustRequest) =>
+    apiPost<{ adjustedCount: number; message: string }>("/admin/pricing/bulk-adjust", data),
 };
 
-export type { PostConsumptionRequest };
+export type { PostConsumptionRequest, CreateItemRequest, UpdateItemRequest, BulkPriceAdjustRequest };

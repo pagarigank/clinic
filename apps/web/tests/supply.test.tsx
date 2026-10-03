@@ -16,12 +16,24 @@ const supplyApiMock = vi.hoisted(() => ({
   listLocations: vi.fn(),
   getStock: vi.fn(),
   postConsumption: vi.fn(),
+  listUoms: vi.fn(),
+  listCategories: vi.fn(),
+  createItem: vi.fn(),
+  updateItem: vi.fn(),
+  bulkAdjustPricing: vi.fn(),
 }));
 
 vi.mock("../src/features/supply/api.js", () => ({ supplyApi: supplyApiMock }));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  supplyApiMock.listUoms.mockResolvedValue([
+    { id: "uom-box", code: "BOX", name: "Box" },
+    { id: "uom-pc", code: "PC", name: "Piece" },
+  ]);
+  supplyApiMock.listCategories.mockResolvedValue([
+    { id: "cat-1", name: "Consumables" },
+  ]);
   supplyApiMock.listLocations.mockResolvedValue([
     { id: "loc-1", branch_id: "br-1", code: "CS", name: "Central Store", type: "CENTRAL_STORE" },
   ]);

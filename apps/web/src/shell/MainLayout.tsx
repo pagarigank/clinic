@@ -53,6 +53,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/pharmacy/controlled-register", icon: "📕", label: "Dangerous Drugs Book" },
       { to: "/pharmacy/sales", icon: "🛒", label: "OTC Sales" },
       { to: "/pharmacy/administrations", icon: "💉", label: "Medication Admin (MAR)" },
+      { to: "/pharmacy/catalog", icon: "💊", label: "Drug Formulary & Pricing" },
     ],
   },
   {
@@ -79,7 +80,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/supply/grn", icon: "📥", label: "Receive Delivery (GRN)" },
       { to: "/supply/requisitions", icon: "📋", label: "Requisitions & Issues" },
       { to: "/supply/issue", icon: "📤", label: "Issue / Consumption" },
-      { to: "/supply/items", icon: "🏷️", label: "Item Master" },
+      { to: "/supply/items", icon: "🏷️", label: "Item Master & Pricing" },
     ],
   },
   {

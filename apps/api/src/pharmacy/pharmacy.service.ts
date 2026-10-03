@@ -118,14 +118,23 @@ export class PharmacyService {
                 dp.dosage_form, dp.route, dp.pack_size, dp.fda_reg_no,
                 dp.rx_required, dp.controlled_schedule, dp.storage,
                 dp.is_formulary, dp.high_alert, dp.allergy_class,
-                dp.created_at, dp.updated_at,
-                i.code as item_code, i.name as item_name, i.standard_cost, i.base_uom_id,
+                i.service_id, i.code as code, i.code as item_code, i.name as item_name, i.standard_cost, i.base_uom_id,
                 gn.name as generic_name, gn.atc_code,
-                u.code as uom_code
+                u.code as uom_code,
+                COALESCE(
+                  (SELECT pl.amount FROM price_lists pl
+                   WHERE pl.service_id = i.service_id AND pl.tenant_id = i.tenant_id
+                     AND pl.effective_from <= CURRENT_DATE
+                     AND (pl.effective_to IS NULL OR pl.effective_to >= CURRENT_DATE)
+                   ORDER BY pl.effective_from DESC, pl.created_at DESC LIMIT 1),
+                  sc.default_price,
+                  0
+                )::numeric as price
          FROM drug_products dp
          JOIN items i ON i.tenant_id = dp.tenant_id AND i.id = dp.item_id
          JOIN generic_names gn ON gn.tenant_id = dp.tenant_id AND gn.id = dp.generic_id
          JOIN uoms u ON u.tenant_id = i.tenant_id AND u.id = i.base_uom_id
+         LEFT JOIN service_catalog sc ON sc.id = i.service_id AND sc.tenant_id = i.tenant_id
          WHERE dp.tenant_id = $1 AND dp.deleted_at IS NULL
          ORDER BY dp.brand_name ASC`,
         [tenantId],
@@ -138,13 +147,23 @@ export class PharmacyService {
     const runner = async (client: Tx) => {
       const res = await client.query(
         `SELECT dp.*,
-                i.code as item_code, i.name as item_name, i.standard_cost, i.base_uom_id,
+                i.service_id, i.code as code, i.code as item_code, i.name as item_name, i.standard_cost, i.base_uom_id,
                 gn.name as generic_name, gn.atc_code,
-                u.code as uom_code
+                u.code as uom_code,
+                COALESCE(
+                  (SELECT pl.amount FROM price_lists pl
+                   WHERE pl.service_id = i.service_id AND pl.tenant_id = i.tenant_id
+                     AND pl.effective_from <= CURRENT_DATE
+                     AND (pl.effective_to IS NULL OR pl.effective_to >= CURRENT_DATE)
+                   ORDER BY pl.effective_from DESC, pl.created_at DESC LIMIT 1),
+                  sc.default_price,
+                  0
+                )::numeric as price
          FROM drug_products dp
          JOIN items i ON i.tenant_id = dp.tenant_id AND i.id = dp.item_id
          JOIN generic_names gn ON gn.tenant_id = dp.tenant_id AND gn.id = dp.generic_id
          JOIN uoms u ON u.tenant_id = i.tenant_id AND u.id = i.base_uom_id
+         LEFT JOIN service_catalog sc ON sc.id = i.service_id AND sc.tenant_id = i.tenant_id
          WHERE dp.tenant_id = $1 AND dp.id = $2 AND dp.deleted_at IS NULL`,
         [tenantId, id],
       );
@@ -169,27 +188,54 @@ export class PharmacyService {
         throw new ProblemException('NOT_FOUND', { detail: 'Generic name not found' });
       }
 
-      // 2. Create item master record (medication type, batch & expiry tracked)
+      // 2. Transactionally insert or update service_catalog entry for retail pricing
+      const resolvedName = (dto.name || dto.brandName || dto.code).trim();
+      let resolvedBaseUomId = dto.baseUomId;
+      if (!resolvedBaseUomId) {
+        const uomRes = await tx.query(`SELECT id FROM uoms WHERE tenant_id = $1 ORDER BY code LIMIT 1`, [tenantId]);
+        resolvedBaseUomId = uomRes.rows[0]?.id;
+      }
+
+      let serviceId: string | null = null;
+      const scRes = await tx.query(
+        `INSERT INTO service_catalog (tenant_id, code, name, category, default_price, is_active)
+         VALUES ($1, $2, $3, 'other', $4, true)
+         ON CONFLICT (tenant_id, code) DO UPDATE SET name = EXCLUDED.name, default_price = EXCLUDED.default_price
+         RETURNING id`,
+        [tenantId, `RX-${dto.code.trim().toUpperCase()}`, resolvedName, dto.price ?? 0],
+      );
+      serviceId = scRes.rows[0]?.id ?? null;
+
+      if (serviceId && dto.price !== undefined && dto.price > 0) {
+        await tx.query(
+          `INSERT INTO price_lists (tenant_id, service_id, amount, effective_from)
+           VALUES ($1, $2, $3, CURRENT_DATE)`,
+          [tenantId, serviceId, dto.price],
+        );
+      }
+
+      // 3. Create item master record (medication type, batch & expiry tracked, with service_id)
       const itemRes = await tx.query(
         `INSERT INTO items (
            tenant_id, code, name, item_type, base_uom_id, standard_cost,
-           is_batch_tracked, is_expiry_tracked, min_shelf_life_days_on_receipt
+           is_batch_tracked, is_expiry_tracked, min_shelf_life_days_on_receipt, service_id
          )
-         VALUES ($1, $2, $3, 'MEDICINE', $4, $5, true, true, $6)
-         ON CONFLICT (tenant_id, code) DO UPDATE SET name = EXCLUDED.name, standard_cost = EXCLUDED.standard_cost
+         VALUES ($1, $2, $3, 'MEDICINE', $4, $5, true, true, $6, $7)
+         ON CONFLICT (tenant_id, code) DO UPDATE SET name = EXCLUDED.name, standard_cost = EXCLUDED.standard_cost, service_id = COALESCE(EXCLUDED.service_id, items.service_id)
          RETURNING id`,
         [
           tenantId,
           dto.code.trim().toUpperCase(),
-          dto.name.trim(),
-          dto.baseUomId,
+          resolvedName,
+          resolvedBaseUomId,
           dto.standardCost ?? 0,
           dto.minShelfLifeDays ?? 30,
+          serviceId,
         ],
       );
       const itemId = itemRes.rows[0].id;
 
-      // 3. Create drug_products record
+      // 4. Create drug_products record
       const prodRes = await tx.query(
         `INSERT INTO drug_products (
            tenant_id, item_id, generic_id, brand_name, strength, dosage_form, route,
@@ -240,6 +286,44 @@ export class PharmacyService {
         );
       }
 
+      if (dto.price !== undefined) {
+        const itemRes = await tx.query(
+          `SELECT i.id, i.code, i.name, i.service_id FROM items i WHERE i.tenant_id = $1 AND i.id = $2`,
+          [tenantId, prod.item_id],
+        );
+        const item = itemRes.rows[0];
+        let serviceId = item?.service_id;
+        if (!serviceId) {
+          const scRes = await tx.query(
+            `INSERT INTO service_catalog (tenant_id, code, name, category, default_price, is_active)
+             VALUES ($1, $2, $3, 'other', $4, true)
+             ON CONFLICT (tenant_id, code) DO UPDATE SET default_price = EXCLUDED.default_price
+             RETURNING id`,
+            [tenantId, `RX-${item?.code || prod.id}`, item?.name || 'Drug Product', dto.price],
+          );
+          serviceId = scRes.rows[0]?.id;
+          if (serviceId) {
+            await tx.query(
+              `UPDATE items SET service_id = $1 WHERE tenant_id = $2 AND id = $3`,
+              [serviceId, tenantId, prod.item_id],
+            );
+          }
+        } else {
+          await tx.query(
+            `UPDATE service_catalog SET default_price = $1, updated_at = now() WHERE tenant_id = $2 AND id = $3`,
+            [dto.price, tenantId, serviceId],
+          );
+        }
+
+        if (serviceId && dto.price > 0) {
+          await tx.query(
+            `INSERT INTO price_lists (tenant_id, service_id, amount, effective_from)
+             VALUES ($1, $2, $3, CURRENT_DATE)`,
+            [tenantId, serviceId, dto.price],
+          );
+        }
+      }
+
       await tx.query(
         `UPDATE drug_products
          SET brand_name = COALESCE($3, brand_name),
@@ -266,7 +350,7 @@ export class PharmacyService {
         ],
       );
 
-      return this.getProduct(tenantId, id);
+      return this.getProduct(tenantId, id, tx);
     });
   }
 
