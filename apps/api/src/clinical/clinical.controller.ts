@@ -39,7 +39,7 @@ import {
   CreateChargeSchema, type CreateChargeRequest,
   UpsertPractitionerProfileSchema, type UpsertPractitionerProfileRequest,
   CreateScheduleSchema, type CreateScheduleRequest,
-  CreateScheduleExceptionSchema, type CreateScheduleExceptionRequest,
+  CreateScheduleExceptionSchema,
   IssueQueueTicketSchema, type IssueQueueTicketRequest,
   QueueActionSchema, type QueueActionRequest,
 } from '@clinic/contracts';

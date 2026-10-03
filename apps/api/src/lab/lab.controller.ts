@@ -16,7 +16,7 @@ import {
   CreateLabReferenceRangeSchema, type CreateLabReferenceRangeRequest,
   CreateLabDeltaRuleSchema, type CreateLabDeltaRuleRequest,
   CreateLabInstrumentSchema, type CreateLabInstrumentRequest,
-  CreateLabTestReagentSchema, type CreateLabTestReagentRequest,
+  type CreateLabTestReagentRequest,
   CreateLabReportTemplateSchema, type CreateLabReportTemplateRequest,
   CreateLabOrderSchema, type CreateLabOrderRequest,
   CancelLabOrderSchema, type CancelLabOrderRequest,
