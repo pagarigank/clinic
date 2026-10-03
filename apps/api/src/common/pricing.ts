@@ -18,7 +18,7 @@ export async function resolveServicePrice(tx: Tx, tenantId: string, serviceId: s
       WHERE tenant_id = $1 AND service_id = $2
         AND effective_from <= CURRENT_DATE
         AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)
-      ORDER BY effective_from DESC
+      ORDER BY effective_from DESC, created_at DESC
       LIMIT 1`,
     [tenantId, serviceId],
   );
