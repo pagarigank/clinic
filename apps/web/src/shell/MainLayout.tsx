@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Outlet, NavLink, useLocation, useNavigate, Navigate } from "react-router";
 import { useAuth } from "../shared/auth/AuthContext.js";
+import { usePermissions } from "../shared/auth/PermissionsContext.js";
 import { CommandPalette } from "../shared/search/CommandPalette.js";
 import { getRegistrationRequests } from "../shared/services/registrationStore.js";
 import { apiGet, apiPost, apiPut } from "../shared/api/client.js";
@@ -65,6 +66,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/laboratory/critical-alerts", icon: "⚡", label: "Critical Alerts" },
       { to: "/laboratory/qc", icon: "📈", label: "Quality Control & LJ" },
       { to: "/laboratory/reports", icon: "📜", label: "Released Reports" },
+      { to: "/laboratory/catalog", icon: "🧪", label: "Test Catalog & Pricing" },
     ],
   },
   {
@@ -232,22 +234,54 @@ export function MainLayout() {
   const requests = getRegistrationRequests();
   const pendingApprovalsCount = requests.filter((r) => r.status === "PENDING_APPROVAL").length;
 
+  // Entitlement + permission gating of the shell (architecture §5.3):
+  // a nav group only renders when its module is enabled for the tenant, and
+  // admin items additionally require the matching admin permissions. The API
+  // guards stay authoritative — this only shapes what the user can see/click.
+  const { hasModule, hasAnyPermission } = usePermissions();
+
+  const MODULE_BY_GROUP: Record<string, string> = {
+    workspace: "patients",
+    clinical: "clinical",
+    pharmacy: "pharmacy",
+    laboratory: "laboratory",
+    supply: "supply",
+    billing: "billing",
+    admin: "admin",
+    compliance: "compliance",
+  };
+  const PERMS_BY_ITEM: Record<string, string[]> = {
+    "/admin/users": ["admin.user.read"],
+    "/admin/roles": ["admin.role.read"],
+    "/admin/branches": ["admin.branch.read"],
+    "/admin/service-catalog": ["admin.service.read", "admin.price.read"],
+    "/admin/settings": ["admin.settings.read"],
+  };
+
   const navGroups = useMemo(
     () =>
-      NAV_GROUPS.map((group) =>
-        group.id === "workspace"
-          ? {
-              ...group,
-              items: group.items.map((item) =>
+      NAV_GROUPS.map((group) => {
+        // Gating applies to authenticated sessions; without a session the
+        // content area redirects to /login and the nav is inert, so the
+        // pre-gating render contract (full nav) is preserved.
+        const gate = session !== null;
+        const requiredModule = MODULE_BY_GROUP[group.id];
+        if (gate && requiredModule && !hasModule(requiredModule)) return null;
+        const items = group.items.filter((item) => {
+          if (!gate) return true;
+          const needed = PERMS_BY_ITEM[item.to];
+          return !needed || hasAnyPermission(needed);
+        });
+        if (items.length === 0) return null;
+        const withBadges =
+          group.id === "workspace"
+            ? items.map((item) =>
                 item.to === "/patients/duplicates"
                   ? { ...item, badge: <span className="badge-pending" aria-label="JOB-22 worklist">22</span> }
                   : item,
-              ),
-            }
-          : group.id === "admin"
-            ? {
-                ...group,
-                items: group.items.map((item) =>
+              )
+            : group.id === "admin"
+              ? items.map((item) =>
                   item.to === "/admin/approvals" && pendingApprovalsCount > 0
                     ? {
                         ...item,
@@ -258,11 +292,11 @@ export function MainLayout() {
                         ),
                       }
                     : item,
-                ),
-              }
-            : group,
-      ),
-    [pendingApprovalsCount],
+                )
+              : items;
+        return { ...group, items: withBadges };
+      }).filter((g): g is NavGroup => g !== null),
+    [pendingApprovalsCount, hasModule, hasAnyPermission, session],
   );
 
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => {

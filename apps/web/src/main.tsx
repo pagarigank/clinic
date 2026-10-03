@@ -7,6 +7,7 @@ import "./shared/styles/tokens.css";
 import "./theme.css";
 import { ThemeProvider } from "./shared/theme/ThemeProvider.js";
 import { AuthProvider } from "./shared/auth/AuthContext.js";
+import { PermissionsProvider, RequirePermission } from "./shared/auth/PermissionsContext.js";
 import { StepUpProvider } from "./shared/auth/StepUpContext.js";
 import { SearchProvider } from "./shared/search/CommandPalette.js";
 import { MainLayout } from "./shell/MainLayout.js";
@@ -42,6 +43,7 @@ import { VerificationQueuePage } from "./features/laboratory/VerificationQueuePa
 import { CriticalAlertsPage } from "./features/laboratory/CriticalAlertsPage.js";
 import { LabQcPage } from "./features/laboratory/LabQcPage.js";
 import { LabReportsPage } from "./features/laboratory/LabReportsPage.js";
+import { LabCatalogPage } from "./features/laboratory/LabCatalogPage.js";
 import { BillingWorkbenchPage } from "./features/billing/BillingWorkbenchPage.js";
 import { CashierPosPage } from "./features/billing/CashierPosPage.js";
 import { CashierShiftsPage } from "./features/billing/CashierShiftsPage.js";
@@ -73,8 +75,8 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: "dashboard", element: <DashboardPage /> },
-      { path: "patients", element: <PatientsPage /> },
-      { path: "patients/duplicates", element: <DuplicateReviewPage /> },
+      { path: "patients", element: <RequirePermission module="patients" codes={["patients.read"]}><PatientsPage /></RequirePermission> },
+      { path: "patients/duplicates", element: <RequirePermission module="patients" codes={["patients.read"]}><DuplicateReviewPage /></RequirePermission> },
       {
         path: "clinical",
         children: [
@@ -107,6 +109,7 @@ const router = createBrowserRouter([
           { path: "critical-alerts", element: <CriticalAlertsPage /> },
           { path: "qc", element: <LabQcPage /> },
           { path: "reports", element: <LabReportsPage /> },
+          { path: "catalog", element: <LabCatalogPage /> },
         ],
       },
       {
@@ -135,12 +138,12 @@ const router = createBrowserRouter([
       {
         path: "admin",
         children: [
-          { path: "approvals", element: <ApprovalsPage /> },
-          { path: "users", element: <UsersPage /> },
-          { path: "roles", element: <RolesPage /> },
-          { path: "branches", element: <BranchesPage /> },
-          { path: "service-catalog", element: <CatalogPage /> },
-          { path: "settings", element: <SettingsPage /> },
+          { path: "approvals", element: <RequirePermission module="admin" codes={["admin.user.read"]}><ApprovalsPage /></RequirePermission> },
+          { path: "users", element: <RequirePermission module="admin" codes={["admin.user.read"]}><UsersPage /></RequirePermission> },
+          { path: "roles", element: <RequirePermission module="admin" codes={["admin.role.read"]}><RolesPage /></RequirePermission> },
+          { path: "branches", element: <RequirePermission module="admin" codes={["admin.branch.read"]}><BranchesPage /></RequirePermission> },
+          { path: "service-catalog", element: <RequirePermission module="admin" codes={["admin.service.read", "admin.price.read"]}><CatalogPage /></RequirePermission> },
+          { path: "settings", element: <RequirePermission module="admin" codes={["admin.settings.read"]}><SettingsPage /></RequirePermission> },
         ],
       },
       { path: "compliance", element: <CompliancePage /> },
@@ -176,7 +179,9 @@ createRoot(document.getElementById("root")!).render(
       <AuthProvider>
         <StepUpProvider>
           <SearchProvider>
-            <RouterProvider router={router} />
+            <PermissionsProvider>
+              <RouterProvider router={router} />
+            </PermissionsProvider>
           </SearchProvider>
         </StepUpProvider>
       </AuthProvider>

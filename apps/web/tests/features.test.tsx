@@ -2,6 +2,91 @@ import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { AuthProvider } from "../src/shared/auth/AuthContext.js";
+import { PermissionsProvider } from "../src/shared/auth/PermissionsContext.js";
+import { useStubHandler, type StubHandler } from "./setup.js";
+
+/**
+ * RolesPage is live-backed (specification §2.3): roles come from
+ * GET /admin/roles and the catalogue from GET /admin/permissions, so this
+ * suite stubs the loopback API (tests/setup.ts) with an admin session and a
+ * catalogue slice. Fixtures mirror the ones in rbac.test.tsx.
+ */
+const ADMIN_SESSION = {
+  user: { id: "3f1d3f1d-0000-4000-8000-0000000000e1", email: "admin@demo-a.test", name: "Demo A Admin" },
+  tenant: { id: "11111111-1111-4111-8111-111111111111", slug: "demo-a" },
+  sessionId: "3f1d3f1d-0000-4000-8000-0000000000e2",
+  amr: ["pwd"],
+  branchId: null,
+  assignedBranches: [],
+  effectiveTimezone: "Asia/Manila",
+  expiresAt: new Date(Date.now() + 600_000).toISOString(),
+  modules: ["admin"],
+  modulesVersion: 1,
+  permissions: ["admin.role.read"],
+};
+
+const ROLES = [
+  {
+    id: "3f1d3f1d-0000-4000-8000-0000000000a1",
+    code: "tenant_admin",
+    name: "Tenant Administrator",
+    isSystem: true,
+    permissions: ["admin.user.read", "admin.role.read"],
+    rowVersion: 1,
+  },
+];
+
+const CATALOGUE_SLICE = [
+  {
+    module: "admin",
+    permissions: [
+      { code: "admin.user.read", description: "View staff directory" },
+      { code: "admin.role.read", description: "View roles and permissions" },
+    ],
+  },
+];
+
+const USERS = [
+  {
+    id: "3f1d3f1d-0000-4000-8000-0000000000b1",
+    email: "dr.santos@demo-a.test",
+    name: "Dr. Maria Clara Santos",
+    status: "ACTIVE",
+    mfaEnabled: true,
+    roles: [{ id: "3f1d3f1d-0000-4000-8000-0000000000a1", code: "doctor", name: "Doctor" }],
+    branches: [],
+    lastLoginAt: null,
+    rowVersion: 1,
+  },
+  {
+    id: "3f1d3f1d-0000-4000-8000-0000000000b2",
+    email: "admin@demo-a.test",
+    name: "Tenant Administrator",
+    status: "ACTIVE",
+    mfaEnabled: true,
+    roles: [{ id: "3f1d3f1d-0000-4000-8000-0000000000a1", code: "tenant_admin", name: "Tenant Administrator" }],
+    branches: [],
+    lastLoginAt: null,
+    rowVersion: 1,
+  },
+];
+
+/** Session + roles + users stub shared by the admin screens in this file. */
+const adminStub: StubHandler = (req, res) => {
+  const url = req.url ?? "";
+  res.writeHead(200, { "content-type": "application/json" });
+  if (url.includes("/auth/session")) {
+    res.end(JSON.stringify(ADMIN_SESSION));
+  } else if (url.includes("/admin/permissions")) {
+    res.end(JSON.stringify(CATALOGUE_SLICE));
+  } else if (url.includes("/admin/roles")) {
+    res.end(JSON.stringify(ROLES));
+  } else if (url.includes("/admin/users")) {
+    res.end(JSON.stringify(USERS));
+  } else {
+    res.end(JSON.stringify({ ok: true }));
+  }
+};
 import { BranchesPage } from "../src/features/admin/BranchesPage.js";
 import { RolesPage } from "../src/features/admin/RolesPage.js";
 import { UsersPage } from "../src/features/admin/UsersPage.js";
@@ -26,32 +111,54 @@ describe("Phase 1 & 2 Frontend Feature Screens", () => {
     expect(screen.getByText(/DOH LTO licence not on file/i)).toBeInTheDocument();
   });
 
-  it("RolesPage renders system roles and Segregation of Duties (SoD) safeguards", () => {
+  it("RolesPage renders system roles and Segregation of Duties (SoD) safeguards", async () => {
+    useStubHandler((req, res) => {
+      const url = req.url ?? "";
+      res.writeHead(200, { "content-type": "application/json" });
+      if (url.includes("/auth/session")) {
+        res.end(JSON.stringify(ADMIN_SESSION));
+      } else if (url.includes("/admin/permissions")) {
+        res.end(JSON.stringify(CATALOGUE_SLICE));
+      } else if (url.includes("/admin/roles")) {
+        res.end(JSON.stringify(ROLES));
+      } else {
+        res.end(JSON.stringify({ ok: true }));
+      }
+    });
+
     render(
       <MemoryRouter>
         <AuthProvider>
-          <RolesPage />
+          <PermissionsProvider>
+            <RolesPage />
+          </PermissionsProvider>
         </AuthProvider>
       </MemoryRouter>,
     );
 
     expect(screen.getByText(/Roles & Access Control/i)).toBeInTheDocument();
     expect(screen.getByText(/Segregation of Duties \(SoD\) Enforcement Active/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/Tenant Administrator/i).length).toBeGreaterThan(0);
+    // Roles arrive asynchronously from GET /admin/roles; the name renders in
+    // both the role list and the matrix header, so use the all-variant.
+    expect((await screen.findAllByText(/Tenant Administrator/i)).length).toBeGreaterThan(0);
     expect(screen.getByText(/pharmacy.rx.verify ⚡ pharmacy.dispense.post/i)).toBeInTheDocument();
   });
 
-  it("UsersPage renders staff directory with roles and MFA security badges", () => {
+  it("UsersPage renders staff directory with roles and MFA security badges", async () => {
+    useStubHandler(adminStub);
     render(
       <MemoryRouter>
         <AuthProvider>
-          <UsersPage />
+          <PermissionsProvider>
+            <UsersPage />
+          </PermissionsProvider>
         </AuthProvider>
       </MemoryRouter>,
     );
 
     expect(screen.getByText(/Staff & User Directory/i)).toBeInTheDocument();
-    expect(screen.getByText(/Dr. Maria Clara Santos/i)).toBeInTheDocument();
+    // Rows arrive asynchronously from GET /admin/users.
+    expect(await screen.findByText("Dr. Maria Clara Santos")).toBeInTheDocument();
     expect(screen.getAllByText(/TOTP Active/i).length).toBeGreaterThan(0);
   });
 

@@ -16,16 +16,21 @@ import {
   RoleCreateSchema,
   RoleUpdateSchema,
   UserBranchAssignSchema,
+  UserCreateSchema,
+  UserPasswordResetSchema,
   UserRoleAssignSchema,
+  UserUpdateSchema,
   zodUuid,
   type EffectivePermissions,
   type PermissionDto,
   type RoleDto,
+  type UserList,
 } from "@clinic/contracts";
 import { ZodValidationPipe } from "../http/zod-validation.pipe.js";
 import { ProblemException } from "../http/problem.exception.js";
 import { RequireStepUp, type RequestWithAuth } from "../auth/auth-context.js";
 import { RbacService } from "./rbac.service.js";
+import { UsersService } from "./users.service.js";
 import { RequirePermission } from "./require-permission.decorator.js";
 import { Module, ModuleAllowlist } from "./module.guard.js";
 
@@ -46,7 +51,10 @@ function caller(request: AuthedRequest): { tenantId: string; userId: string; bra
 // forgotten method-level @Module() then inherits `admin` rather than leaking.
 @Module("admin")
 export class RbacController {
-  constructor(@Inject(RbacService) private readonly rbac: RbacService) {}
+  constructor(
+    @Inject(RbacService) private readonly rbac: RbacService,
+    @Inject(UsersService) private readonly users: UsersService,
+  ) {}
 
   // ---- catalogue -----------------------------------------------------------
 
@@ -159,6 +167,105 @@ export class RbacController {
     return { assigned: dto.branchIds.length };
   }
 
+  // ---- user directory + lifecycle (specification §18.2, lines 1029–1035) ----------
+
+  @RequirePermission("admin.user.read")
+  @Get("admin/users")
+  listUsers(@Req() request: AuthedRequest): Promise<UserList[]> {
+    const { tenantId, userId } = caller(request);
+    return this.users.list(tenantId, userId);
+  }
+
+  @RequirePermission("admin.user.create")
+  @Post("admin/users")
+  createUser(
+    @Req() request: AuthedRequest,
+    @Body(new ZodValidationPipe(UserCreateSchema)) dto: UserCreateInput,
+  ): Promise<UserList> {
+    const { tenantId, userId } = caller(request);
+    return this.users.create(tenantId, userId, dto);
+  }
+
+  @RequirePermission("admin.user.read")
+  @Get("admin/users/:id")
+  async getUser(
+    @Req() request: AuthedRequest,
+    @Param("id", new ZodValidationPipe(zodUuid)) id: string,
+  ): Promise<UserList> {
+    const { tenantId, userId } = caller(request);
+    const all = await this.users.list(tenantId, userId);
+    const found = all.find((u) => u.id === id);
+    if (!found) throw new ProblemException("NOT_FOUND", { detail: "user not found" });
+    return found;
+  }
+
+  @RequirePermission("admin.user.update")
+  @Patch("admin/users/:id")
+  updateUser(
+    @Req() request: AuthedRequest,
+    @Param("id", new ZodValidationPipe(zodUuid)) id: string,
+    @Body(new ZodValidationPipe(UserUpdateSchema)) dto: UserUpdateInput,
+  ): Promise<UserList> {
+    const { tenantId, userId } = caller(request);
+    return this.users.update(tenantId, userId, id, dto);
+  }
+
+  @RequirePermission("admin.user.deactivate")
+  @RequireStepUp()
+  @Post("admin/users/:id/deactivate")
+  deactivateUser(
+    @Req() request: AuthedRequest,
+    @Param("id", new ZodValidationPipe(zodUuid)) id: string,
+  ): Promise<{ deactivated: true }> {
+    const { tenantId, userId } = caller(request);
+    return this.users.deactivate(tenantId, userId, id);
+  }
+
+  @RequirePermission("admin.user.deactivate")
+  @RequireStepUp()
+  @Post("admin/users/:id/reactivate")
+  reactivateUser(
+    @Req() request: AuthedRequest,
+    @Param("id", new ZodValidationPipe(zodUuid)) id: string,
+  ): Promise<{ reactivated: true }> {
+    const { tenantId, userId } = caller(request);
+    return this.users.reactivate(tenantId, userId, id);
+  }
+
+  @RequirePermission("admin.user.reset")
+  @RequireStepUp()
+  @Post("admin/users/:id/unlock")
+  unlockUser(
+    @Req() request: AuthedRequest,
+    @Param("id", new ZodValidationPipe(zodUuid)) id: string,
+  ): Promise<{ unlocked: true }> {
+    const { tenantId, userId } = caller(request);
+    return this.users.unlock(tenantId, userId, id);
+  }
+
+  @RequirePermission("admin.user.reset")
+  @RequireStepUp()
+  @Post("admin/users/:id/reset-mfa")
+  resetUserMfa(
+    @Req() request: AuthedRequest,
+    @Param("id", new ZodValidationPipe(zodUuid)) id: string,
+  ): Promise<{ reset: true }> {
+    const { tenantId, userId } = caller(request);
+    return this.users.resetMfa(tenantId, userId, id);
+  }
+
+  @RequirePermission("admin.user.reset")
+  @RequireStepUp()
+  @Post("admin/users/:id/force-password-reset")
+  forcePasswordReset(
+    @Req() request: AuthedRequest,
+    @Param("id", new ZodValidationPipe(zodUuid)) id: string,
+    @Body(new ZodValidationPipe(UserPasswordResetSchema)) dto: UserPasswordResetInput,
+  ): Promise<{ reset: true }> {
+    const { tenantId, userId } = caller(request);
+    return this.users.forcePasswordReset(tenantId, userId, id, dto);
+  }
+
   // ---- caller self-view (no admin permission required) ---------------------------
 
   // Every user needs their own effective permission set to render the UI,
@@ -185,4 +292,16 @@ interface RoleUpdateInput {
 interface RoleCloneInput {
   code: string;
   name: string;
+}
+interface UserCreateInput {
+  email: string;
+  name: string;
+  roleIds?: string[];
+}
+interface UserUpdateInput {
+  name?: string;
+  rowVersion?: number;
+}
+interface UserPasswordResetInput {
+  newPassword: string;
 }

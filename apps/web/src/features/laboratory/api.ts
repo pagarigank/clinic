@@ -8,6 +8,8 @@ import type {
   AckCriticalNotificationRequest,
   ReleaseLabReportRequest,
   CreateLabQcRunRequest,
+  CreateLabTestRequest,
+  BulkPriceAdjustRequest,
 } from "@clinic/contracts";
 
 export interface LabSection {
@@ -63,6 +65,7 @@ export interface LabTest {
   is_panel: boolean;
   requires_pathologist_review: boolean;
   is_active: boolean;
+  price?: number;
   section_name?: string;
   specimen_type_name?: string;
   analytes?: LabAnalyte[];
@@ -233,6 +236,10 @@ export const labApi = {
     return apiGet<LabTest[]>(`/lab/tests?${qs.toString()}`);
   },
   getTest: (id: string) => apiGet<LabTest>(`/lab/tests/${id}`),
+  createTest: (data: CreateLabTestRequest & { price?: number }) => apiPost<LabTest>("/lab/tests", data),
+  updateTest: (id: string, data: Partial<CreateLabTestRequest> & { price?: number }) => apiPatch<LabTest>(`/lab/tests/${id}`, data),
+  deleteTest: (id: string) => apiDelete<{ success: boolean }>(`/lab/tests/${id}`),
+  bulkAdjustPricing: (data: BulkPriceAdjustRequest) => apiPost<{ adjustedCount: number; message: string }>("/admin/pricing/bulk-adjust", data),
   listInstruments: (branchId?: string) => {
     const qs = branchId ? `?branchId=${branchId}` : "";
     return apiGet<LabInstrument[]>(`/lab/instruments${qs}`);

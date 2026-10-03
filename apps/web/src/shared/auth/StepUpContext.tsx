@@ -23,7 +23,9 @@ import { apiPost } from "../api/client.js";
  */
 
 export interface StepUpSuccess {
-  accessToken: string;
+  stepUpToken?: string;
+  expiresIn?: number;
+  accessToken?: string;
 }
 
 /** True when the problem is the step-up challenge (401 STEP_UP_REQUIRED). */
@@ -77,12 +79,15 @@ export function StepUpProvider({ children }: { children: ReactNode }) {
       // The API also accepts a TOTP code for MFA-enrolled users; the passphrase
       // path is the default the contract documents (apps/api auth.controller).
       const res = await apiPost<StepUpSuccess>("/auth/step-up", { password: passphrase });
-      if (res?.accessToken) {
-        const { setAccessToken } = await import("../api/client.js");
-        setAccessToken(res.accessToken);
+      const token = res?.stepUpToken || res?.accessToken;
+      if (token) {
+        const { setStepUpToken, setAccessToken } = await import("../api/client.js");
+        if (res.stepUpToken) setStepUpToken(res.stepUpToken);
+        if (res.accessToken) setAccessToken(res.accessToken);
         // 5-minute ceiling mirrors the server; the UI simply re-challenges
         // after it lapses instead of tracking a countdown nobody reads.
-        expiryRef.current = Date.now() + 5 * 60 * 1000;
+        const ttlMs = res.expiresIn ? res.expiresIn * 1000 : 5 * 60 * 1000;
+        expiryRef.current = Date.now() + ttlMs;
         setStepUpActive(true);
       }
       pending.resolve(true);
@@ -157,4 +162,14 @@ export function useStepUp(): StepUpContextValue {
   const ctx = useContext(StepUpContext);
   if (!ctx) throw new Error("useStepUp must be used within a StepUpProvider");
   return ctx;
+}
+
+/**
+ * Fail-soft variant for pages that must also mount without a StepUpProvider
+ * (isolated component tests, future islands). Returns null instead of
+ * throwing; call sites degrade to surfacing the raw 401 problem instead of
+ * prompting for re-authentication.
+ */
+export function useStepUpOptional(): StepUpContextValue | null {
+  return useContext(StepUpContext);
 }

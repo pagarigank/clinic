@@ -132,10 +132,12 @@ export class LabService {
   async listTests(tenantId: string, options?: { isPanel?: boolean; sectionId?: string }) {
     return withTenant({ tenantId }, async (tx) => {
       let query = `
-        SELECT lt.*, ls.name as section_name, st.name as specimen_type_name
+        SELECT lt.*, ls.name as section_name, st.name as specimen_type_name,
+               COALESCE(sc.default_price, 0)::float as price, sc.id as service_id
         FROM lab_tests lt
         JOIN lab_sections ls ON ls.id = lt.section_id AND ls.tenant_id = lt.tenant_id
         JOIN lab_specimen_types st ON st.id = lt.specimen_type_id AND st.tenant_id = lt.tenant_id
+        LEFT JOIN service_catalog sc ON sc.id = lt.service_id AND sc.tenant_id = lt.tenant_id
         WHERE lt.tenant_id = $1 AND lt.is_active = true
       `;
       const params: any[] = [tenantId];
@@ -156,10 +158,12 @@ export class LabService {
   async getTest(tenantId: string, id: string) {
     return withTenant({ tenantId }, async (tx) => {
       const res = await tx.query(
-        `SELECT lt.*, ls.name as section_name, st.name as specimen_type_name
+        `SELECT lt.*, ls.name as section_name, st.name as specimen_type_name,
+                COALESCE(sc.default_price, 0)::float as price, sc.id as service_id
          FROM lab_tests lt
          JOIN lab_sections ls ON ls.id = lt.section_id AND ls.tenant_id = lt.tenant_id
          JOIN lab_specimen_types st ON st.id = lt.specimen_type_id AND st.tenant_id = lt.tenant_id
+         LEFT JOIN service_catalog sc ON sc.id = lt.service_id AND sc.tenant_id = lt.tenant_id
          WHERE lt.tenant_id = $1 AND lt.id = $2`,
         [tenantId, id],
       );
@@ -192,14 +196,33 @@ export class LabService {
 
   async createTest(tenantId: string, dto: CreateLabTestRequest) {
     return withTenant({ tenantId }, async (tx) => {
+      // 1. Transactionally create the billable catalog service with category 'lab' and default price
+      const price = dto.price !== undefined ? Number(dto.price) : 0;
+      const serviceRes = await tx.query(
+        `INSERT INTO service_catalog (tenant_id, code, name, category, default_price, is_active)
+         VALUES ($1, $2, $3, 'lab', $4, true)
+         RETURNING id`,
+        [tenantId, dto.code, dto.name, price],
+      );
+      const serviceId = serviceRes.rows[0]?.id ?? null;
+
+      if (serviceId && price > 0) {
+        await tx.query(
+          `INSERT INTO price_lists (tenant_id, service_id, amount, effective_from)
+           VALUES ($1, $2, $3, CURRENT_DATE)`,
+          [tenantId, serviceId, price],
+        );
+      }
+
+      // 2. Insert into lab_tests with linked service_id
       const res = await tx.query(
         `INSERT INTO lab_tests (
            tenant_id, section_id, specimen_type_id, code, name, loinc_code,
            tat_minutes, is_stat_allowed,
            is_confidential, fasting_required, fasting_hours, instructions,
-           is_panel, requires_pathologist_review, is_active
+           is_panel, requires_pathologist_review, is_active, service_id
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
          RETURNING *`,
         [
           tenantId,
@@ -217,9 +240,11 @@ export class LabService {
           dto.isPanel ?? false,
           dto.requiresPathologistReview ?? false,
           dto.isActive ?? true,
+          serviceId,
         ],
       );
       const test = res.rows[0];
+      test.price = price;
 
       if (dto.isPanel && dto.panelTestIds && dto.panelTestIds.length > 0) {
         for (let i = 0; i < dto.panelTestIds.length; i++) {
@@ -238,6 +263,35 @@ export class LabService {
 
   async updateTest(tenantId: string, id: string, dto: UpdateLabTestRequest) {
     return withTenant({ tenantId }, async (tx) => {
+      const existingRes = await tx.query(`SELECT service_id, name, code FROM lab_tests WHERE tenant_id = $1 AND id = $2`, [tenantId, id]);
+      if (!existingRes.rows[0]) throw new ProblemException('NOT_FOUND', { detail: 'Test not found' });
+      const existing = existingRes.rows[0];
+
+      let serviceId = existing.service_id;
+      if (dto.price !== undefined) {
+        const price = Number(dto.price);
+        if (!serviceId) {
+          const scRes = await tx.query(
+            `INSERT INTO service_catalog (tenant_id, code, name, category, default_price, is_active)
+             VALUES ($1, $2, $3, 'lab', $4, true)
+             RETURNING id`,
+            [tenantId, dto.code ?? existing.code, dto.name ?? existing.name, price],
+          );
+          serviceId = scRes.rows[0]?.id;
+          await tx.query(`UPDATE lab_tests SET service_id = $1 WHERE tenant_id = $2 AND id = $3`, [serviceId, tenantId, id]);
+        } else {
+          await tx.query(
+            `UPDATE service_catalog SET default_price = $1, name = COALESCE($2, name), updated_at = now() WHERE tenant_id = $3 AND id = $4`,
+            [price, dto.name ?? null, tenantId, serviceId],
+          );
+        }
+        await tx.query(
+          `INSERT INTO price_lists (tenant_id, service_id, amount, effective_from)
+           VALUES ($1, $2, $3, CURRENT_DATE)`,
+          [tenantId, serviceId, price],
+        );
+      }
+
       const res = await tx.query(
         `UPDATE lab_tests
          SET name = COALESCE($1, name),
@@ -252,18 +306,22 @@ export class LabService {
              instructions = COALESCE($10, instructions),
              requires_pathologist_review = COALESCE($11, requires_pathologist_review),
              is_active = COALESCE($12, is_active),
+             service_id = COALESCE($13, service_id),
              updated_at = now()
-         WHERE tenant_id = $13 AND id = $14
+         WHERE tenant_id = $14 AND id = $15
          RETURNING *`,
         [
           dto.name, dto.code, dto.sectionId, dto.specimenTypeId, dto.tatMinutes,
           dto.isStatAllowed, dto.isConfidential, dto.fastingRequired, dto.fastingHours,
           dto.instructions, dto.requiresPathologistReview, dto.isActive,
-          tenantId, id,
+          serviceId, tenantId, id,
         ],
       );
-      if (!res.rows[0]) throw new ProblemException('NOT_FOUND', { detail: 'Test not found' });
-      return res.rows[0];
+      const updated = res.rows[0];
+      if (dto.price !== undefined) {
+        updated.price = Number(dto.price);
+      }
+      return updated;
     });
   }
 

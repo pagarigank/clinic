@@ -16,6 +16,7 @@ export class ApiError extends Error {
 }
 
 let inMemoryAccessToken: string | null = null;
+let inMemoryStepUpToken: string | null = null;
 
 export function setAccessToken(token: string | null) {
   inMemoryAccessToken = token;
@@ -23,6 +24,14 @@ export function setAccessToken(token: string | null) {
 
 export function getAccessToken(): string | null {
   return inMemoryAccessToken;
+}
+
+export function setStepUpToken(token: string | null) {
+  inMemoryStepUpToken = token;
+}
+
+export function getStepUpToken(): string | null {
+  return inMemoryStepUpToken;
 }
 
 // Single-flight refresh: concurrent callers (e.g. React StrictMode's double
@@ -62,6 +71,9 @@ function buildHeaders(customHeaders?: HeadersInit): Headers {
   const headers = new Headers(customHeaders);
   if (inMemoryAccessToken && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${inMemoryAccessToken}`);
+  }
+  if (inMemoryStepUpToken && !headers.has("X-Step-Up-Token")) {
+    headers.set("X-Step-Up-Token", inMemoryStepUpToken);
   }
   return headers;
 }

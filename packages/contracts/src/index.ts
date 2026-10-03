@@ -157,6 +157,43 @@ export const UserBranchAssignSchema = z.object({
 });
 export type UserBranchAssign = z.infer<typeof UserBranchAssignSchema>;
 
+/**
+ * Admin user directory + lifecycle (specification §18.2, lines 1029–1035).
+ * Users live behind the `admin` module with `admin.user.*` permissions and are
+ * created INVITED: the platform never invents a password on someone's behalf,
+ * first access goes through the audited forgot/reset flow (architecture §10).
+ */
+export const UserListSchema = z.object({
+  id: z.string().uuid(),
+  email: z.string(),
+  name: z.string(),
+  status: z.enum(["INVITED", "ACTIVE", "LOCKED", "DEACTIVATED"]),
+  mfaEnabled: z.boolean(),
+  roles: z.array(z.object({ id: z.string().uuid(), code: z.string(), name: z.string() })),
+  branches: z.array(z.object({ id: z.string().uuid(), name: z.string(), isDefault: z.boolean() })),
+  lastLoginAt: z.string().nullable(),
+  rowVersion: z.number().int(),
+});
+export type UserList = z.infer<typeof UserListSchema>;
+
+export const UserCreateSchema = z.object({
+  email: z.string().email().max(320),
+  name: z.string().min(1).max(160),
+  roleIds: z.array(z.string().uuid()).max(50).default([]),
+});
+export type UserCreate = z.infer<typeof UserCreateSchema>;
+
+export const UserUpdateSchema = z.object({
+  name: z.string().min(1).max(160).optional(),
+  rowVersion: z.number().int().optional(),
+});
+export type UserUpdate = z.infer<typeof UserUpdateSchema>;
+
+export const UserPasswordResetSchema = z.object({
+  newPassword: z.string().min(1).max(200),
+});
+export type UserPasswordReset = z.infer<typeof UserPasswordResetSchema>;
+
 /** Reusable `:id` param parser for NestJS param pipes. */
 export const zodUuid = z.string().uuid();
 
@@ -276,9 +313,12 @@ export const SessionInfoSchema = z.object({
   assignedBranches: z.array(z.object({ id: z.string().uuid(), name: z.string() })),
   effectiveTimezone: z.string(),
   expiresAt: z.string(), // ISO
-  // modules[]/modules_version carried from Phase 1.6 (entitlement cache)
+  // Entitled modules (architecture §5.3) + the caller's effective permission
+  // codes (specification §2.3). The server-side guards remain the authority;
+  // these drive shell/nav rendering and page-level feature visibility.
   modules: z.array(z.string()),
   modulesVersion: z.number().int().nullable(),
+  permissions: z.array(z.string()),
 });
 export type SessionInfo = z.infer<typeof SessionInfoSchema>;
 
@@ -490,6 +530,16 @@ export const CreatePriceListSchema = z.object({
   effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 export type CreatePriceListRequest = z.infer<typeof CreatePriceListSchema>;
+
+export const BulkPriceAdjustSchema = z.object({
+  target: z.enum(['LABORATORY', 'PHARMACY', 'CENTRAL_SUPPLY', 'ALL']),
+  adjustmentType: z.enum(['PERCENTAGE', 'FIXED']),
+  direction: z.enum(['INCREASE', 'DECREASE']),
+  value: z.number().positive(),
+  effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  reason: z.string().max(200).optional(),
+});
+export type BulkPriceAdjustRequest = z.infer<typeof BulkPriceAdjustSchema>;
 
 export const CreateDiscountTypeSchema = z.object({
   name: z.string().min(1).max(100),
@@ -912,6 +962,7 @@ export const CreateItemSchema = z.object({
   storageConditions: z.string().max(200).optional(),
   isHazardous: z.boolean().default(false),
   standardCost: z.number().min(0).default(0),
+  price: z.number().min(0).optional(),
   minShelfLifeDaysOnReceipt: z.number().int().min(0).default(0),
 });
 export type CreateItemRequest = z.input<typeof CreateItemSchema>;
@@ -1491,6 +1542,7 @@ export const CreateLabTestSchema = z.object({
   fastingRequired: z.boolean().default(false),
   fastingHours: z.number().int().optional(),
   instructions: z.string().max(500).optional(),
+  price: z.number().min(0).optional(),
   isPanel: z.boolean().default(false),
   panelTestIds: z.array(z.string().uuid()).optional(),
   requiresPathologistReview: z.boolean().default(false),

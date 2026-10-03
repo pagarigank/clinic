@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { RbacController } from "./rbac.controller.js";
 import { RbacService } from "./rbac.service.js";
+import { UsersService } from "./users.service.js";
 import { PermissionGuard } from "./permission.guard.js";
 import { ModuleGuard } from "./module.guard.js";
 
@@ -26,6 +27,7 @@ import { ModuleGuard } from "./module.guard.js";
   controllers: [RbacController],
   providers: [
     RbacService,
+    UsersService,
     { provide: APP_GUARD, useClass: ModuleGuard },
     { provide: APP_GUARD, useClass: PermissionGuard },
   ],

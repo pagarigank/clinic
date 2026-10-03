@@ -4,6 +4,7 @@ import { ProblemException } from '../http/problem.exception.js';
 import type {
   CreateServiceRequest,
   CreatePriceListRequest,
+  BulkPriceAdjustRequest,
   CreateDiscountTypeRequest,
   CreatePaymentMethodRequest,
   CreateHolidayRequest,
@@ -59,6 +60,110 @@ export class TenantConfigService {
         [tenantId, dto.serviceId, dto.amount, dto.effectiveFrom, dto.effectiveTo ?? null],
       );
       return res.rows[0];
+    });
+  }
+
+  async bulkAdjustPricing(tenantId: string, userId: string, dto: BulkPriceAdjustRequest) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      // 1. Identify services based on target
+      let targetServiceIds: string[] = [];
+      if (dto.target === 'LABORATORY') {
+        const res = await tx.query<{ id: string }>(
+          `SELECT sc.id
+           FROM service_catalog sc
+           WHERE sc.tenant_id = $1 AND sc.deleted_at IS NULL
+             AND (sc.category = 'lab' OR sc.id IN (SELECT service_id FROM lab_tests WHERE service_id IS NOT NULL AND tenant_id = $1))`,
+          [tenantId],
+        );
+        targetServiceIds = res.rows.map((r) => r.id);
+      } else if (dto.target === 'PHARMACY') {
+        const res = await tx.query<{ id: string }>(
+          `SELECT sc.id
+           FROM service_catalog sc
+           WHERE sc.tenant_id = $1 AND sc.deleted_at IS NULL
+             AND sc.id IN (SELECT service_id FROM items WHERE item_type = 'MEDICINE' AND service_id IS NOT NULL AND tenant_id = $1)`,
+          [tenantId],
+        );
+        targetServiceIds = res.rows.map((r) => r.id);
+      } else if (dto.target === 'CENTRAL_SUPPLY') {
+        const res = await tx.query<{ id: string }>(
+          `SELECT sc.id
+           FROM service_catalog sc
+           WHERE sc.tenant_id = $1 AND sc.deleted_at IS NULL
+             AND sc.id IN (SELECT service_id FROM items WHERE item_type IN ('SUPPLY', 'CONSUMABLE', 'EQUIPMENT', 'REAGENT') AND service_id IS NOT NULL AND tenant_id = $1)`,
+          [tenantId],
+        );
+        targetServiceIds = res.rows.map((r) => r.id);
+      } else {
+        // ALL
+        const res = await tx.query<{ id: string }>(
+          `SELECT sc.id FROM service_catalog sc WHERE sc.tenant_id = $1 AND sc.deleted_at IS NULL`,
+          [tenantId],
+        );
+        targetServiceIds = res.rows.map((r) => r.id);
+      }
+
+      if (targetServiceIds.length === 0) {
+        return {
+          adjustedCount: 0,
+          target: dto.target,
+          direction: dto.direction,
+          adjustmentType: dto.adjustmentType,
+          value: dto.value,
+          message: `No matching active items found for ${dto.target}`,
+        };
+      }
+
+      // 2. Perform adjustment in database
+      const isPercent = dto.adjustmentType === 'PERCENTAGE';
+      const isIncrease = dto.direction === 'INCREASE';
+      const val = Number(dto.value);
+
+      let updateQuery = '';
+      if (isPercent) {
+        const factor = isIncrease ? 1 + val / 100 : Math.max(0, 1 - val / 100);
+        updateQuery = `
+          UPDATE service_catalog
+          SET default_price = ROUND((default_price * ${factor})::numeric, 2),
+              updated_at = now()
+          WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+          RETURNING id, default_price
+        `;
+      } else {
+        const op = isIncrease ? '+' : '-';
+        updateQuery = `
+          UPDATE service_catalog
+          SET default_price = GREATEST(0, ROUND((default_price ${op} ${val})::numeric, 2)),
+              updated_at = now()
+          WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+          RETURNING id, default_price
+        `;
+      }
+
+      const updated = await tx.query<{ id: string; default_price: string }>(updateQuery, [
+        tenantId,
+        targetServiceIds,
+      ]);
+
+      // 3. Insert effective-dated entries into price_lists
+      const effectiveDate = dto.effectiveFrom ?? new Date().toISOString().slice(0, 10);
+      for (const row of updated.rows) {
+        await tx.query(
+          `INSERT INTO price_lists (tenant_id, service_id, amount, effective_from)
+           VALUES ($1, $2, $3, $4)`,
+          [tenantId, row.id, Number(row.default_price), effectiveDate],
+        );
+      }
+
+      return {
+        adjustedCount: updated.rowCount ?? 0,
+        target: dto.target,
+        direction: dto.direction,
+        adjustmentType: dto.adjustmentType,
+        value: dto.value,
+        effectiveFrom: effectiveDate,
+        message: `Successfully adjusted ${updated.rowCount ?? 0} item prices for ${dto.target} (${isIncrease ? '+' : '-'}${dto.value}${isPercent ? '%' : ''}).`,
+      };
     });
   }
 

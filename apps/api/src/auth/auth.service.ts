@@ -324,6 +324,27 @@ export class AuthService {
         [tenantId, userId],
       );
 
+      // Entitled + active modules (architecture §5.3): what the shell may show.
+      const moduleRows = await tx.query<{ module: string; modules_version: number | null }>(
+        `SELECT module, (SELECT modules_version FROM tenants WHERE id = $1) AS modules_version
+         FROM tenant_modules
+         WHERE tenant_id = $1 AND status IN ('TRIAL', 'ENABLED')`,
+        [tenantId],
+      );
+
+      // Effective permission codes for the caller (specification §2.3): what
+      // the UI may render within those modules. The PermissionGuard remains
+      // the authority — this payload only drives rendering.
+      const permRows = await tx.query<{ permission_code: string }>(
+        `SELECT DISTINCT p.code AS permission_code
+         FROM user_roles ur
+         JOIN roles ro ON ro.tenant_id = ur.tenant_id AND ro.id = ur.role_id AND ro.deleted_at IS NULL
+         JOIN role_permissions rp ON rp.tenant_id = ur.tenant_id AND rp.role_id = ur.role_id
+         JOIN permissions p ON p.id = rp.permission_id
+         WHERE ur.tenant_id = (SELECT app.tenant_id()) AND ur.user_id = $1`,
+        [userId],
+      );
+
       return {
         user: { id: user.id, email: user.email, name: user.name },
         tenant: { id: tenantId, slug: tenant?.slug ?? "" },
@@ -333,8 +354,9 @@ export class AuthService {
         assignedBranches: assignedBranches.rows,
         effectiveTimezone: user.branch_tz || tenant?.timezone || 'UTC',
         expiresAt: new Date(Date.now() + getConfig().ACCESS_TTL_SECONDS * 1000).toISOString(),
-        modules: [], // populated by the ModuleGuard/entitlement cache (Phase 1.6)
-        modulesVersion: null,
+        modules: moduleRows.rows.map((m) => m.module),
+        modulesVersion: moduleRows.rows[0]?.modules_version ?? null,
+        permissions: permRows.rows.map((r) => r.permission_code).sort(),
       };
     });
   }

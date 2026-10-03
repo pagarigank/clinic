@@ -10,6 +10,7 @@ import type { RequestWithAuth } from '../auth/auth-context.js';
 import {
   CreateServiceSchema, type CreateServiceRequest,
   CreatePriceListSchema, type CreatePriceListRequest,
+  BulkPriceAdjustSchema, type BulkPriceAdjustRequest,
   CreateDiscountTypeSchema, type CreateDiscountTypeRequest,
   CreatePaymentMethodSchema, type CreatePaymentMethodRequest,
   CreateHolidaySchema, type CreateHolidayRequest,
@@ -96,6 +97,26 @@ export class TenantConfigController {
     @Body(new ZodValidationPipe(CreatePriceListSchema)) dto: CreatePriceListRequest,
   ) {
     return this.svc.addPriceEntry(req.tenantId!, req.authContext!.userId!, dto);
+  }
+
+  @RequirePermission('admin.price.create')
+  @Post('pricing/bulk-adjust')
+  @ApiOperation({ summary: 'Bulk adjust pricing for Laboratory, Pharmacy, or Central Supply' })
+  async bulkAdjustPricing(
+    @Req() req: RequestWithAuth,
+    @Body(new ZodValidationPipe(BulkPriceAdjustSchema)) dto: BulkPriceAdjustRequest,
+  ) {
+    return this.svc.bulkAdjustPricing(req.tenantId!, req.authContext!.userId!, dto);
+  }
+
+  @RequirePermission('admin.price.create')
+  @Post('config/pricing/bulk-adjust')
+  @ApiOperation({ summary: 'Bulk adjust pricing (alias)' })
+  async bulkAdjustPricingAlias(
+    @Req() req: RequestWithAuth,
+    @Body(new ZodValidationPipe(BulkPriceAdjustSchema)) dto: BulkPriceAdjustRequest,
+  ) {
+    return this.svc.bulkAdjustPricing(req.tenantId!, req.authContext!.userId!, dto);
   }
 
   // ── Discount types ──────────────────────────────────────────────────────────

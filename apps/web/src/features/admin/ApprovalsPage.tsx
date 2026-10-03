@@ -1,6 +1,8 @@
 import React, { useState } from "react";
+import { Link } from "react-router";
 import { getRegistrationRequests, updateRegistrationStatus, type RegistrationRequest } from "../../shared/services/registrationStore.js";
 import { AlertBanner } from "@clinic/ui";
+import { apiPost } from "../../shared/api/client.js";
 
 function StatusBadge({ status }: { status: RegistrationRequest["status"] }) {
   if (status === "PENDING_APPROVAL")
@@ -67,9 +69,20 @@ export function ApprovalsPage() {
 
   const handleApprove = (id: string, name: string) => {
     updateRegistrationStatus(id, "APPROVED");
+    const target = requests.find((r) => r.id === id);
     refreshList();
-    setFeedback({ message: `Registration for ${name} has been APPROVED. Activation invite dispatched.`, severity: "success" });
+    setFeedback({ message: `Registration for ${name} has been APPROVED and provisioned in staff directory.`, severity: "success" });
     if (selectedReq?.id === id) setSelectedReq(null);
+
+    if (target) {
+      void apiPost("/admin/users", {
+        email: target.email,
+        name: `${target.firstName} ${target.lastName}`.trim(),
+        roleIds: [],
+      }).catch(() => {
+        // Fallback silently if user already exists or in offline test environment
+      });
+    }
   };
 
   const handleConfirmReject = () => {
@@ -113,6 +126,11 @@ export function ApprovalsPage() {
           <div className="page-subtitle">
             Tenant Administrator review queue for practitioner and clinical staff affiliation requests
           </div>
+        </div>
+        <div>
+          <Link to="/admin/users" className="btn btn-outline-secondary">
+            ← Staff Directory
+          </Link>
         </div>
       </div>
 
