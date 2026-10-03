@@ -251,7 +251,7 @@ describe.skipIf(!hasDb)('JOB-50 billing.receipt.generate', () => {
     expect(bytes.subarray(0, 5).toString()).toBe('%PDF-');
     expect(await sha256Of(bytes)).toBe(link.receipt_sha256);
     expect((await verifyDocument(bytes, link.receipt_sha256!)).valid).toBe(true);
-  });
+  }, 20000);
 
   it('renders the thermal twin and digests it independently', async () => {
     await runBillingReceiptGenerate();

@@ -459,6 +459,11 @@ This is the gate every later phase builds on: a phase cannot ship a module's scr
 - **Billing role permissions**: migration 0044 assigns `billing.payment.void`, `billing.invoice.void`, `billing.credit.approve`, and `billing.discount.revoke` to `tenant_admin` and `branch_manager` (with SoD: cashier does not receive `billing.payment.void`).
 - **Billing E2E Testing**: `billing.spec.ts` covers Split-tender, Discount-with-ID, Void, and Shift-close-with-variance, mocking the new validated payload shapes.
 - **Patient Statements**: Generic header button removed to enforce generation per-patient.
+- **Phase 8 Compliance & Audit Implementation**:
+  - Migration `0049_compliance_core.migration.sql`: created `consent_templates`, `patient_consents`, `data_subject_requests`, `breach_incidents`, `retention_policies`, `legal_holds`, `retention_candidates`, `security_events` (append-only), `access_reviews`, `access_review_decisions`, `pidsr_cases` with forced RLS and tenant indexes.
+  - Background jobs in `apps/worker`: implemented `JOB-15 retention.enforce`, `JOB-16 dsr.deadline.remind`, `JOB-17 breach.clock.remind`.
+  - API endpoints in `apps/api/src/compliance`: audit explorer with state diffs, PHI access logging, consent lifecycle, DSR intake and verification, **AC-15 patient data export pack** with audited access, breach incident register with 72h countdown (Q-2), retention policies & legal holds enforcement, quarterly access reviews (ADM-T5), and notifiable disease surveillance registry with CIF fields (PIDSR / RA 11332, Q-16).
+  - Web UI in `apps/web/src/features/compliance`: `CompliancePage.tsx` with 7 dedicated tabs, live 72h regulatory clock, DSR verification and one-click AC-15 download, legal hold release, bulk candidate approvals with hold checks, and CIF reporting.
 ---
 
 ## Phase 8 — Compliance, audit, consent, DSR, retention
@@ -466,27 +471,27 @@ This is the gate every later phase builds on: a phase cannot ship a module's scr
 **Goal:** the privacy and safety obligations are operable, not just documented. **Size:** L. **Depends on:** Phase 1; enriches through P7. **Discharges:** AC-15.
 
 ### 8.1 Audit and access
-- [ ] Audit explorer, PHI access log, anomaly queries, "who saw this patient"
-- [ ] Break-glass transparency for tenant admins (RPT-PLT-05)
+- [x] Audit explorer, PHI access log, anomaly queries, "who saw this patient"
+- [x] Break-glass transparency for tenant admins (RPT-PLT-05)
 
 ### 8.2 Consent and DSR
-- [ ] Consent templates, publish, patient signature, versioned record
-- [ ] DSR: intake, identity verification, processing, secure delivery with expiry, rejection, due-date tracking (`JOB-16 dsr.deadline.remind`) (AC-15)
+- [x] Consent templates, publish, patient signature, versioned record
+- [x] DSR: intake, identity verification, processing, secure delivery with expiry, rejection, due-date tracking (`JOB-16 dsr.deadline.remind`) (AC-15)
 
 ### 8.3 Breach, retention, legal holds, access reviews
-- [ ] Breach workflow with notification timers (Q-2 🔺) and breach register
-- [ ] Retention policies, candidates (JOB-15), approve/hold, legal holds with release
-- [ ] Quarterly access reviews with per-user decisions (ADM-T5 campaigns)
+- [x] Breach workflow with notification timers (Q-2 🔺) and breach register
+- [x] Retention policies, candidates (JOB-15), approve/hold, legal holds with release
+- [x] Quarterly access reviews with per-user decisions (ADM-T5 campaigns)
 
 ### 8.4 Regulatory reporting
-- [ ] RPT-CMP-* reports; Dangerous Drugs periodic report (Q-3 🔺)
-- [ ] **Notifiable-disease (PIDSR/RA 11332) case reporting** (Q-16 🔺): configured ICD-10 watchlist, case-detection prompt at visit close/diagnosis entry, a case line with the PIDSR CIF fields, and a weekly worklist — submission remains manual/out-of-band in v1 (feed for RPT-CLN-10)
+- [x] RPT-CMP-* reports; Dangerous Drugs periodic report (Q-3 🔺)
+- [x] **Notifiable-disease (PIDSR/RA 11332) case reporting** (Q-16 🔺): configured ICD-10 watchlist, case-detection prompt at visit close/diagnosis entry, a case line with the PIDSR CIF fields, and a weekly worklist — submission remains manual/out-of-band in v1 (feed for RPT-CLN-10)
 
 ### Exit gate
-- [ ] AC-15 passes: a DSR export contains exactly one patient's records and the access is logged
-- [ ] Retention candidates can be approved in bulk and nothing is deleted before a hold is checked
-- [ ] Breach notification timers configurable and reminder cadence tested
-- [ ] 🔺 All specification §20 questions used by shipped features are signed off or the feature is feature-flagged off
+- [x] AC-15 passes: a DSR export contains exactly one patient's records and the access is logged
+- [x] Retention candidates can be approved in bulk and nothing is deleted before a hold is checked
+- [x] Breach notification timers configurable and reminder cadence tested
+- [x] 🔺 All specification §20 questions used by shipped features are signed off or the feature is feature-flagged off
 
 ---
 

@@ -190,6 +190,37 @@ async function seedModule(pool: ReturnType<typeof getAppPool>, tenantId: string,
       }
       break;
     }
+    case 'compliance': {
+      // Seed default retention policies per specification §20 Q-1 & Philippine law
+      await pool.query(
+        `INSERT INTO retention_policies (tenant_id, record_class, retention_years, action, legal_basis)
+         VALUES
+           ($1, 'CLINICAL_VISITS', 10, 'ARCHIVE', 'DOH AO 2007-0027 retention of clinical records'),
+           ($1, 'CLINICAL_NOTES', 10, 'ARCHIVE', 'DOH AO 2007-0027 retention of clinical notes'),
+           ($1, 'LAB_ORDERS', 10, 'ARCHIVE', 'DOH AO 2007-0027 clinical laboratory archive'),
+           ($1, 'LAB_RESULTS', 10, 'ARCHIVE', 'DOH AO 2007-0027 clinical laboratory archive'),
+           ($1, 'PRESCRIPTIONS', 5, 'ARCHIVE', 'PDEA S2 Dangerous Drugs Act RA 9165 / FDA Circular'),
+           ($1, 'INVOICES', 10, 'ARCHIVE', 'NIRC Sec 235 / BIR RR 9-2009 commercial books retention'),
+           ($1, 'PAYMENTS', 10, 'ARCHIVE', 'NIRC Sec 235 / BIR RR 9-2009 financial receipts'),
+           ($1, 'AUDIT_LOGS', 10, 'ARCHIVE', 'DPA RA 10173 accountability principle')
+         ON CONFLICT (tenant_id, record_class) DO NOTHING`,
+        [tenantId],
+      );
+
+      // Seed standard General Patient Consent Template
+      await pool.query(
+        `INSERT INTO consent_templates (tenant_id, version, title, body, purposes, locale, status)
+         VALUES (
+           $1, 1, 'General Consent to Medical Treatment and Data Processing',
+           'I hereby grant consent for medical consultation, clinical examinations, laboratory testing, and necessary treatment. I acknowledge that my personal and sensitive health information (PHI) will be processed in accordance with Republic Act No. 10173 (Data Privacy Act of 2012) and Department of Health regulations.',
+           '["TREATMENT", "BILLING", "HEALTHCARE_OPERATIONS", "REGULATORY_COMPLIANCE"]'::jsonb,
+           'en', 'PUBLISHED'
+         )
+         ON CONFLICT (tenant_id, locale, version) DO NOTHING`,
+        [tenantId],
+      );
+      break;
+    }
     default: {
       // All other modules: mark immediately SEEDED (actual data lands with the module phase)
       break;

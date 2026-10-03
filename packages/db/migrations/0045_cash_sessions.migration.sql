@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS cash_sessions (
 CREATE INDEX cash_sessions_tenant_idx ON cash_sessions (tenant_id, cashier_id, status);
 
 ALTER TABLE cash_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE cash_sessions FORCE ROW LEVEL SECURITY;
 CREATE POLICY cash_sessions_tenant_isolation ON cash_sessions
     AS RESTRICTIVE FOR ALL USING (tenant_id = (SELECT app.tenant_id()));
 CREATE POLICY cash_sessions_tenant_write ON cash_sessions

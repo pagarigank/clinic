@@ -104,6 +104,20 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    id: "compliance",
+    label: "Compliance & Audit",
+    icon: "🛡️",
+    items: [
+      { to: "/compliance?tab=audit", icon: "🔍", label: "Audit Explorer" },
+      { to: "/compliance?tab=phi", icon: "🛡️", label: "PHI Access Log" },
+      { to: "/compliance?tab=dsr", icon: "📋", label: "DSR & Privacy Rights" },
+      { to: "/compliance?tab=breach", icon: "🚨", label: "Breach Register" },
+      { to: "/compliance?tab=retention", icon: "📦", label: "Retention & Holds" },
+      { to: "/compliance?tab=access-reviews", icon: "👥", label: "Access Reviews" },
+      { to: "/compliance?tab=pidsr", icon: "🦠", label: "PIDSR (RA 11332)" },
+    ],
+  },
+  {
     id: "system",
     label: "System",
     icon: "🖥️",
