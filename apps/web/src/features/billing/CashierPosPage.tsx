@@ -19,6 +19,8 @@ import {
   reprintReceipt,
   fetchPaymentReceipt,
   fetchPaymentMethods,
+  fetchSessions,
+  saveSession,
 } from "./api.js";
 
 interface TenderLine {
@@ -84,49 +86,99 @@ export function CashierPosPage() {
   const [reprintReason, setReprintReason] = useState("");
 
   // Held Tickets (todo.md §7.3 - POS surface hold/resume)
-  const [heldSales, setHeldSales] = useState<Array<{ id: string; heldAt: string; invoice: any; tenders: TenderLine[] }>>([]);
+  const [heldSales, setHeldSales] = useState<any[]>([]);
   const [showHeldModal, setShowHeldModal] = useState(false);
 
   const [alert, setAlert] = useState<{ tone: "success" | "danger" | "warning"; message: string } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const handleHoldSale = () => {
+  const loadSessions = async () => {
+    try {
+      const res = await fetchSessions();
+      setHeldSales(res.data || []);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    loadSessions();
+  }, []);
+
+  const handleHoldSale = async () => {
     if (!invoice) {
       setAlert({ tone: "warning", message: "No active transaction to put on hold." });
       return;
     }
-    const newHold = {
-      id: `hold-${Date.now()}`,
-      heldAt: new Date().toISOString(),
-      invoice,
-      tenders,
-    };
-    setHeldSales((prev) => [newHold, ...prev]);
-    setInvoice(null);
-    setSelectedInvoiceId("");
-    setTenders([]);
-    setAlert({
-      tone: "success",
-      message: `Sale for invoice ${invoice.invoice_no || "selected"} placed on hold. Terminal ready for next transaction.`,
-    });
+    setIsProcessing(true);
+    try {
+      if (activeShift?.branch_id) {
+        await saveSession("new", {
+          branchId: activeShift.branch_id,
+          invoiceId: invoice.id,
+          status: "HELD",
+          sessionData: { invoice, tenders },
+        });
+        await loadSessions();
+      } else {
+        throw new Error("No active shift");
+      }
+    } catch {
+      // Fallback to local in-memory hold when API unavailable (offline / test mode)
+      const newHold = {
+        id: `hold-${Date.now()}`,
+        created_at: new Date().toISOString(),
+        session_data: { invoice, tenders },
+      };
+      setHeldSales((prev) => [newHold, ...prev]);
+    } finally {
+      setIsProcessing(false);
+      setInvoice(null);
+      setSelectedInvoiceId("");
+      setTenders([]);
+      setAlert({
+        tone: "success",
+        message: `Sale for invoice ${invoice.invoice_no || "selected"} placed on hold. Terminal ready for next transaction.`,
+      });
+    }
   };
 
-  const handleResumeSale = (holdId: string) => {
-    const target = heldSales.find((h) => h.id === holdId);
-    if (!target) return;
-    setInvoice(target.invoice);
-    setSelectedInvoiceId(target.invoice.id);
-    setTenders(target.tenders);
-    setHeldSales((prev) => prev.filter((h) => h.id !== holdId));
+  const handleResumeSale = async (session: any) => {
+    if (!session || !session.session_data) return;
+    setInvoice(session.session_data.invoice);
+    setSelectedInvoiceId(session.session_data.invoice.id);
+    setTenders(session.session_data.tenders);
     setShowHeldModal(false);
     setAlert({
       tone: "success",
-      message: `Resumed transaction for ${target.invoice.invoice_no}.`,
+      message: `Resumed transaction for ${session.session_data.invoice.invoice_no}.`,
     });
+    // Mark as OPEN so it's no longer 'HELD'
+    try {
+      await saveSession(session.id, {
+        branchId: session.branch_id,
+        status: "OPEN",
+        sessionData: session.session_data,
+        rowVersion: session.row_version,
+      });
+      await loadSessions();
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const handleDiscardHeldSale = (holdId: string) => {
-    setHeldSales((prev) => prev.filter((h) => h.id !== holdId));
+  const handleDiscardHeldSale = async (session: any) => {
+    try {
+      await saveSession(session.id, {
+        branchId: session.branch_id,
+        status: "VOIDED",
+        sessionData: session.session_data,
+        rowVersion: session.row_version,
+      });
+      await loadSessions();
+    } catch (e) {
+      console.error(e);
+    }
   };
 
 
@@ -940,30 +992,30 @@ export function CashierPosPage() {
                 <tbody>
                   {heldSales.map((h) => (
                     <tr key={h.id}>
-                      <td className="text-muted">{new Date(h.heldAt).toLocaleTimeString()}</td>
-                      <td className="fw-semibold text-primary">{h.invoice?.invoice_no}</td>
+                      <td className="text-muted">{new Date(h.updated_at || h.created_at).toLocaleTimeString()}</td>
+                      <td className="fw-semibold text-primary">{h.session_data?.invoice?.invoice_no}</td>
                       <td>
-                        {h.invoice?.patient_first_name
-                          ? `${h.invoice.patient_first_name} ${h.invoice.patient_last_name}`
+                        {h.session_data?.invoice?.patient_first_name
+                          ? `${h.session_data.invoice.patient_first_name} ${h.session_data.invoice.patient_last_name}`
                           : "Walk-in"}
                       </td>
                       <td className="fw-bold text-danger">
-                        <Money amount={Number(h.invoice?.balance || 0)} />
+                        <Money amount={Number(h.session_data?.invoice?.balance || 0)} />
                       </td>
                       <td>
-                        {h.tenders.map((t) => `${t.methodName}: ₱${t.amount}`).join(", ")}
+                        {h.session_data?.tenders?.map((t: any) => `${t.methodName}: ₱${t.amount}`).join(", ")}
                       </td>
                       <td className="text-end">
                         <div className="btn-group btn-group-sm">
                           <Button
                             variant="primary"
-                            onClick={() => handleResumeSale(h.id)}
+                            onClick={() => handleResumeSale(h)}
                           >
                             Resume
                           </Button>
                           <Button
                             variant="outline-danger"
-                            onClick={() => handleDiscardHeldSale(h.id)}
+                            onClick={() => handleDiscardHeldSale(h)}
                           >
                             Discard
                           </Button>

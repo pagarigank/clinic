@@ -55,7 +55,6 @@ export class SupplyController {
   constructor(
     @Inject(SupplyService) private readonly svc: SupplyService,
   ) {}
-
   // ── Masters: Categories, UOMs, Items ──────────────────────────────────────
 
   @RequirePermission('supply.item.read')

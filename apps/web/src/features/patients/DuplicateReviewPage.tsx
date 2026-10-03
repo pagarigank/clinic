@@ -202,11 +202,11 @@ export function DuplicateReviewPage() {
                 <tr key={c.id}>
                   <td>
                     <div className="fw-semibold text-dark">{c.patientName}</div>
-                    <div className="small text-muted font-monospace">{c.patientNo}</div>
+                    <div className="small text-muted font-monospace">{c.patientNo || "—"}</div>
                   </td>
                   <td>
                     <div className="fw-semibold text-dark">{c.otherName}</div>
-                    <div className="small text-muted font-monospace">{c.otherNo}</div>
+                    <div className="small text-muted font-monospace">{c.otherNo || "—"}</div>
                   </td>
                   <td className="small">{MATCH_LABEL[c.matchType]}</td>
                   <td className="tabular">{c.score.toFixed(2)}</td>

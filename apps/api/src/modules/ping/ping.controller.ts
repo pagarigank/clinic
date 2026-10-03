@@ -3,7 +3,7 @@ import type { FastifyRequest } from "fastify";
 import { PingService } from "./ping.service.js";
 import { Public } from "../../auth/auth-context.js";
 
-@Controller("api/v1/ping")
+@Controller("ping")
 @Public()
 export class PingController {
   // Explicit @Inject: esbuild (tsx) does not emit design:paramtypes metadata.

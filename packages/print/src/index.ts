@@ -34,8 +34,22 @@ export {
   renderCertificateHtml,
   renderLabReportHtml,
   renderReceiptHtml,
+  renderPrescriptionHtml,
+  renderLabRequisitionHtml,
+  renderEncounterOrdersHtml,
 } from "./templates.js";
-export type { MedicalCertificate, LabReport, LabReport as LabReportDocument, ReceiptDocument } from "./templates.js";
+export type {
+  MedicalCertificate,
+  LabReport,
+  LabReport as LabReportDocument,
+  ReceiptDocument,
+  PrescriptionDocument,
+  PrescriptionItemDocument,
+  LabRequisitionDocument,
+  LabRequisitionItem,
+  EncounterOrdersDocument,
+} from "./templates.js";
+
 
 export { buildReceiptDocument, toThermalReceipt } from "./receipt.js";
 export type { ReceiptFacts } from "./receipt.js";

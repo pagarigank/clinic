@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { withTenant, type PoolClient } from '@clinic/db';
 import { buildReceiptDocument, renderPdf, renderReceiptHtml, type ReceiptFacts } from '@clinic/print';
 import { ProblemException } from '../http/problem.exception.js';
+import { resolveServicePrice } from '../common/pricing.js';
 import type {
   CreateInvoiceRequest,
   UpdateInvoiceRequest,
@@ -18,6 +19,7 @@ import type {
   ApproveCreditNoteRequest,
   CreateChargeRequest,
   DailyCloseRunRequest,
+  SaveCashSessionRequest,
 } from '@clinic/contracts';
 
 @Injectable()
@@ -1349,6 +1351,51 @@ export class BillingService {
     });
   }
 
+  // ── Cash Sessions (POS state) ───────────────────────────────────────────────
+
+  async listCashSessions(tenantId: string, cashierId: string) {
+    return withTenant({ tenantId }, async (tx) => {
+      const res = await tx.query(
+        `SELECT id, branch_id, status, patient_id, invoice_id, session_data, created_at, updated_at, row_version
+         FROM cash_sessions
+         WHERE tenant_id = $1 AND cashier_id = $2 AND status IN ('OPEN', 'HELD')
+         ORDER BY updated_at DESC`,
+        [tenantId, cashierId],
+      );
+      return { data: res.rows };
+    });
+  }
+
+  async saveCashSession(tenantId: string, userId: string, sessionId: string, dto: SaveCashSessionRequest) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      if (sessionId === 'new') {
+        const res = await tx.query(
+          `INSERT INTO cash_sessions (tenant_id, branch_id, cashier_id, patient_id, invoice_id, status, session_data)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING *`,
+          [tenantId, dto.branchId, userId, dto.patientId ?? null, dto.invoiceId ?? null, dto.status, dto.sessionData],
+        );
+        return res.rows[0];
+      }
+
+      const res = await tx.query(
+        `UPDATE cash_sessions
+         SET patient_id = COALESCE($3, patient_id),
+             invoice_id = COALESCE($4, invoice_id),
+             status = COALESCE($5, status),
+             session_data = COALESCE($6, session_data),
+             updated_at = now(), row_version = row_version + 1
+         WHERE tenant_id = $1 AND id = $2 AND row_version = $7
+         RETURNING *`,
+        [tenantId, sessionId, dto.patientId ?? null, dto.invoiceId ?? null, dto.status, dto.sessionData, dto.rowVersion ?? 1],
+      );
+      if (res.rowCount === 0) {
+        throw new ProblemException('STALE_ROW_VERSION', { detail: 'Session was updated concurrently.' });
+      }
+      return res.rows[0];
+    });
+  }
+
   async getShifts(
     tenantId: string,
     query: {
@@ -1595,8 +1642,8 @@ export class BillingService {
       if (!branchId) throw new ProblemException('NOT_FOUND', { detail: 'Visit not found' });
 
       const qty = Number(dto.quantity ?? 1);
-      const unitPrice = Number(dto.unitPrice);
-      const amount = qty * unitPrice;
+      const unitPrice = await resolveServicePrice(tx, tenantId, dto.serviceId);
+      const amount = Number((qty * unitPrice).toFixed(2));
 
       const res = await tx.query(
         `INSERT INTO billing_charges (
@@ -1611,7 +1658,7 @@ export class BillingService {
           dto.chargeType,
           dto.sourceType,
           dto.sourceId,
-          dto.serviceId ?? null,
+          dto.serviceId,
           dto.description,
           qty,
           unitPrice,
@@ -1770,7 +1817,7 @@ export class BillingService {
     return withTenant({ tenantId }, async (tx) => {
       const conditions: string[] = [
         'v.tenant_id = $1',
-        "(DATE(v.opened_at AT TIME ZONE 'Asia/Manila') = $2::date OR DATE(v.opened_at) = $2::date)",
+        "(DATE(v.opened_at AT TIME ZONE 'Asia/Manila') = $2::date OR DATE(v.opened_at AT TIME ZONE 'UTC') = $2::date OR DATE(v.opened_at) = $2::date)",
       ];
       const params: any[] = [tenantId, dateStr];
 

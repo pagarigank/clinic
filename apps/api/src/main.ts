@@ -34,7 +34,9 @@ async function bootstrap(): Promise<void> {
   // deliberately not installed — Zod schemas in packages/contracts are the
   // single source of truth for both API and web (architecture §8).
   app.useGlobalFilters(new ProblemExceptionFilter());
-  // Controllers declare their full `api/v1/...` paths; no global prefix.
+  // Global prefix so controllers are served at /api/v1/<path> — matching
+  // the Vite proxy target and the web client's apiBase().
+  app.setGlobalPrefix('api/v1');
 
   const { DocumentBuilder, SwaggerModule } = await import('@nestjs/swagger');
   const swaggerConfig = new DocumentBuilder()

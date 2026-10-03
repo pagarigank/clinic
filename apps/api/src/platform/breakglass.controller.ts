@@ -25,7 +25,6 @@ export class BreakglassController {
   constructor(
     @Inject(BreakglassService) private readonly breakglass: BreakglassService,
   ) {}
-
   /** POST /platform/tenants/{id}/enter — start a break-glass session (AC-16) */
   @Post()
   @RequireStepUp()

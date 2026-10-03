@@ -16,7 +16,6 @@ export class AdminModulesController {
   constructor(
     @Inject(TenantModulesService) private readonly modulesService: TenantModulesService,
   ) {}
-
   @Get()
   @ApiOperation({ summary: 'List tenant modules', description: 'Tenant-facing view of entitled modules and their status.' })
   @ApiResponse({ status: 200, description: 'Modules returned successfully' })

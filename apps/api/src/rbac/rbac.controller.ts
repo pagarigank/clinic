@@ -39,7 +39,7 @@ function caller(request: AuthedRequest): { tenantId: string; userId: string; bra
   return { tenantId: auth.tenantId, userId: auth.userId, branchId: auth.branchId };
 }
 
-@Controller("api/v1")
+@Controller("")
 // Roles, permission grants and the catalogue are the `admin` module
 // (specification §2.3: admin.role.*, admin.user.*). Declared at class level so
 // the global ModuleGuard gates every route here with one declaration; a

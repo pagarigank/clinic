@@ -38,7 +38,6 @@ export class PharmacyController {
   constructor(
     @Inject(PharmacyService) private readonly svc: PharmacyService,
   ) {}
-
   // ── Generics (PHM-T1) ──────────────────────────────────────────────────────
 
   @RequirePermission('pharmacy.product.read')
@@ -165,6 +164,13 @@ export class PharmacyController {
   @ApiOperation({ summary: 'List prescriptions in verification queue' })
   async getQueue(@Req() req: RequestWithAuth, @Query('status') status?: string) {
     return this.svc.getVerificationQueue(req.tenantId!, status || 'ISSUED');
+  }
+
+  @RequirePermission('pharmacy.rx.read')
+  @Get('prescriptions/:id')
+  @ApiOperation({ summary: 'Get a prescription with patient and prescribed lines' })
+  async getPrescription(@Req() req: RequestWithAuth, @Param('id') id: string) {
+    return this.svc.getPrescription(req.tenantId!, id);
   }
 
   @RequirePermission('pharmacy.rx.verify')
@@ -375,6 +381,13 @@ export class PharmacyController {
     @Query('branchId') branchId?: string,
   ) {
     return this.svc.getControlledBalance(req.tenantId!, drugItemId, branchId);
+  }
+
+  @RequirePermission('pharmacy.stock.read')
+  @Get('locations')
+  @ApiOperation({ summary: 'List stock locations available for pharmacy dispensing' })
+  async listPharmacyLocations(@Req() req: RequestWithAuth) {
+    return this.svc.listPharmacyLocations(req.tenantId!);
   }
 
   @RequirePermission('pharmacy.stock.read')

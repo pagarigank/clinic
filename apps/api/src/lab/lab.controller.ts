@@ -41,7 +41,6 @@ export class LabController {
   constructor(
     @Inject(LabService) private readonly svc: LabService,
   ) {}
-
   // ── Configuration: Sections ────────────────────────────────────────────────
 
   @RequirePermission('lab.config.read')
@@ -563,6 +562,13 @@ export class LabController {
   @ApiOperation({ summary: 'Specimen chain of custody audit events' })
   async getSpecimenEvents(@Req() req: RequestWithAuth, @Param('id') id: string) {
     return this.svc.getSpecimenEvents(req.tenantId!, id);
+  }
+
+  @RequirePermission('lab.specimen.read')
+  @Get('specimens/:id/label')
+  @ApiOperation({ summary: 'Get formatted ZPL barcode label for a specimen' })
+  async getSpecimenLabel(@Req() req: RequestWithAuth, @Param('id') id: string) {
+    return this.svc.getSpecimenLabel(req.tenantId!, id);
   }
 
   @RequirePermission('lab.report.read')

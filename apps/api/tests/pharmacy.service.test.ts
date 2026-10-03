@@ -327,6 +327,52 @@ describe('PharmacyService (Phase 5 — Pharmacy Core & AC-7)', () => {
     expect(decisions[0]!.justification_reason_code).toBe('PATIENT_DESENSITIZED');
   });
 
+  it('loads a prescription with patient and prescribed lines (workbench detail)', async () => {
+    const rand = Math.floor(Math.random() * 100000);
+    const vRes = await ownerPool.query(
+      `INSERT INTO visits (tenant_id, branch_id, patient_id, practitioner_id, visit_no, status, opened_at, created_by)
+       VALUES ($1, $2, $3, $4, $5, 'IN_PROGRESS', now(), $4) RETURNING id`,
+      [tenantId, branchId, patientId, pharmacistId, `VIS-DET-${rand}`],
+    );
+    const visitId = vRes.rows[0].id;
+    const rxRes = await ownerPool.query(
+      `INSERT INTO prescriptions (tenant_id, visit_id, patient_id, prescriber_id, rx_no, status, issued_at)
+       VALUES ($1, $2, $3, $4, $5, 'ISSUED', now()) RETURNING id`,
+      [tenantId, visitId, patientId, pharmacistId, `RX-DET-${rand}`],
+    );
+    const rxId = rxRes.rows[0].id;
+
+    await ownerPool.query(
+      `INSERT INTO prescription_items (tenant_id, rx_id, drug_product_id, generic_name, brand_name, sig_dose, sig_frequency, qty_prescribed)
+       VALUES ($1, $2, $3, 'Amoxicillin', 'Amoxil', '500mg', 'TID', 21)`,
+      [tenantId, rxId, amoxProductId],
+    );
+    await ownerPool.query(
+      `INSERT INTO prescription_items (tenant_id, rx_id, drug_product_id, generic_name, sig_dose, sig_frequency, qty_prescribed)
+       VALUES ($1, $2, NULL, 'Unlinked Unobtainium', '1 tab', 'OD', 5)`,
+      [tenantId, rxId],
+    );
+
+    const rx = await pharmacySvc.getPrescription(tenantId, rxId);
+    expect(rx.id).toBe(rxId);
+    expect(rx.rx_no).toBe(`RX-DET-${rand}`);
+    expect(rx.patient_first_name).toBe('Patient');
+    expect(rx.items).toHaveLength(2);
+
+    const linked = rx.items.find((i: any) => i.drug_product_id === amoxProductId)!;
+    expect(linked.item_id).toBeDefined();
+    expect(linked.item_name).toBeDefined();
+    expect(Number(linked.qty_prescribed)).toBe(21);
+
+    const unlinked = rx.items.find((i: any) => i.drug_product_id === null)!;
+    expect(unlinked.item_id).toBeNull();
+    expect(unlinked.generic_name).toBe('Unlinked Unobtainium');
+
+    await expect(
+      pharmacySvc.getPrescription(tenantId, '00000000-0000-4000-8000-000000000000'),
+    ).rejects.toThrow();
+  });
+
   it('runs prescription verification: approve, intervene, and reject', async () => {
     const rand = Math.floor(Math.random() * 100000);
     const vRes = await ownerPool.query(
@@ -848,6 +894,69 @@ describe('PharmacyService (Phase 5 — Pharmacy Core & AC-7)', () => {
 
     expect(ret.disposition).toBe('RESTOCK');
     expect(Number(ret.qty)).toBe(3);
+  });
+
+  it('enforces the pharmacy catalogue boundary (drug_products membership)', async () => {
+    const rand = Math.floor(Math.random() * 100000);
+    const suffix = `BND-${rand}`;
+    // A stocked item with no drug_products row: a clinic supply, not a pharmacy item.
+    const supplyItemRes = await ownerPool.query(
+      `INSERT INTO items (tenant_id, code, name, item_type, base_uom_id)
+       VALUES ($1, $2, $3, 'SUPPLY', $4) RETURNING id`,
+      [tenantId, `SUP-${suffix}`, `Exam Gloves ${suffix}`, uomPcsId],
+    );
+    const nonDrugItemId = supplyItemRes.rows[0].id as string;
+
+    const exp = new Date();
+    exp.setDate(exp.getDate() + 90);
+    const batchRes = await ownerPool.query(
+      `INSERT INTO stock_batches (tenant_id, item_id, lot_no, expiry_date, unit_cost, status)
+       VALUES ($1, $2, $3, $4, 1.0, 'AVAILABLE') RETURNING id`,
+      [tenantId, nonDrugItemId, `LOT-${suffix}`, exp.toISOString().slice(0, 10)],
+    );
+    const nonDrugBatchId = batchRes.rows[0].id as string;
+    await ownerPool.query(
+      `INSERT INTO stock_balances (tenant_id, location_id, batch_id, qty_on_hand, last_movement_at)
+       VALUES ($1, $2, $3, 10, now())`,
+      [tenantId, pharmacyLocId, nonDrugBatchId],
+    );
+
+    // 1. Stock view excludes it.
+    const stock = await pharmacySvc.getPharmacyStock(tenantId, {});
+    expect(stock.some((r: { item_id: string }) => r.item_id === nonDrugItemId)).toBe(false);
+    expect(stock.some((r: { item_id: string }) => r.item_id === otcItemId)).toBe(true);
+
+    // 2. OTC sale of a non-pharmacy item is rejected.
+    await expect(
+      pharmacySvc.createAndPostOtcSale(tenantId, pharmacistId, `req-bnd-otc-${rand}`, {
+        branchId,
+        locationId: pharmacyLocId,
+        patientId,
+        items: [{ itemId: nonDrugItemId, batchId: nonDrugBatchId, qty: 1 }],
+      }),
+    ).rejects.toThrow(ProblemException);
+
+    // 3. Dispensing a non-pharmacy item is rejected.
+    await expect(
+      pharmacySvc.createDispense(tenantId, pharmacistId, {
+        branchId,
+        patientId,
+        lines: [{ itemId: nonDrugItemId, batchId: nonDrugBatchId, qty: 1 }],
+      }),
+    ).rejects.toThrow(ProblemException);
+
+    // 4. Administering a non-pharmacy item is rejected.
+    await expect(
+      pharmacySvc.recordMedicationAdministration(tenantId, pharmacistId, `req-bnd-admin-${rand}`, {
+        branchId,
+        visitId: crypto.randomUUID(),
+        locationId: pharmacyLocId,
+        drugItemId: nonDrugItemId,
+        batchId: nonDrugBatchId,
+        dose: '1 pair',
+        route: 'ORAL',
+      }),
+    ).rejects.toThrow(ProblemException);
   });
 
   it('runs controlled drug reconciliation job (JOB-38) and reports balance check', async () => {

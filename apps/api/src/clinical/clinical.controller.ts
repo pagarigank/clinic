@@ -1,4 +1,5 @@
-import { Inject, Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Inject, Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Req, Res } from '@nestjs/common';
+import type { FastifyReply } from 'fastify';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
@@ -53,7 +54,6 @@ export class ClinicalController {
   constructor(
     @Inject(ClinicalService) private readonly svc: ClinicalService,
   ) {}
-
   // ── Schedules ─────────────────────────────────────────────────────────────
   @RequirePermission('clinical.schedule.read')
   @Get('schedules')
@@ -321,6 +321,75 @@ export class ClinicalController {
   async getPrescriptionPrint(@Req() req: RequestWithAuth, @Param('id') id: string) {
     return this.svc.getPrescriptionPrint(req.tenantId!, req.authContext!.userId!, id);
   }
+
+  @RequirePermission('clinical.rx.read')
+  @Get('prescriptions/:id/pdf')
+  @ApiOperation({ summary: 'Render official prescription PDF (RA 6675 / RA 9165 compliant)' })
+  async getPrescriptionPdf(
+    @Req() req: RequestWithAuth,
+    @Param('id') id: string,
+    @Query() query: Record<string, string>,
+    @Res() reply: FastifyReply,
+  ) {
+    const doc = await this.svc.renderPrescriptionPdf(req.tenantId!, req.authContext!.userId!, id, query);
+    void reply
+      .status(200)
+      .header('content-type', 'application/pdf')
+      .header('content-disposition', `inline; filename="Prescription-${id.slice(0, 8)}.pdf"`)
+      .send(doc.bytes);
+  }
+
+  @RequirePermission('clinical.rx.read')
+  @Get('visits/:id/prescription-pdf')
+  @ApiOperation({ summary: 'Render encounter prescription pad PDF' })
+  async getVisitPrescriptionPdf(
+    @Req() req: RequestWithAuth,
+    @Param('id') visitId: string,
+    @Query() query: Record<string, string>,
+    @Res() reply: FastifyReply,
+  ) {
+    const doc = await this.svc.renderVisitPrescriptionPdf(req.tenantId!, req.authContext!.userId!, visitId, query);
+    void reply
+      .status(200)
+      .header('content-type', 'application/pdf')
+      .header('content-disposition', `inline; filename="Prescription-Visit-${visitId.slice(0, 8)}.pdf"`)
+      .send(doc.bytes);
+  }
+
+  @RequirePermission('clinical.visit.read')
+  @Get('visits/:id/lab-request-pdf')
+  @ApiOperation({ summary: 'Render encounter laboratory diagnostic examination requisition PDF' })
+  async getVisitLabRequisitionPdf(
+    @Req() req: RequestWithAuth,
+    @Param('id') visitId: string,
+    @Query() query: Record<string, string>,
+    @Res() reply: FastifyReply,
+  ) {
+    const doc = await this.svc.renderVisitLabRequisitionPdf(req.tenantId!, req.authContext!.userId!, visitId, query);
+    void reply
+      .status(200)
+      .header('content-type', 'application/pdf')
+      .header('content-disposition', `inline; filename="LabRequisition-${visitId.slice(0, 8)}.pdf"`)
+      .send(doc.bytes);
+  }
+
+  @RequirePermission('clinical.visit.read')
+  @Get('visits/:id/orders-pdf')
+  @ApiOperation({ summary: 'Render combined clinical consultation orders and summary PDF' })
+  async getVisitOrdersPdf(
+    @Req() req: RequestWithAuth,
+    @Param('id') visitId: string,
+    @Query() query: Record<string, string>,
+    @Res() reply: FastifyReply,
+  ) {
+    const doc = await this.svc.renderVisitOrdersPdf(req.tenantId!, req.authContext!.userId!, visitId, query);
+    void reply
+      .status(200)
+      .header('content-type', 'application/pdf')
+      .header('content-disposition', `inline; filename="ClinicalOrders-${visitId.slice(0, 8)}.pdf"`)
+      .send(doc.bytes);
+  }
+
 
   // ── Certificates / referrals ──────────────────────────────────────────────
   @RequirePermission('clinical.certificate.create')

@@ -61,11 +61,20 @@ async function seedModule(pool: ReturnType<typeof getAppPool>, tenantId: string,
         [tenantId],
       );
 
-      // JOB-03 seeds private-practice defaults (Phase 1.7)
+      // JOB-03 seeds private-practice defaults (Phase 1.7) plus an opening
+      // price list (specification §4 line 183) so charges resolve server-side.
       await pool.query(
-        `INSERT INTO service_catalog (tenant_id, code, name, is_active)
-         VALUES ($1, 'consult', 'General Consultation', true)
+        `INSERT INTO service_catalog (tenant_id, code, name, category, default_price, is_active)
+         VALUES ($1, 'consult', 'General Consultation', 'consult', 500.00, true)
          ON CONFLICT DO NOTHING`,
+        [tenantId]
+      );
+
+      await pool.query(
+        `INSERT INTO price_lists (tenant_id, service_id, amount, effective_from)
+         SELECT $1, sc.id, 500.00, CURRENT_DATE
+         FROM service_catalog sc
+         WHERE sc.tenant_id = $1 AND sc.code = 'consult'`,
         [tenantId]
       );
 

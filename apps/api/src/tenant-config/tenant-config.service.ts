@@ -30,9 +30,9 @@ export class TenantConfigService {
   async createService(tenantId: string, userId: string, dto: CreateServiceRequest) {
     return withTenant({ tenantId, userId }, async (tx) => {
       const res = await tx.query(
-        `INSERT INTO service_catalog (tenant_id, branch_id, code, name)
-         VALUES ($1, $2, $3, $4) RETURNING id, code, name, is_active, created_at`,
-        [tenantId, dto.branchId ?? null, dto.code, dto.name],
+        `INSERT INTO service_catalog (tenant_id, branch_id, code, name, category, default_price)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, code, name, category, default_price, is_active, created_at`,
+        [tenantId, dto.branchId ?? null, dto.code, dto.name, dto.category, dto.defaultPrice],
       );
       return res.rows[0];
     });

@@ -41,7 +41,7 @@ import type { MfaEnrollStartResponse, TokenPair } from "@clinic/contracts";
 
 type AuthedRequest = FastifyRequest & RequestWithAuth;
 
-@Controller("api/v1/auth")
+@Controller("auth")
 // Identity is not a tenant module: login, refresh, logout, step-up and MFA
 // management must work for a tenant whose modules are all DISABLED, otherwise a
 // lapsed tenant could never sign in to see why. `GET /session` is the

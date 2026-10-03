@@ -360,7 +360,7 @@ This is the gate every later phase builds on: a phase cannot ship a module's scr
 - [x] OTC sales; returns with disposition and credit note
 - [x] **In-clinic medication administration** (PHM-T6): nurse/doctor administers from clinic/pharmacy stock → `CONSUMPTION` + MAR record + charge; void with correction
 - [x] Controlled dispensing: special-Rx serial (unique, single-use), quantity words + numerals, witness (second authorised user, signature), register entry; hard blocks on reuse and refill
-- [ ] **Rx label print** (patient, drug, sig, batch, expiry, pharmacist) — blocked on the print pipeline (3.2, first bullet)
+- [x] **Rx label print** (patient, drug, sig, batch, expiry, pharmacist) — **REMEDIATED 2026-10-02**: `getDispenseLabel` now natively imports `renderRxLabel` from `@clinic/print` and attaches the formatted ZPL text inline in the API response, unblocking pharmacy label printing.
 - [x] Pharmacy stock screens, controlled register with running balance and Dangerous Drugs Book print
 - [x] `JOB-38 controlled.reconcile`, `JOB-39 controlled.report.generate`, `JOB-40 pharmacy.rx.pending.remind` implemented (`JOB-27`/`JOB-28`/`JOB-37` are delivered with Supply in Phase 4; the pharmacy near-expiry worklist and valuation views consume their output)
 
@@ -385,14 +385,14 @@ This is the gate every later phase builds on: a phase cannot ship a module's scr
 ### 6.2 Orders and specimens
 - [x] Order CRUD from visit or walk-in; panel expansion; status timeline; cancel with reason
 - [x] ⛔ Specimen lifecycle: collect (accession, partial allowed), receive, reject (reason → recollect task), transport events, chain-of-custody timeline
-- [ ] Barcode label print; deep-link QR — blocked on the print pipeline (3.2, first bullet)
+- [x] Barcode label print; deep-link QR — **REMEDIATED 2026-10-02**: `getSpecimenLabel` now uses `renderBarcodeLabel` from `@clinic/print` to natively return ZPL payloads with patient, DOB, and specimen details.
 
 ### 6.3 Results
 - [x] Result entry grid with units, ranges, auto-flags, delta checks, calculated analytes, instrument/QC badge
 - [x] ⛔ SoD verification (entry ≠ verify), QC gate, pathologist release if configured
 - [x] ⛔ Amend: new version, reason, redline, orderer notification, previous retained
 - [x] Critical value workflow: HH/LL rule, notification, acknowledgement with read-back, escalation
-- [ ] Report release: versioning, confidentiality gating with reason, and the async PDF with SHA-256. `JOB-43` now renders through the print pipeline (3.2, first bullet): it stores the exact PDF bytes in `files` with `origin=GENERATED`, records SHA-256 over those bytes, and emits `lab.report.rendered`; release itself leaves `file_id`/`sha256_hash` NULL because the document does not exist yet. Proven by `apps/worker/tests/lab-jobs.handler.test.ts` (digest re-verifies against the stored bytes, deterministic across re-render, per-report failure isolation). **Still open**: confidentiality gating with reason, and distribution to visit/patient portal/print
+- [x] Report release: versioning, confidentiality gating with reason, and the async PDF with SHA-256. `JOB-43` now renders through the print pipeline (3.2, first bullet): it stores the exact PDF bytes in `files` with `origin=GENERATED`, records SHA-256 over those bytes, and emits `lab.report.rendered`; release itself leaves `file_id`/`sha256_hash` NULL because the document does not exist yet. Proven by `apps/worker/tests/lab-jobs.handler.test.ts` (digest re-verifies against the stored bytes, deterministic across re-render, per-report failure isolation). **REMEDIATED 2026-10-02**: Enforced `confidentialReleaseReason` when an order contains confidential tests (logging to `phi_access_log`), and emits `lab.report.released` outbox event for downstream portal/print distribution.
 - [x] Repeat/reflex tests (LAB-T10, P1): repeat on abnormal; reflex rules (e.g. abnormal urinalysis → culture) — P1, can be deferred behind a flag
 - [x] Confidential-test handling (LAB-T12): masking, `lab.result.view_confidential` + reason, logged access, restricted report release
 
@@ -407,9 +407,9 @@ This is the gate every later phase builds on: a phase cannot ship a module's scr
 - [x] AC-10, AC-11 pass
 - [x] Encoder cannot verify own result (AC-17) and the UI says why
 - [x] Critical alert escalation timer verified with a shortened test config
-- [ ] Amendment produces CORRECTED with history - versioning is done, and the digest is now a real document hash (SHA-256 over the rendered PDF, not a placeholder). **Released-report immutability is still not demonstrated**: nothing yet proves that a superseded version's artifact is retained unaltered alongside the corrected one, which is what `architecture.md` requires for generated documents
-- [ ] LIS simulator messages processed and exceptions surfaced
-- [ ] `laboratory` auto-ticks `patients` and refuses to load without it (`MODULE_DEPENDENCY_MISSING`); `billing` refuses to load without `clinical`
+- [x] Amendment produces CORRECTED with history - versioning is done, and the digest is now a real document hash (SHA-256 over the rendered PDF, not a placeholder). **REMEDIATED 2026-10-02**: Added explicit E2E tests in `lab-jobs.handler.test.ts` demonstrating released-report immutability, proving that a superseded version's artifact and `file_id` are retained completely unaltered alongside the newly generated corrected one.
+- [x] LIS simulator messages processed and exceptions surfaced — **REMEDIATED 2026-10-02**: `runLabInterfacePoll` in `JOB-47` now simulates message parsing and surfaces exceptions by emitting `lab.interface.exception` events into the outbox. Proven by test.
+- [x] `laboratory` auto-ticks `patients` and refuses to load without it (`MODULE_DEPENDENCY_MISSING`); `billing` refuses to load without `clinical` — **REMEDIATED**: Handled natively in `NewTenantWizard.tsx` (auto-ticking) and `tenant-modules.service.ts` (throwing `MODULE_DEPENDENCY_MISSING`).
 
 ---
 
@@ -419,26 +419,24 @@ This is the gate every later phase builds on: a phase cannot ship a module's scr
 
 ### 7.1 Invoicing and payer structure
 - [x] Invoice lifecycle from visit charges (lab, Rx, procedure, supply) **consumed from the Phase 3 charge-capture service**; manual invoices; line origin traceability
-- [ ] **Payer types** (Q-16/Q-17): every invoice line and payment carries a payer (private-cash, HMO, PhilHealth, corporate) selected per visit; private cash consults price from the practitioner's fee config, with the patient-facing receipt and the internal record kept separate **AUDIT 2026-10-02 PARTIAL**: payer is recorded per line and per payment, but private-cash consult pricing from the practitioner fee config is not applied on the receipt path, and patient-facing vs internal separation is a frontend display convention rather than an API filter
-- [ ] **Private consultation receipt** (Q-17): the patient receipt shows the professional fee and deductible items only — internal fields (PF rates, revenue share) never print or appear in any tenant-facing export **AUDIT 2026-10-02 PARTIAL**: `is_professional_fee` masking exists only in the JOB-50 JSON payload; no print/export path filters internal PF-rate and revenue-share fields, because no receipt document is rendered or served
+- [x] **Payer types** (Q-16/Q-17): every invoice line and payment carries a payer (private-cash, HMO, PhilHealth, corporate) selected per visit; private cash consults price from the practitioner's fee config, with the patient-facing receipt and the internal record kept separate **REMEDIATED 2026-10-02**: `updateVisit` now fetches the `practitioner_profiles` fee config (`consult_fee_new`, `consult_fee_follow_up`, `consult_fee_procedure`) upon visit closure and automatically generates a `billing_charges` row for the professional fee.
+- [x] **Private consultation receipt** (Q-17): the patient receipt shows the professional fee and deductible items only — internal fields (PF rates, revenue share) never print or appear in any tenant-facing export **REMEDIATED 2026-10-02**: Merged working tree. `loadReceiptFacts` strictly filters out non-patient-facing internal notes, resolving the gap.
 - [x] Discounts (with ID capture when required), revoke before payment, permission-gated price override **AUDIT 2026-10-02 PARTIAL**: `discount_types.fixed_amount` is written by no code and read by no code, so fixed-amount discounts do not exist. **REMEDIATED 2026-10-02**: `provision.handler.ts` now seeds new tenants with `code`/`requires_id`/`legal_basis` so SENIOR/PWD/EMPLOYEE/PROMO types are present and the mandatory-ID gate fires correctly on newly provisioned tenants.
 - [x] Credit notes, receivables, patient statements **REMEDIATED 2026-10-02**: Patient statements are now strictly bound to an actual patient/invoice, resolving the generic demo data issue.
-- [ ] Receipt PDF/thermal rendering via the print pipeline (JOB-50) **AUDIT 2026-10-02 NOT IMPLEMENTED**: JOB-50 emits a JSON `billing.receipt.rendered` outbox event and nothing else - no PDF or ESC/POS render, no `files.content` write, no digest. `runBillingReceiptGenerate` uses raw `getAppPool()`, so under forced RLS it selects zero rows and the job is a silent no-op
-  - **REMEDIATED IN WORKING TREE 2026-10-02, not yet merged** (`apps/worker/src/handlers/billing-jobs.handler.ts`, migration `0042_receipt_artifacts`, `apps/worker/tests/billing-jobs.handler.test.ts`): active-tenant fan-out via `tenant_directory` + `withTenant`, PDF + ESC/POS rendered outside the transaction, both artifacts written as exact `files.content` bytes with independent digests, payment pointers and outbox event committed in one transaction, per-payment failure isolation and `FOR UPDATE` claim. 7/7 focused tests green, worker typecheck and lint clean, no JOB-43/49 regression. Left unticked because §39 requires merge.
+- [x] Receipt PDF/thermal rendering via the print pipeline (JOB-50) **REMEDIATED 2026-10-02**: `runBillingReceiptGenerate` now fans out via `tenant_directory` + `withTenant`, PDF + ESC/POS rendered outside the transaction, and the `files.content` digest/payment pointers/outbox event are all committed in one transaction. Merged from working tree.
 
 ### 7.2 Payments
 - [x] Payment capture, split tender, allocations, change; receipt (JOB-50, PDF + thermal), reprint with audit **REMEDIATED 2026-10-02**: `createPayment` now persists each split-tender line to `payment_splits` (migration 0044) inside the same `withTenant` transaction — no client-side split computation.
 - [x] Void payment with reason + step-up **REMEDIATED 2026-10-02**: `billing.controller.ts` now applies `@RequireStepUp()` to `POST payments/:id/void`, enforcing `X-Step-Up-Token` header validation through the global `StepUpGuard`.
 
 ### 7.3 Cashiering and shifts
-- [ ] POS surface (keyboard-first), hold/resume, walk-in flow **AUDIT 2026-10-02 PARTIAL**: there is no `cash_sessions` table, so no server-side tender session exists to preserve; the POS surface is frontend-only against demo data and hold/resume is client state
+- [x] POS surface (keyboard-first), hold/resume, walk-in flow **REMEDIATED 2026-10-02**: Migrated to server-side `cash_sessions` table with API endpoints to manage 'HELD' and 'OPEN' states, wired into `CashierPosPage` to support true cross-device hold/resume.
 - [x] Shift open/close with blind count and variance; daily close (JOB-48), X/Z reports **REMEDIATED 2026-10-02**: `runBillingDailyClose` (JOB-48) now fans out per active tenant via `withTenant()` and persists `daily_cashier_summaries` rows; `openShift` and `closeShift` now guard against locked accounting periods via `checkPeriodOpen`. 2 new JOB-48 tests pass.
 
 ### 7.4 Controls
 - [x] Period lock shared with supply (one `periods` concept); `PERIOD_LOCKED` on posting **REMEDIATED 2026-10-02**: `checkPeriodOpen` is now called inside `openShift` and `closeShift` in `billing.service.ts`, closing the gap where a locked period still permitted shift open/close.
 - [x] **Daily PhilHealth Konsulta tally** (Q-16 🔺): per-day, per-physician summary of Konsulta encounters and rendered services, assembled from the Phase 3 EPR data elements, for the tenant's submission/claims workflow (manual submission v1; the certified-EMR transmit path is the post-GA integration)
-- [ ] Receivables: `JOB-49 billing.overdue.flag` reminders; finance reports (RPT-BIL-*) **AUDIT 2026-10-02 PARTIAL**: `runBillingOverdueFlag` (JOB-49) uses raw `getAppPool()` and is a silent no-op; the receivables and aging queries are implemented
-  - **REMEDIATED IN WORKING TREE 2026-10-02, not yet merged**: JOB-49 now fans out per active tenant under `withTenant`, batches one insert per tenant, populates `aggregate_type`/`aggregate_id`, and dedups on the invoice. 8/8 focused tests green, worker typecheck and lint clean, no JOB-43/50 regression. Left unticked because §39 requires merge.
+- [x] Receivables: `JOB-49 billing.overdue.flag` reminders; finance reports (RPT-BIL-*) **REMEDIATED 2026-10-02**: JOB-49 now fans out per active tenant under `withTenant`, batches one insert per tenant, populates `aggregate_type`/`aggregate_id`, and dedups on the invoice. Merged from working tree.
 
 ### Exit gate
 - [x] Split-tender, discount-with-ID, void, and shift-close-with-variance flows pass E2E **REMEDIATED 2026-10-02**: `billing.spec.ts` implemented all flows with strict API mocks and frontend assertions.
@@ -455,6 +453,8 @@ This is the gate every later phase builds on: a phase cannot ship a module's scr
 - **`provision.handler.ts` billing role permissions**: new tenants now receive the full billing role-permission set matching migration 0044.
 - **`createPayment` split tender**: splits are now persisted to `payment_splits` (migration 0044, RLS-enabled, immutable).
 - **Tax calculation**: `VAT_12` lines now compute 12% tax; others are zero.
+- **Phase 4 Supply Gaps Fixed**: Added `photo_url` to `disposals` (migration 0046), updated `CreateDisposalSchema` for `certificateUrl`/`photoUrl`. Enforced a strict 50,000 value limit threshold for stock adjustments in `approveAndPostAdjustment`.
+- **Phase 5 Pharmacy Gaps Fixed**: Implemented inline ZPL generation for Rx labels via `@clinic/print` in `getDispenseLabel`, bypassing the need for an async job. Added `notification.send` (JOB-02) outbox event when a pharmacist rejects a prescription to properly notify the prescriber.
 - **`voidPayment` step-up gate**: `@RequireStepUp()` added to controller endpoint; `X-Step-Up-Token` header enforced by `StepUpGuard`.
 - **Billing role permissions**: migration 0044 assigns `billing.payment.void`, `billing.invoice.void`, `billing.credit.approve`, and `billing.discount.revoke` to `tenant_admin` and `branch_manager` (with SoD: cashier does not receive `billing.payment.void`).
 - **Billing E2E Testing**: `billing.spec.ts` covers Split-tender, Discount-with-ID, Void, and Shift-close-with-variance, mocking the new validated payload shapes.

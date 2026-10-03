@@ -1,16 +1,195 @@
-import React, { useState } from "react";
-import { Outlet, NavLink, useNavigate } from "react-router";
+import React, { useEffect, useMemo, useState } from "react";
+import { Outlet, NavLink, useLocation, useNavigate, Navigate } from "react-router";
 import { useAuth } from "../shared/auth/AuthContext.js";
 import { CommandPalette } from "../shared/search/CommandPalette.js";
 import { getRegistrationRequests } from "../shared/services/registrationStore.js";
 
+interface NavItem {
+  to: string;
+  icon: string;
+  label: string;
+  badge?: React.ReactNode;
+}
+
+interface NavGroup {
+  id: string;
+  label: string;
+  icon: string;
+  items: NavItem[];
+}
+
+/** Sidebar sections (frontend §8). Rendered as animated collapsible groups. */
+const NAV_GROUPS: NavGroup[] = [
+  {
+    id: "workspace",
+    label: "Workspace",
+    icon: "🗂️",
+    items: [
+      { to: "/dashboard", icon: "📊", label: "Dashboard" },
+      { to: "/patients", icon: "👥", label: "Patient Registry" },
+      { to: "/patients/duplicates", icon: "🧬", label: "Duplicate Candidates" },
+    ],
+  },
+  {
+    id: "clinical",
+    label: "Clinical Care",
+    icon: "🩺",
+    items: [
+      { to: "/clinical/appointments", icon: "📅", label: "Appointments" },
+      { to: "/clinical/queue", icon: "🎫", label: "Queue Board" },
+      { to: "/clinical/visits", icon: "🩺", label: "Consultations & Chart" },
+    ],
+  },
+  {
+    id: "pharmacy",
+    label: "Pharmacy Dispensing",
+    icon: "💊",
+    items: [
+      { to: "/pharmacy/queue", icon: "💊", label: "Verification Queue" },
+      { to: "/pharmacy/dispenses", icon: "⚖️", label: "Dispense Workbench" },
+      { to: "/pharmacy/controlled-register", icon: "📕", label: "Dangerous Drugs Book" },
+      { to: "/pharmacy/sales", icon: "🛒", label: "OTC Sales" },
+      { to: "/pharmacy/administrations", icon: "💉", label: "Medication Admin (MAR)" },
+    ],
+  },
+  {
+    id: "laboratory",
+    label: "Laboratory",
+    icon: "🔬",
+    items: [
+      { to: "/laboratory/worklist", icon: "🔬", label: "Lab Workbench" },
+      { to: "/laboratory/results", icon: "📝", label: "Result Entry & Flags" },
+      { to: "/laboratory/verification", icon: "🛡️", label: "Verification Queue" },
+      { to: "/laboratory/critical-alerts", icon: "⚡", label: "Critical Alerts" },
+      { to: "/laboratory/qc", icon: "📈", label: "Quality Control & LJ" },
+      { to: "/laboratory/reports", icon: "📜", label: "Released Reports" },
+    ],
+  },
+  {
+    id: "supply",
+    label: "Supply & Inventory",
+    icon: "📦",
+    items: [
+      { to: "/supply/dashboard", icon: "📈", label: "Supply Dashboard" },
+      { to: "/supply/stock", icon: "📦", label: "Stock Explorer" },
+      { to: "/supply/grn", icon: "📥", label: "Receive Delivery (GRN)" },
+      { to: "/supply/requisitions", icon: "📋", label: "Requisitions & Issues" },
+      { to: "/supply/issue", icon: "📤", label: "Issue / Consumption" },
+      { to: "/supply/items", icon: "🏷️", label: "Item Master" },
+    ],
+  },
+  {
+    id: "billing",
+    label: "Billing & Cashiering",
+    icon: "💳",
+    items: [
+      { to: "/billing/invoices", icon: "🧾", label: "Billing & Invoices" },
+      { to: "/billing/pos", icon: "🛒", label: "Cashier POS" },
+      { to: "/billing/shifts", icon: "⏱️", label: "Cashier Shifts" },
+      { to: "/billing/credit-notes", icon: "📑", label: "Credit Notes" },
+      { to: "/billing/daily-close", icon: "🔒", label: "Daily Close & Tally" },
+    ],
+  },
+  {
+    id: "admin",
+    label: "Tenant Administration",
+    icon: "🏛️",
+    items: [
+      { to: "/admin/approvals", icon: "📝", label: "Staff Approvals" },
+      { to: "/admin/users", icon: "👤", label: "Staff & Users" },
+      { to: "/admin/roles", icon: "🛡️", label: "Roles & Permissions" },
+      { to: "/admin/branches", icon: "🏢", label: "Branches & Units" },
+      { to: "/admin/service-catalog", icon: "💰", label: "Services & Prices" },
+      { to: "/admin/settings", icon: "⚙️", label: "Settings" },
+    ],
+  },
+  {
+    id: "system",
+    label: "System",
+    icon: "🖥️",
+    items: [
+      { to: "/ping", icon: "📡", label: "System Health" },
+      { to: "/platform/tenants", icon: "🖥️", label: "Platform Console" },
+    ],
+  },
+];
+
+/** Group owning the current route (longest path match) so deep links expand. */
+function groupForPath(pathname: string): string | undefined {
+  let best: { id: string; len: number } | undefined;
+  for (const group of NAV_GROUPS) {
+    for (const item of group.items) {
+      if (pathname === item.to || pathname.startsWith(`${item.to}/`)) {
+        if (!best || item.to.length > best.len) best = { id: group.id, len: item.to.length };
+      }
+    }
+  }
+  return best?.id;
+}
+
 export function MainLayout() {
-  const { session, logout, switchBranch } = useAuth();
+  const { session, logout, switchBranch, isLoading } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [isBranchModalOpen, setIsBranchModalOpen] = useState(false);
   const requests = getRegistrationRequests();
   const pendingApprovalsCount = requests.filter((r) => r.status === "PENDING_APPROVAL").length;
+
+  const navGroups = useMemo(
+    () =>
+      NAV_GROUPS.map((group) =>
+        group.id === "workspace"
+          ? {
+              ...group,
+              items: group.items.map((item) =>
+                item.to === "/patients/duplicates"
+                  ? { ...item, badge: <span className="badge-pending" aria-label="JOB-22 worklist">22</span> }
+                  : item,
+              ),
+            }
+          : group.id === "admin"
+            ? {
+                ...group,
+                items: group.items.map((item) =>
+                  item.to === "/admin/approvals" && pendingApprovalsCount > 0
+                    ? {
+                        ...item,
+                        badge: (
+                          <span className="badge-pending" aria-label={`${pendingApprovalsCount} pending`}>
+                            {pendingApprovalsCount}
+                          </span>
+                        ),
+                      }
+                    : item,
+                ),
+              }
+            : group,
+      ),
+    [pendingApprovalsCount],
+  );
+
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => {
+    const active = groupForPath(location.pathname);
+    return new Set(active ? [active] : ["workspace"]);
+  });
+
+  // Keep the section that owns the active route expanded (deep links, command
+  // palette navigation) without fighting a user's manual collapse.
+  useEffect(() => {
+    const active = groupForPath(location.pathname);
+    if (!active) return;
+    setOpenGroups((prev) => (prev.has(active) ? prev : new Set(prev).add(active)));
+  }, [location.pathname]);
+
+  const toggleGroup = (id: string) => {
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -155,167 +334,47 @@ export function MainLayout() {
         {/* Left Sidebar */}
         <aside className="app-sidebar" aria-label="Main Navigation">
           <nav className="sidebar-nav" role="navigation">
-            <div className="sidebar-group-title">WORKSPACE</div>
-            <NavLink to="/dashboard" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">📊</span>
-              <span>Dashboard</span>
-            </NavLink>
-            <NavLink to="/patients" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">👥</span>
-              <span>Patient Registry</span>
-            </NavLink>
-            <NavLink to="/patients/duplicates" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">🧬</span>
-              <span>Duplicate Candidates</span>
-              <span className="badge-pending" aria-label="JOB-22 worklist">22</span>
-            </NavLink>
-
-            <div className="sidebar-group-title">CLINICAL CARE</div>
-            <NavLink to="/clinical/appointments" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">📅</span>
-              <span>Appointments</span>
-            </NavLink>
-            <NavLink to="/clinical/queue" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">🎫</span>
-              <span>Queue Board</span>
-            </NavLink>
-            <NavLink to="/clinical/visits" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">🩺</span>
-              <span>Consultations &amp; Chart</span>
-            </NavLink>
-
-            <div className="sidebar-group-title">PHARMACY DISPENSING</div>
-            <NavLink to="/pharmacy/queue" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">💊</span>
-              <span>Verification Queue</span>
-            </NavLink>
-            <NavLink to="/pharmacy/dispenses" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">⚖️</span>
-              <span>Dispense Workbench</span>
-            </NavLink>
-            <NavLink to="/pharmacy/controlled-register" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">📕</span>
-              <span>Dangerous Drugs Book</span>
-            </NavLink>
-            <NavLink to="/pharmacy/sales" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">🛒</span>
-              <span>OTC Sales</span>
-            </NavLink>
-            <NavLink to="/pharmacy/administrations" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">💉</span>
-              <span>Medication Admin (MAR)</span>
-            </NavLink>
-
-            <div className="sidebar-group-title">LABORATORY</div>
-            <NavLink to="/laboratory/worklist" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">🔬</span>
-              <span>Lab Workbench</span>
-            </NavLink>
-            <NavLink to="/laboratory/results" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">📝</span>
-              <span>Result Entry &amp; Flags</span>
-            </NavLink>
-            <NavLink to="/laboratory/verification" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">🛡️</span>
-              <span>Verification Queue</span>
-            </NavLink>
-            <NavLink to="/laboratory/critical-alerts" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">⚡</span>
-              <span>Critical Alerts</span>
-            </NavLink>
-            <NavLink to="/laboratory/qc" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">📈</span>
-              <span>Quality Control &amp; LJ</span>
-            </NavLink>
-            <NavLink to="/laboratory/reports" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">📜</span>
-              <span>Released Reports</span>
-            </NavLink>
-
-            <div className="sidebar-group-title">SUPPLY &amp; INVENTORY</div>
-            <NavLink to="/supply/dashboard" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">📈</span>
-              <span>Supply Dashboard</span>
-            </NavLink>
-            <NavLink to="/supply/stock" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">📦</span>
-              <span>Stock Explorer</span>
-            </NavLink>
-            <NavLink to="/supply/grn" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">📥</span>
-              <span>Receive Delivery (GRN)</span>
-            </NavLink>
-            <NavLink to="/supply/requisitions" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">📋</span>
-              <span>Requisitions &amp; Issues</span>
-            </NavLink>
-            <NavLink to="/supply/items" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">🏷️</span>
-              <span>Item Master</span>
-            </NavLink>
-
-            <div className="sidebar-group-title">BILLING &amp; CASHIERING</div>
-            <NavLink to="/billing/invoices" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">🧾</span>
-              <span>Billing &amp; Invoices</span>
-            </NavLink>
-            <NavLink to="/billing/pos" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">🛒</span>
-              <span>Cashier POS</span>
-            </NavLink>
-            <NavLink to="/billing/shifts" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">⏱️</span>
-              <span>Cashier Shifts</span>
-            </NavLink>
-            <NavLink to="/billing/credit-notes" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">📑</span>
-              <span>Credit Notes</span>
-            </NavLink>
-            <NavLink to="/billing/daily-close" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">🔒</span>
-              <span>Daily Close &amp; Tally</span>
-            </NavLink>
-
-            <div className="sidebar-group-title">TENANT ADMINISTRATION</div>
-            <NavLink to="/admin/approvals" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">📝</span>
-              <span>Staff Approvals</span>
-              {pendingApprovalsCount > 0 && (
-                <span className="badge-pending" aria-label={`${pendingApprovalsCount} pending`}>
-                  {pendingApprovalsCount}
-                </span>
-              )}
-            </NavLink>
-            <NavLink to="/admin/users" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">👤</span>
-              <span>Staff &amp; Users</span>
-            </NavLink>
-            <NavLink to="/admin/roles" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">🛡️</span>
-              <span>Roles &amp; Permissions</span>
-            </NavLink>
-            <NavLink to="/admin/branches" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">🏢</span>
-              <span>Branches &amp; Units</span>
-            </NavLink>
-            <NavLink to="/admin/service-catalog" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">💰</span>
-              <span>Services &amp; Prices</span>
-            </NavLink>
-            <NavLink to="/admin/settings" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">⚙️</span>
-              <span>Settings</span>
-            </NavLink>
-
-            <div className="sidebar-group-title">SYSTEM</div>
-            <NavLink to="/ping" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">📡</span>
-              <span>System Health</span>
-            </NavLink>
-            <NavLink to="/platform/tenants" className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}>
-              <span aria-hidden="true">🖥️</span>
-              <span>Platform Console</span>
-            </NavLink>
+            {navGroups.map((group) => {
+              const isOpen = openGroups.has(group.id);
+              const panelId = `nav-group-${group.id}`;
+              return (
+                <div key={group.id} className={`sidebar-group ${isOpen ? "open" : ""}`}>
+                  <button
+                    type="button"
+                    className="sidebar-group-toggle"
+                    aria-expanded={isOpen}
+                    aria-controls={panelId}
+                    onClick={() => toggleGroup(group.id)}
+                  >
+                    <span className="sidebar-group-heading">
+                      <span className="sidebar-group-icon" aria-hidden="true">
+                        {group.icon}
+                      </span>
+                      <span>{group.label}</span>
+                    </span>
+                    <span className="sidebar-group-chevron" aria-hidden="true">
+                      ▾
+                    </span>
+                  </button>
+                  <div id={panelId} className="sidebar-group-panel" inert={!isOpen ? true : undefined}>
+                    <div className="sidebar-group-panel-inner">
+                      {group.items.map((item) => (
+                        <NavLink
+                          key={item.to}
+                          to={item.to}
+                          className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}
+                          tabIndex={isOpen ? undefined : -1}
+                        >
+                          <span aria-hidden="true">{item.icon}</span>
+                          <span>{item.label}</span>
+                          {item.badge}
+                        </NavLink>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </nav>
 
           {/* Sidebar footer badge */}
@@ -339,7 +398,21 @@ export function MainLayout() {
 
         {/* ── 3. Content Area ─── */}
         <main id="main" className="app-content" role="main">
-          <Outlet />
+          {/* Gate on session init: AuthProvider restores the in-memory access
+              token asynchronously on hard reload. Mounting page effects before
+              that completes makes their first fetch race the refresh and 401.
+              With refresh-token rotation + reuse detection, a second refresh
+              would revoke the session family, so we wait instead. */}
+          {isLoading ? (
+            <div className="d-flex flex-column align-items-center justify-content-center py-5" role="status" aria-live="polite">
+              <div className="spinner-border text-primary" aria-hidden="true" />
+              <span className="visually-hidden">Restoring your session…</span>
+            </div>
+          ) : !session ? (
+            <Navigate to="/login" replace />
+          ) : (
+            <Outlet />
+          )}
         </main>
       </div>
 

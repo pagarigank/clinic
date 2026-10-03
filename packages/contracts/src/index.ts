@@ -478,6 +478,8 @@ export const CreateServiceSchema = z.object({
   code: z.string().min(1).max(50).regex(/^[a-z0-9_]+$/),
   name: z.string().min(1).max(200),
   branchId: z.string().uuid().optional(),
+  category: z.enum(['consult', 'procedure', 'lab', 'other']).default('other'),
+  defaultPrice: z.number().min(0).default(0),
 });
 export type CreateServiceRequest = z.infer<typeof CreateServiceSchema>;
 
@@ -800,10 +802,9 @@ export const CreateChargeSchema = z.object({
   chargeType: z.enum(['CONSULT', 'PROCEDURE', 'LAB', 'PHARMACY', 'SUPPLY', 'OTHER']),
   sourceType: z.string().min(1).max(60),
   sourceId: z.string().uuid(),
-  serviceId: z.string().uuid().optional(),
+  serviceId: z.string().uuid(),
   description: z.string().min(1).max(300),
   quantity: z.number().positive().default(1),
-  unitPrice: z.number().min(0),
   payerType: z.enum(['PRIVATE_CASH', 'HMO', 'PHILHEALTH', 'CORPORATE']).default('PRIVATE_CASH'),
 });
 export type CreateChargeRequest = z.infer<typeof CreateChargeSchema>;
@@ -826,7 +827,6 @@ export const RecordProcedureSchema = z.object({
   serviceId: z.string().uuid(),
   performedBy: z.string().uuid(),
   notes: z.string().max(2000).optional(),
-  unitPrice: z.number().min(0).optional(),
 });
 export type RecordProcedureRequest = z.infer<typeof RecordProcedureSchema>;
 
@@ -1182,6 +1182,8 @@ export const CreateDisposalSchema = z.object({
   method: z.string().min(1).max(200),
   witness1Id: z.string().uuid().optional(),
   witness2Id: z.string().uuid().optional(),
+  certificateUrl: z.string().url().max(1000).optional(),
+  photoUrl: z.string().url().max(1000).optional(),
   lines: z.array(CreateDisposalLineSchema).min(1),
 });
 export type CreateDisposalRequest = z.infer<typeof CreateDisposalSchema>;
@@ -1634,6 +1636,7 @@ export type AckCriticalNotificationRequest = z.input<typeof AckCriticalNotificat
 export const ReleaseLabReportSchema = z.object({
   status: z.enum(['PRELIMINARY', 'FINAL', 'CORRECTED']).default('FINAL'),
   notes: z.string().max(1000).optional(),
+  confidentialReleaseReason: z.string().min(2).max(200).optional(),
 });
 export type ReleaseLabReportRequest = z.input<typeof ReleaseLabReportSchema>;
 
@@ -1826,6 +1829,16 @@ export const ModulePreflightResponseSchema = z.object({
   blockers: z.array(ModulePreflightBlockerSchema),
 });
 export type ModulePreflightResponse = z.infer<typeof ModulePreflightResponseSchema>;
+
+export const SaveCashSessionSchema = z.object({
+  branchId: z.string().uuid(),
+  patientId: z.string().uuid().optional(),
+  invoiceId: z.string().uuid().optional(),
+  status: z.enum(['OPEN', 'HELD', 'COMPLETED', 'VOIDED']).default('OPEN'),
+  sessionData: z.record(z.string(), z.any()).default({}),
+  rowVersion: z.number().int().positive().optional(),
+});
+export type SaveCashSessionRequest = z.input<typeof SaveCashSessionSchema>;
 
 
 

@@ -18,7 +18,6 @@ export class FilesController {
   constructor(
     @Inject(FilesService) private readonly filesService: FilesService,
   ) {}
-
   @RequirePermission('files.write')
   @Post('presign')
   @ApiOperation({ summary: 'Request a presigned URL to upload a file directly to S3.' })

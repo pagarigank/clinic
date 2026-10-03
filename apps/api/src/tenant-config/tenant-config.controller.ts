@@ -26,7 +26,6 @@ export class TenantConfigController {
   constructor(
     @Inject(TenantConfigService) private readonly svc: TenantConfigService,
   ) {}
-
   // ── Services ────────────────────────────────────────────────────────────────
 
   @RequirePermission('admin.service.read')

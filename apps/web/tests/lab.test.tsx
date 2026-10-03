@@ -1,5 +1,5 @@
 import React from "react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { LabWorklistPage } from "../src/features/laboratory/LabWorklistPage.js";
@@ -311,6 +311,10 @@ function renderWithProviders(ui: React.ReactElement) {
 describe("Laboratory Frontend Suite (Phase 6, todo.md §6)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
   });
 
   describe("LabWorklistPage (LAB-T1, LAB-T2, LAB-T3)", () => {

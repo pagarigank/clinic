@@ -1,7 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { withTenant } from '@clinic/db';
+import { renderBarcodeLabel } from '@clinic/print';
 import { ProblemException } from '../http/problem.exception.js';
 import { SupplyService } from '../supply/supply.service.js';
+import { resolveServicePrice } from '../common/pricing.js';
 import type {
   CreateLabSectionRequest,
   UpdateLabSectionRequest,
@@ -694,7 +696,44 @@ export class LabService {
            RETURNING *`,
           [tenantId, order.id, tId],
         );
-        createdItems.push(itemRes.rows[0]);
+        const item = itemRes.rows[0];
+
+        // 5. Capture a LAB charge against the visit's invoice (BIL-T1, CLN-T6).
+        // Price is resolved server-side from the catalog (todo §49).
+        // Charges require an open visit (specification §11.3 BIL-T1; §7.2).
+        if (dto.visitId) {
+          const openVisit = await tx.query(
+            `SELECT 1 FROM visits WHERE tenant_id = $1 AND id = $2 AND status NOT IN ('CLOSED','CANCELLED')`,
+            [tenantId, dto.visitId],
+          );
+          if ((openVisit.rowCount ?? 0) === 0) {
+            throw new ProblemException('VISIT_CLOSED', { detail: 'Lab orders require an open visit.' });
+          }
+          const testRes = await tx.query(
+            `SELECT name, service_id FROM lab_tests WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, tId],
+          );
+          const test = testRes.rows[0];
+          const serviceId: string | null = test?.service_id ?? null;
+          const unitPrice = serviceId ? await resolveServicePrice(tx, tenantId, serviceId) : 0;
+          const charge = await tx.query(
+            `INSERT INTO billing_charges
+               (tenant_id, branch_id, visit_id, charge_type, source_type, source_id, service_id, description, quantity, unit_price, amount, payer_type, posted_by)
+             VALUES ($1, $2, $3, 'LAB', 'lab_order_item', $4, $5, $6, 1, $7, $7, 'PRIVATE_CASH', $8)
+             ON CONFLICT (tenant_id, source_type, source_id) DO NOTHING
+             RETURNING id`,
+            [tenantId, dto.branchId, dto.visitId, item.id, serviceId, test?.name ?? 'Lab test', unitPrice, userId],
+          );
+          if (charge.rows[0]) {
+            await tx.query(
+              `UPDATE lab_order_items SET charge_line_id = $3 WHERE tenant_id = $1 AND id = $2`,
+              [tenantId, item.id, charge.rows[0].id],
+            );
+            item.charge_line_id = charge.rows[0].id;
+          }
+        }
+
+        createdItems.push(item);
       }
 
       order.items = createdItems;
@@ -731,6 +770,31 @@ export class LabService {
          SET status = 'CANCELLED'
          WHERE tenant_id = $1 AND order_id = $2 AND status NOT IN ('VERIFIED', 'RELEASED')`,
         [tenantId, id],
+      );
+
+      // Void the charges captured at order time (BIL-T4: void posts a reversal).
+      // Only never-consumed charges are voided; a charge already consumed into an
+      // invoice line would leave a dangling reference, so refuse those.
+      const consumed = await tx.query(
+        `SELECT count(*)::int AS n
+         FROM billing_charges
+         WHERE tenant_id = $1 AND source_type = 'lab_order_item'
+           AND source_id IN (SELECT id FROM lab_order_items WHERE tenant_id = $1 AND order_id = $2)
+           AND voided_at IS NULL AND invoice_id IS NOT NULL`,
+        [tenantId, id],
+      );
+      if ((consumed.rows[0]?.n ?? 0) > 0) {
+        throw new ProblemException('CONFLICT', {
+          detail: 'Order has charges already consumed into an invoice. Void the invoice line first.',
+        });
+      }
+      await tx.query(
+        `UPDATE billing_charges
+         SET voided_at = now(), voided_by = $3
+         WHERE tenant_id = $1 AND source_type = 'lab_order_item'
+           AND source_id IN (SELECT id FROM lab_order_items WHERE tenant_id = $1 AND order_id = $2)
+           AND voided_at IS NULL`,
+        [tenantId, id, userId],
       );
 
       return res.rows[0];
@@ -1404,6 +1468,23 @@ export class LabService {
         [tenantId, orderId],
       );
 
+      // Confidentiality gating
+      const hasConfidentialTest = itemsRes.rows.some((item) => item.is_confidential === true || item.is_confidential === 't');
+      
+      if (hasConfidentialTest) {
+        if (!dto.confidentialReleaseReason) {
+          throw new ProblemException('VALIDATION_FAILED', {
+            detail: 'confidentialReleaseReason is required when releasing a report containing confidential tests',
+          });
+        }
+        await tx.query(
+          `INSERT INTO phi_access_log (tenant_id, patient_id, record_type, record_id, reason)
+           VALUES ($1, $2, 'LAB_CONFIDENTIAL_RELEASE', $3, $4)
+           ON CONFLICT DO NOTHING`,
+          [tenantId, order.patient_id, orderId, dto.confidentialReleaseReason]
+        );
+      }
+
       // Check current max version
       const vRes = await tx.query(
         `SELECT COALESCE(MAX(version), 0) as max_v FROM lab_reports WHERE tenant_id = $1 AND order_id = $2`,
@@ -1420,6 +1501,7 @@ export class LabService {
         releasedBy: userId,
         releasedAt: new Date().toISOString(),
         notes: dto.notes ?? null,
+        confidentialReleaseReason: hasConfidentialTest ? dto.confidentialReleaseReason : null,
       };
 
       // 3. Release records intent, not an artifact. The document's SHA-256 is
@@ -1450,6 +1532,21 @@ export class LabService {
       await tx.query(
         `UPDATE lab_orders SET status = 'RELEASED' WHERE tenant_id = $1 AND id = $2`,
         [tenantId, orderId],
+      );
+
+      // 7. Queue distribution event
+      await tx.query(
+        `INSERT INTO outbox (tenant_id, event_type, payload)
+         VALUES ($1, 'lab.report.released', $2)`,
+        [
+          tenantId,
+          {
+            orderId,
+            reportId: repRes.rows[0].id,
+            patientId: order.patient_id,
+            visitId: order.visit_id,
+          },
+        ]
       );
 
       return repRes.rows[0];
@@ -1701,6 +1798,48 @@ export class LabService {
         [tenantId, specimenId],
       );
       return res.rows;
+    });
+  }
+
+  async getSpecimenLabel(tenantId: string, specimenId: string) {
+    return withTenant({ tenantId }, async (tx) => {
+      const res = await tx.query(
+        `SELECT s.accession_no, s.collected_at,
+                st.name as specimen_type_name,
+                p.first_name, p.last_name, p.date_of_birth,
+                lo.order_no
+         FROM specimens s
+         JOIN lab_specimen_types st ON st.id = s.specimen_type_id AND st.tenant_id = s.tenant_id
+         JOIN lab_orders lo ON lo.id = s.order_id AND lo.tenant_id = s.tenant_id
+         JOIN patients p ON p.id = lo.patient_id AND p.tenant_id = s.tenant_id
+         WHERE s.tenant_id = $1 AND s.id = $2`,
+        [tenantId, specimenId],
+      );
+      if (!res.rows[0]) throw new ProblemException('NOT_FOUND', { detail: 'Specimen not found' });
+      
+      const row = res.rows[0];
+      const patientFullName = `${row.first_name} ${row.last_name}`;
+      
+      const zpl = renderBarcodeLabel({
+        title: 'LAB SPECIMEN',
+        barcodeValue: row.accession_no,
+        lines: [
+          patientFullName,
+          `DOB: ${new Date(row.date_of_birth).toLocaleDateString()}`,
+          `Type: ${row.specimen_type_name}`,
+          `Collected: ${row.collected_at ? new Date(row.collected_at).toLocaleString() : 'N/A'}`
+        ],
+        qrValue: `clinic://specimen/${row.accession_no}`,
+        size: '4x2',
+      });
+
+      return {
+        specimenId,
+        accessionNo: row.accession_no,
+        patientName: patientFullName,
+        specimenType: row.specimen_type_name,
+        zpl,
+      };
     });
   }
 

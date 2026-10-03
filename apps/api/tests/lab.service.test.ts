@@ -140,6 +140,58 @@ describe.skipIf(!hasDb)('Phase 6 Laboratory Service Tests (AC-10, AC-11, AC-17)'
     expect(order.items[0].status).toBe('ORDERED');
   });
 
+  it('BIL-T1: posts a LAB charge and links it when the order is tied to a visit', async () => {
+    // Catalog service priced at 420.00, mapped to the Potassium test.
+    const svcRes = await ownerPool.query(
+      `INSERT INTO service_catalog (tenant_id, code, name, category, default_price, is_active)
+       VALUES ($1, $2, 'Potassium Serum', 'lab', 420.00, true) RETURNING id`,
+      [TENANT_ID, `LABSVC-${Math.floor(Math.random() * 1000000)}`],
+    );
+    const serviceId = svcRes.rows[0].id;
+    await ownerPool.query(
+      `UPDATE lab_tests SET service_id = $2 WHERE tenant_id = $1 AND id = $3`,
+      [TENANT_ID, serviceId, singleTestId],
+    );
+
+    const vRes = await ownerPool.query(
+      `INSERT INTO visits (tenant_id, branch_id, visit_no, patient_id, practitioner_id, visit_type, status, opened_at, created_by)
+       VALUES ($1, $2, $3, $4, $5, 'OPD', 'IN_PROGRESS', now(), $6)
+       RETURNING id`,
+      [TENANT_ID, BRANCH_ID, `VIS-LAB-${Date.now()}`, patientId, VERIFIER_USER_ID, ENCODER_USER_ID],
+    );
+    const visitId = vRes.rows[0].id;
+
+    const order = await labSvc.createOrder(TENANT_ID, ENCODER_USER_ID, {
+      branchId: BRANCH_ID,
+      patientId,
+      visitId,
+      testIds: [singleTestId],
+      priority: 'ROUTINE',
+    });
+
+    expect(order.items).toHaveLength(1);
+    expect(order.items[0].charge_line_id).toBeTruthy();
+
+    const charge = await ownerPool.query(
+      `SELECT charge_type, service_id, unit_price, amount, visit_id
+         FROM billing_charges
+        WHERE tenant_id = $1 AND source_type = 'lab_order_item' AND source_id = $2`,
+      [TENANT_ID, order.items[0].id],
+    );
+    expect(charge.rows[0].charge_type).toBe('LAB');
+    expect(charge.rows[0].service_id).toBe(serviceId);
+    expect(Number(charge.rows[0].unit_price)).toBe(420);
+    expect(Number(charge.rows[0].amount)).toBe(420);
+    expect(charge.rows[0].visit_id).toBe(visitId);
+
+    await ownerPool.query(`DELETE FROM billing_charges WHERE tenant_id = $1 AND source_type = 'lab_order_item' AND source_id = $2`, [TENANT_ID, order.items[0].id]);
+    await ownerPool.query(`DELETE FROM lab_order_items WHERE order_id = $1`, [order.id]);
+    await ownerPool.query(`DELETE FROM lab_orders WHERE id = $1`, [order.id]);
+    await ownerPool.query(`DELETE FROM visits WHERE id = $1`, [visitId]);
+    await ownerPool.query(`UPDATE lab_tests SET service_id = NULL WHERE tenant_id = $1 AND id = $2`, [TENANT_ID, singleTestId]);
+    await ownerPool.query(`DELETE FROM service_catalog WHERE id = $1`, [serviceId]);
+  });
+
   it('LAB-T2: Specimen collection creates accession number and chain-of-custody event', async () => {
     const order = await labSvc.createOrder(TENANT_ID, ENCODER_USER_ID, {
       branchId: BRANCH_ID,

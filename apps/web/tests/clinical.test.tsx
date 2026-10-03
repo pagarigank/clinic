@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router";
 import { AuthProvider } from "../src/shared/auth/AuthContext.js";
@@ -101,4 +101,77 @@ describe("VisitChartPage (CLN-T4/T5)", () => {
     // A draft is required before signing succeeds — the error is explicit.
     await waitFor(() => expect(screen.getByText(/Save the note first/i)).toBeInTheDocument());
   });
+
+  it("renders laboratory orders and central supply request areas with workbench wiring", async () => {
+    renderAt("/clinical/visits/v-demo", <VisitChartPage />);
+    expect(screen.getByText(/Laboratory Orders & Requests/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Order Lab Test/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Lab Worklist/i })).toBeInTheDocument();
+
+    expect(screen.getByText(/Central Supply & Consumables/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Log Supply Consumption/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Supply Issues/i })).toBeInTheDocument();
+
+    expect(screen.getByRole("link", { name: /Pharmacy Workbench/i })).toBeInTheDocument();
+  });
+
+  it("opens doctor prescription and lab order print center with printable Rx and requisition slips", async () => {
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    renderAt("/clinical/visits/v-demo", <VisitChartPage />);
+
+    // Header print button
+    const printHeaderBtn = screen.getByRole("button", { name: /Print Prescription & Orders/i });
+    expect(printHeaderBtn).toBeInTheDocument();
+
+    fireEvent.click(printHeaderBtn);
+
+    // Modal dialog is open
+    expect(await screen.findByText(/Doctor's Prescription & Clinical Order Print Center/i)).toBeInTheDocument();
+    expect(screen.getByText(/Medical Prescription \/ Reseta/i)).toBeInTheDocument();
+    expect(screen.getByText(/Laboratory & Diagnostic Requisition Slip/i)).toBeInTheDocument();
+    expect(screen.getByText(/PRC Lic. No:/i)).toBeInTheDocument();
+    expect(screen.getByText(/In compliance with Republic Act No. 6675/i)).toBeInTheDocument();
+
+    // Trigger Print
+    const printNowBtn = screen.getByRole("button", { name: /Print Now/i });
+    fireEvent.click(printNowBtn);
+    expect(printSpy).toHaveBeenCalled();
+
+    printSpy.mockRestore();
+  });
+
+  it("switches between Prescription (Rx), Laboratory Requisition, and Combined Encounter Orders", async () => {
+    renderAt("/clinical/visits/v-demo", <VisitChartPage />);
+
+    // Open from Rx card
+    const printRxBtn = screen.getByRole("button", { name: "🖨️ Print Prescription" });
+    fireEvent.click(printRxBtn);
+
+    expect(await screen.findByText(/Medical Prescription \/ Reseta/i)).toBeInTheDocument();
+
+    // Switch to Laboratory Request Slip tab
+    const labTabBtn = screen.getByRole("button", { name: /Laboratory Request Slip/i });
+    fireEvent.click(labTabBtn);
+
+    expect(await screen.findByText(/Laboratory & Diagnostic Requisition Slip/i)).toBeInTheDocument();
+    expect(screen.getByText(/DOH CLINICAL LAB LTO/i)).toBeInTheDocument();
+
+    // Close preview modal
+    const closeBtn = screen.getAllByRole("button", { name: /Close/i })[0]!;
+    fireEvent.click(closeBtn);
+    expect(screen.queryByText(/Doctor's Prescription & Clinical Order Print Center/i)).not.toBeInTheDocument();
+  });
+
+  it("offers official PDF download and new tab viewer actions", async () => {
+    renderAt("/clinical/visits/v-demo", <VisitChartPage />);
+
+    const printHeaderBtn = screen.getByRole("button", { name: /Print Prescription & Orders/i });
+    fireEvent.click(printHeaderBtn);
+
+    expect(await screen.findByText(/Doctor's Prescription & Clinical Order Print Center/i)).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Download Official PDF/i }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /View PDF/i })).toBeInTheDocument();
+  });
 });
+
+

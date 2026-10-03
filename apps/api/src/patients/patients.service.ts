@@ -50,16 +50,57 @@ export class PatientsService {
     return withTenant({ tenantId, userId }, async (tx) => {
       const params: unknown[] = [];
       let where = '';
-      if (q) {
-        params.push(`%${q}%`);
-        where = `AND (p.first_name ILIKE $${params.length} OR p.last_name ILIKE $${params.length})`;
+      if (q && q.trim()) {
+        const trimmed = q.trim();
+        const tokens = trimmed.split(/[\s,]+/).filter(Boolean);
+        const tokenClauses: string[] = [];
+        for (const token of tokens) {
+          params.push(`%${token}%`);
+          const idx = params.length;
+          tokenClauses.push(`(
+            p.first_name ILIKE $${idx} OR 
+            p.last_name ILIKE $${idx} OR 
+            COALESCE(p.middle_name, '') ILIKE $${idx} OR
+            EXISTS (SELECT 1 FROM patient_identifiers pi WHERE pi.patient_id = p.id AND pi.value ILIKE $${idx}) OR
+            EXISTS (SELECT 1 FROM patient_contacts pc WHERE pc.patient_id = p.id AND pc.value ILIKE $${idx}) OR
+            EXISTS (SELECT 1 FROM patient_philhealth pp WHERE pp.patient_id = p.id AND pp.pin ILIKE $${idx})
+          )`);
+        }
+
+        params.push(trimmed);
+        const qIdx = params.length;
+        const fuzzyClause = `(
+          word_similarity($${qIdx}, p.first_name || ' ' || p.last_name) > 0.35 OR
+          word_similarity($${qIdx}, p.last_name || ' ' || p.first_name) > 0.35 OR
+          similarity(p.first_name || ' ' || p.last_name, $${qIdx}) > 0.2 OR
+          similarity(p.last_name || ' ' || p.first_name, $${qIdx}) > 0.2
+        )`;
+
+        if (tokenClauses.length > 0) {
+          where += ` AND ((${tokenClauses.join(' AND ')}) OR ${fuzzyClause})`;
+        } else {
+          where += ` AND ${fuzzyClause}`;
+        }
       }
       if (cursor) {
         params.push(cursor);
         where += ` AND p.id > $${params.length}`;
       }
       const res = await tx.query(
-        `SELECT p.id, p.first_name, p.last_name, p.middle_name, p.date_of_birth, p.gender, p.status, p.created_at, p.row_version
+        `SELECT 
+           p.id, 
+           p.first_name, 
+           p.last_name, 
+           p.middle_name, 
+           p.date_of_birth, 
+           p.gender, 
+           p.status, 
+           p.created_at, 
+           p.row_version,
+           (SELECT pi.value FROM patient_identifiers pi WHERE pi.patient_id = p.id AND pi.type IN ('PATIENT_NO', 'MRN', 'HRN') ORDER BY pi.created_at ASC LIMIT 1) as patient_no,
+           (SELECT pc.value FROM patient_contacts pc WHERE pc.patient_id = p.id AND pc.type IN ('PHONE', 'MOBILE') ORDER BY pc.is_primary DESC, pc.created_at ASC LIMIT 1) as phone,
+           (SELECT pp.pin FROM patient_philhealth pp WHERE pp.patient_id = p.id LIMIT 1) as philhealth_no,
+           (SELECT pp.konsulta_status FROM patient_philhealth pp WHERE pp.patient_id = p.id LIMIT 1) as konsulta_status
          FROM patients p
          WHERE p.status != 'MERGED' ${where}
          ORDER BY p.last_name, p.first_name, p.id
@@ -254,6 +295,74 @@ export class PatientsService {
         [`${first_name} ${last_name}`, patientId, date_of_birth, `%${first_name}%`, `%${last_name}%`],
       );
       return { data: res.rows };
+    });
+  }
+
+  /**
+   * JOB-22 worklist (specification §1055): live-computed candidate pairs across
+   * the whole tenant. No candidates table exists, so pairs are derived on demand
+   * from a self-join over `patients`; every pair is therefore OPEN on each read.
+   */
+  async listDuplicateCandidates(tenantId: string, userId: string) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const res = await tx.query(
+        `SELECT
+           p1.id AS patient_id,
+           p2.id AS other_id,
+           (p1.first_name || ' ' || p1.last_name) AS patient_name,
+           (p2.first_name || ' ' || p2.last_name) AS other_name,
+           COALESCE(i1.value, '') AS patient_no,
+           COALESCE(i2.value, '') AS other_no,
+           CASE
+             WHEN p1.date_of_birth = p2.date_of_birth
+              AND lower(p1.first_name) = lower(p2.first_name)
+              AND lower(p1.last_name) = lower(p2.last_name) THEN 'EXACT'
+             WHEN p1.date_of_birth = p2.date_of_birth
+              AND (lower(p1.first_name) = lower(p2.first_name) OR lower(p1.last_name) = lower(p2.last_name))
+              THEN 'DOB_MOBILE_FUZZY'
+             ELSE 'TRIGRAM'
+           END AS match_type,
+           (CASE
+             WHEN p1.date_of_birth = p2.date_of_birth
+              AND lower(p1.first_name) = lower(p2.first_name)
+              AND lower(p1.last_name) = lower(p2.last_name) THEN 1.0
+             ELSE round(similarity(p1.first_name || ' ' || p1.last_name, p2.first_name || ' ' || p2.last_name)::numeric, 2)
+           END)::float8 AS score
+         FROM patients p1
+         JOIN patients p2 ON p2.id > p1.id
+         LEFT JOIN LATERAL (
+           SELECT value FROM patient_identifiers
+           WHERE patient_id = p1.id AND type IN ('MRN', 'PATIENT_NO')
+           ORDER BY created_at LIMIT 1
+         ) i1 ON true
+         LEFT JOIN LATERAL (
+           SELECT value FROM patient_identifiers
+           WHERE patient_id = p2.id AND type IN ('MRN', 'PATIENT_NO')
+           ORDER BY created_at LIMIT 1
+         ) i2 ON true
+         WHERE p1.status NOT IN ('MERGED', 'DECEASED')
+           AND p2.status NOT IN ('MERGED', 'DECEASED')
+           AND (
+             (p1.date_of_birth = p2.date_of_birth
+               AND (lower(p1.first_name) = lower(p2.first_name) OR lower(p1.last_name) = lower(p2.last_name)))
+             OR similarity(p1.first_name || ' ' || p1.last_name, p2.first_name || ' ' || p2.last_name) > 0.4
+           )
+         ORDER BY score DESC, p1.created_at DESC, p2.created_at DESC, p1.id, p2.id
+         LIMIT 50`,
+      );
+      const candidates = res.rows.map((r) => ({
+        id: `${r.patient_id}:${r.other_id}`,
+        patientId: r.patient_id,
+        otherId: r.other_id,
+        patientName: r.patient_name,
+        otherName: r.other_name,
+        patientNo: r.patient_no,
+        otherNo: r.other_no,
+        matchType: r.match_type,
+        score: Number(r.score),
+        status: 'OPEN' as const,
+      }));
+      return { candidates };
     });
   }
 

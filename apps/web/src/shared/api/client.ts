@@ -25,6 +25,28 @@ export function getAccessToken(): string | null {
   return inMemoryAccessToken;
 }
 
+// Single-flight refresh: concurrent callers (e.g. React StrictMode's double
+// effect invocation) share one request. The server rotates refresh tokens with
+// reuse detection, so two concurrent presentations of the same cookie would
+// revoke the whole session family.
+let refreshInFlight: Promise<string | null> | null = null;
+
+export function refreshAccessToken(): Promise<string | null> {
+  if (!refreshInFlight) {
+    refreshInFlight = apiPost<{ accessToken?: string }>("/auth/refresh")
+      .then((res) => {
+        const token = res?.accessToken ?? null;
+        if (token) setAccessToken(token);
+        return token;
+      })
+      .catch(() => null)
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  return refreshInFlight;
+}
+
 // Resolve to an absolute URL: jsdom's fetch rejects relative URLs, while in
 // the browser location.origin keeps the Vite proxy behaviour identical to a
 // relative "/api/v1". Component tests set API_ORIGIN to a loopback stub.
@@ -81,7 +103,9 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> 
 
 export async function apiPost<T, B = unknown>(path: string, body?: B, signal?: AbortSignal): Promise<T> {
   const isJsdom = typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
-  const headers = buildHeaders({ "Content-Type": "application/json" });
+  // Only advertise a JSON body when we actually send one: the API rejects an
+  // empty body with Content-Type: application/json (e.g. POST /auth/refresh).
+  const headers = buildHeaders(body !== undefined ? { "Content-Type": "application/json" } : undefined);
   const res = await fetch(`${apiBase()}${path}`, {
     method: "POST",
     headers,
@@ -94,7 +118,7 @@ export async function apiPost<T, B = unknown>(path: string, body?: B, signal?: A
 
 export async function apiPatch<T, B = unknown>(path: string, body?: B, signal?: AbortSignal): Promise<T> {
   const isJsdom = typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
-  const headers = buildHeaders({ "Content-Type": "application/json" });
+  const headers = buildHeaders(body !== undefined ? { "Content-Type": "application/json" } : undefined);
   const res = await fetch(`${apiBase()}${path}`, {
     method: "PATCH",
     headers,

@@ -321,7 +321,13 @@ export function BillingWorkbenchPage() {
           </p>
         </div>
         <div className="d-flex gap-2">
-
+          <Button
+            variant="outline-secondary"
+            size="sm"
+            onClick={() => handleOpenStatement()}
+          >
+            📄 Patient Statement (SOA)
+          </Button>
           <Link to="/billing/pos" className="btn btn-outline-primary btn-sm fw-semibold">
             🛒 Open Cashier POS
           </Link>

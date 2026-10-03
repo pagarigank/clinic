@@ -338,3 +338,624 @@ export function renderReceiptHtml(doc: ReceiptDocument): string {
 
   return shell(`Receipt ${doc.receiptNo}`, body);
 }
+
+export interface PrescriptionItemDocument {
+  genericName: string;
+  brandName?: string;
+  strength?: string;
+  dosageForm?: string;
+  route?: string;
+  frequency?: string;
+  duration?: string;
+  quantity: string | number;
+  sig?: string;
+  indication?: string;
+  isControlled?: boolean;
+}
+
+export interface PrescriptionDocument {
+  clinicName: string;
+  branchName?: string;
+  clinicAddress?: string;
+  clinicPhone?: string;
+  clinicEmail?: string;
+  dohAccreditationNo?: string;
+
+  rxNo: string;
+  issuedAt: string;
+
+  patientName: string;
+  patientAge?: string | number;
+  patientSex?: string;
+  patientDob?: string;
+  patientAddress?: string;
+  patientMrn?: string;
+  allergies?: Array<{ substance: string; severity?: string }>;
+  weightKg?: string | number;
+
+  prescriberName: string;
+  prescriberTitle?: string;
+  specialty?: string;
+  prcLicenseNo?: string;
+  ptrNo?: string;
+  s2LicenseNo?: string;
+
+  specialInstruction?: string;
+  items: PrescriptionItemDocument[];
+
+  s2SerialNo?: string;
+  s2QuantityInWords?: string;
+  verificationHash?: string;
+}
+
+/**
+ * Official Medical Prescription (Rx Pad) Template
+ * Compliant with Philippine Generics Act of 1988 (RA 6675) & Dangerous Drugs Act (RA 9165).
+ */
+export function renderPrescriptionHtml(doc: PrescriptionDocument): string {
+  const hasControlled = doc.items.some((i) => i.isControlled) || Boolean(doc.s2SerialNo);
+  const allergyList = doc.allergies && doc.allergies.length > 0
+    ? doc.allergies.map((a) => `${escapeHtml(a.substance)}${a.severity ? ` (${escapeHtml(a.severity)})` : ''}`).join(', ')
+    : null;
+
+  const itemRows = doc.items.map((item, index) => {
+    const sigText = item.sig || [item.route, item.frequency, item.duration ? `for ${item.duration}` : ''].filter(Boolean).join(' ');
+    return `
+      <div style="margin-bottom: 5mm; padding-bottom: 4mm; border-bottom: 0.5pt dashed #cbd5e1;">
+        <table style="width: 100%; border: none; margin: 0;">
+          <tr>
+            <td style="border: none; padding: 0; vertical-align: top; width: 24px;">
+              <span style="display: inline-block; background: #e0f2fe; color: #0369a1; font-weight: 700; font-size: 8.5pt; width: 18px; height: 18px; line-height: 18px; text-align: center; border-radius: 50%;">${index + 1}</span>
+            </td>
+            <td style="border: none; padding: 0; vertical-align: top;">
+              <div style="font-size: 11pt; font-weight: 800; color: #0f172a; letter-spacing: 0.3pt; text-transform: uppercase;">
+                ${escapeHtml(item.genericName.toUpperCase())}
+                ${item.brandName ? `<span style="font-weight: 600; text-transform: none; color: #475569; font-size: 9.5pt;"> (${escapeHtml(item.brandName)})</span>` : ''}
+              </div>
+              <div style="font-size: 9.5pt; color: #334155; margin-top: 1mm;">
+                ${[item.strength, item.dosageForm].filter(Boolean).map(escapeHtml).join(' &middot; ')}
+              </div>
+              <div style="font-size: 10pt; color: #1e293b; margin-top: 2mm; background: #f8fafc; padding: 1.5mm 3mm; border-left: 2pt solid #0284c7; border-radius: 2px;">
+                <strong>Sig:</strong> ${escapeHtml(sigText || 'As directed by physician')}
+              </div>
+              ${item.indication ? `<div style="font-size: 8.5pt; color: #64748b; margin-top: 1mm;"><em>Indication: ${escapeHtml(item.indication)}</em></div>` : ''}
+            </td>
+            <td style="border: none; padding: 0; vertical-align: top; text-align: right; width: 85px;">
+              <span style="font-size: 12pt; font-weight: 800; color: #0f172a;"># ${escapeHtml(item.quantity)}</span>
+            </td>
+          </tr>
+        </table>
+      </div>
+    `;
+  }).join('');
+
+  const body = `
+    <!-- Letterhead -->
+    <header style="border-bottom: 2pt solid #0284c7; padding-bottom: 3mm; margin-bottom: 4mm;">
+      <table style="width: 100%; border: none; margin: 0;">
+        <tr>
+          <td style="border: none; padding: 0; vertical-align: top;">
+            <div style="font-size: 15pt; font-weight: 800; color: #0f2942; letter-spacing: -0.3pt;">
+              ${escapeHtml(doc.clinicName)}
+            </div>
+            ${doc.branchName ? `<div style="font-size: 9pt; font-weight: 600; color: #0284c7; text-transform: uppercase; letter-spacing: 0.5pt;">${escapeHtml(doc.branchName)}</div>` : ''}
+            <div style="font-size: 8.5pt; color: #64748b; margin-top: 1mm;">
+              ${[doc.clinicAddress, doc.clinicPhone, doc.clinicEmail].filter(Boolean).map(escapeHtml).join(' &middot; ')}
+            </div>
+            ${doc.dohAccreditationNo ? `<div style="font-size: 8pt; color: #94a3b8;">DOH Accreditation / LTO No. ${escapeHtml(doc.dohAccreditationNo)}</div>` : ''}
+          </td>
+          <td style="border: none; padding: 0; vertical-align: top; text-align: right; width: 140px;">
+            <div style="display: inline-block; background: #0f2942; color: #fff; font-size: 9pt; font-weight: 700; padding: 1.5mm 3.5mm; border-radius: 4px; letter-spacing: 0.5pt;">
+              PRESCRIPTION (RX)
+            </div>
+            <div style="font-family: Consolas, monospace; font-size: 9.5pt; font-weight: 700; color: #0f172a; margin-top: 2mm;">
+              Rx No. ${escapeHtml(doc.rxNo)}
+            </div>
+            <div style="font-size: 8.5pt; color: #64748b;">
+              Date: ${escapeHtml(doc.issuedAt)}
+            </div>
+          </td>
+        </tr>
+      </table>
+    </header>
+
+    <!-- Physician Header -->
+    <div style="margin-bottom: 3.5mm; padding-bottom: 2mm; border-bottom: 0.5pt solid #e2e8f0;">
+      <div style="font-size: 11pt; font-weight: 700; color: #0f172a;">
+        ${escapeHtml(doc.prescriberName)}
+        ${doc.prescriberTitle ? `<span style="font-weight: 400; color: #64748b; font-size: 9.5pt;"> &middot; ${escapeHtml(doc.prescriberTitle)}</span>` : ''}
+      </div>
+      <div style="font-size: 8.5pt; color: #475569; margin-top: 0.5mm;">
+        ${doc.specialty ? `<span style="font-weight: 600; color: #0369a1;">${escapeHtml(doc.specialty)}</span> &middot; ` : ''}
+        PRC Lic. No. <strong>${escapeHtml(doc.prcLicenseNo || 'N/A')}</strong>
+        ${doc.ptrNo ? ` &middot; PTR No. <strong>${escapeHtml(doc.ptrNo)}</strong>` : ''}
+        ${doc.s2LicenseNo ? ` &middot; S2 Lic. No. <strong>${escapeHtml(doc.s2LicenseNo)}</strong>` : ''}
+      </div>
+    </div>
+
+    <!-- Patient Demographics Band -->
+    <div style="background: #f8fafc; border: 1pt solid #cbd5e1; border-radius: 4px; padding: 2.5mm 3.5mm; margin-bottom: 3.5mm;">
+      <table style="width: 100%; border: none; margin: 0;">
+        <tr>
+          <td style="border: none; padding: 0.8mm 2mm 0.8mm 0; font-size: 9pt; width: 50%;">
+            <span style="color: #64748b; text-transform: uppercase; font-size: 8pt; letter-spacing: 0.3pt;">Patient Name:</span>
+            <div style="font-size: 10.5pt; font-weight: 700; color: #0f172a;">${escapeHtml(doc.patientName)}</div>
+          </td>
+          <td style="border: none; padding: 0.8mm 2mm; font-size: 9pt; width: 25%;">
+            <span style="color: #64748b; text-transform: uppercase; font-size: 8pt; letter-spacing: 0.3pt;">Age / Sex:</span>
+            <div style="font-size: 10pt; color: #1e293b;">${escapeHtml(doc.patientAge ? `${doc.patientAge} yo` : 'N/A')} / ${escapeHtml(doc.patientSex || 'N/A')}</div>
+          </td>
+          <td style="border: none; padding: 0.8mm 0; font-size: 9pt; width: 25%; text-align: right;">
+            <span style="color: #64748b; text-transform: uppercase; font-size: 8pt; letter-spacing: 0.3pt;">DOB / MRN:</span>
+            <div style="font-size: 9.5pt; color: #1e293b;">${escapeHtml(doc.patientDob || 'N/A')}${doc.patientMrn ? ` &middot; ${escapeHtml(doc.patientMrn)}` : ''}</div>
+          </td>
+        </tr>
+        ${doc.patientAddress ? `
+        <tr>
+          <td colspan="3" style="border: none; padding: 0.8mm 0 0; font-size: 8.5pt; color: #475569;">
+            <span style="color: #64748b; text-transform: uppercase; font-size: 8pt;">Address:</span> ${escapeHtml(doc.patientAddress)}
+          </td>
+        </tr>` : ''}
+      </table>
+    </div>
+
+    <!-- Allergy Strip -->
+    ${allergyList ? `
+      <div style="background: #fff1f2; border: 1pt solid #f43f5e; color: #9f1239; border-radius: 4px; padding: 1.8mm 3mm; margin-bottom: 4mm; font-size: 8.5pt;">
+        <strong>⚠️ DRUG ALLERGY WARNING:</strong> Patient has recorded allergic reaction to: <strong>${allergyList}</strong>.
+      </div>
+    ` : `
+      <div style="background: #f0fdf4; border: 1pt solid #86efac; color: #166534; border-radius: 4px; padding: 1.2mm 3mm; margin-bottom: 4mm; font-size: 8pt;">
+        ✓ <strong>No Known Drug Allergies (NKDA)</strong> recorded on chart.
+      </div>
+    `}
+
+    <!-- Rx Insignia -->
+    <div style="font-size: 30pt; font-family: 'Times New Roman', Georgia, serif; font-weight: bold; color: #1e3a8a; line-height: 1; margin: 1mm 0 3mm;">
+      ℞
+    </div>
+
+    <!-- Medication Items -->
+    <div style="min-height: 48mm;">
+      ${itemRows}
+    </div>
+
+    <!-- S2 Controlled Drug Warning (Dangerous Drugs Act RA 9165) -->
+    ${hasControlled ? `
+      <div style="margin: 4mm 0; border: 1.5pt solid #f59e0b; background: #fffbeb; border-radius: 4px; padding: 2.5mm 3.5mm;">
+        <div style="font-size: 8.5pt; font-weight: 800; color: #b45309; text-transform: uppercase; letter-spacing: 0.4pt;">
+          ⚠️ DANGEROUS DRUGS BOARD / PDEA CONTROLLED SUBSTANCE PRESCRIPTION (RA 9165)
+        </div>
+        <div style="font-size: 8.5pt; color: #78350f; margin-top: 1mm;">
+          S2 Lic. No: <strong>${escapeHtml(doc.s2LicenseNo || 'REQUIRED')}</strong> &middot;
+          Special Rx Serial No: <strong>${escapeHtml(doc.s2SerialNo || doc.rxNo)}</strong>
+          ${doc.s2QuantityInWords ? `<br>Quantity in words: <strong>${escapeHtml(doc.s2QuantityInWords)}</strong>` : ''}
+          <div style="font-size: 7.5pt; color: #92400e; margin-top: 1mm;">
+            Valid strictly for thirty (30) days from issuance. Retention of original copy by dispensing pharmacy is required by law.
+          </div>
+        </div>
+      </div>
+    ` : ''}
+
+    <!-- Physician's Care Instructions & Advice -->
+    ${doc.specialInstruction ? `
+      <div style="background: #f1f5f9; border-left: 3pt solid #475569; padding: 2mm 3.5mm; border-radius: 2px; margin-top: 3mm; font-size: 9pt; color: #334155;">
+        <strong>Physician's Instructions:</strong> ${escapeHtml(doc.specialInstruction)}
+      </div>
+    ` : ''}
+
+    <!-- Signature Block -->
+    <div style="margin-top: 8mm;">
+      <table style="width: 100%; border: none;">
+        <tr>
+          <td style="border: none; padding: 0; vertical-align: bottom; width: 55%;">
+            <div style="font-size: 7.5pt; color: #64748b; line-height: 1.35;">
+              <strong>LEGAL COMPLIANCE:</strong> Issued under the Philippine Generics Act of 1988 (RA 6675).<br>
+              Pharmacist: In case of doubtful dosage or generic substitution inquiries, please contact the prescriber.<br>
+              ${doc.verificationHash ? `<span style="font-family: Consolas, monospace; font-size: 7pt; color: #94a3b8;">SHA-256 Digest: ${escapeHtml(doc.verificationHash.slice(0, 32))}...</span>` : ''}
+            </div>
+          </td>
+          <td style="border: none; padding: 0; vertical-align: bottom; text-align: right; width: 45%;">
+            <div style="display: inline-block; text-align: center; width: 68mm;">
+              <div style="border-top: 1pt solid #0f172a; margin-top: 12mm; padding-top: 1.5mm;">
+                <div style="font-size: 10.5pt; font-weight: 800; color: #0f172a; text-transform: uppercase;">
+                  ${escapeHtml(doc.prescriberName)}
+                </div>
+                <div style="font-size: 8.5pt; color: #475569;">
+                  PRC Lic. No. <strong>${escapeHtml(doc.prcLicenseNo || 'N/A')}</strong>
+                  ${doc.ptrNo ? ` &middot; PTR No. <strong>${escapeHtml(doc.ptrNo)}</strong>` : ''}
+                </div>
+                ${doc.s2LicenseNo ? `<div style="font-size: 8pt; color: #b45309;">S2 Lic. No. <strong>${escapeHtml(doc.s2LicenseNo)}</strong></div>` : ''}
+              </div>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Official Document Footer -->
+    <footer style="margin-top: 6mm; border-top: 0.5pt solid #cbd5e1; padding-top: 1.5mm; font-size: 7.5pt; color: #64748b; display: flex; justify-content: space-between;">
+      <span>${escapeHtml(doc.clinicName)} &middot; Prescription ${escapeHtml(doc.rxNo)}</span>
+      <span>Electronic Medical Record &middot; Page 1 of 1</span>
+    </footer>
+  `;
+
+  return shell(`Prescription ${doc.rxNo}`, body);
+}
+
+export interface LabRequisitionItem {
+  testCode: string;
+  testName: string;
+  category?: string;
+  specimenType?: string;
+  collectionTube?: string;
+  fastingRequired?: boolean;
+  fastingHours?: number;
+  instructions?: string;
+  priority?: 'ROUTINE' | 'URGENT' | 'STAT';
+  clinicalIndication?: string;
+}
+
+export interface LabRequisitionDocument {
+  clinicName: string;
+  branchName?: string;
+  clinicAddress?: string;
+  clinicPhone?: string;
+  dohLtoNo?: string;
+
+  orderNo: string;
+  issuedAt: string;
+  priority: 'ROUTINE' | 'URGENT' | 'STAT';
+
+  patientName: string;
+  patientAge?: string | number;
+  patientSex?: string;
+  patientDob?: string;
+  patientMrn?: string;
+
+  clinicalImpression?: string;
+  orderingPhysician: string;
+  physicianPrcNo?: string;
+
+  tests: LabRequisitionItem[];
+  patientPrepNotes?: string;
+  verificationHash?: string;
+}
+
+/**
+ * Official Laboratory Diagnostic Examination Requisition Slip
+ */
+export function renderLabRequisitionHtml(doc: LabRequisitionDocument): string {
+  const priorityColor = doc.priority === 'STAT' ? '#dc2626' : doc.priority === 'URGENT' ? '#ea580c' : '#0284c7';
+  const priorityBg = doc.priority === 'STAT' ? '#fee2e2' : doc.priority === 'URGENT' ? '#ffedd5' : '#e0f2fe';
+
+  const rows = doc.tests.map((test, index) => {
+    return `
+      <tr>
+        <td style="width: 25px; text-align: center; font-weight: 700; color: #64748b;">${index + 1}</td>
+        <td>
+          <div style="font-weight: 700; color: #0f172a; font-size: 10pt;">${escapeHtml(test.testName)}</div>
+          <div style="font-size: 8.5pt; color: #64748b; font-family: Consolas, monospace;">Code: ${escapeHtml(test.testCode)}</div>
+          ${test.clinicalIndication ? `<div style="font-size: 8pt; color: #475569; margin-top: 0.5mm;"><em>Indication: ${escapeHtml(test.clinicalIndication)}</em></div>` : ''}
+        </td>
+        <td>
+          <div style="font-weight: 600; color: #334155; font-size: 9pt;">${escapeHtml(test.specimenType || 'Specimen as required')}</div>
+          ${test.collectionTube ? `<div style="font-size: 8pt; color: #0284c7;">Tube: ${escapeHtml(test.collectionTube)}</div>` : ''}
+        </td>
+        <td style="font-size: 8.5pt; color: ${test.fastingRequired ? '#b45309' : '#475569'};">
+          ${test.fastingRequired ? `<strong>Fasting Required:</strong> ${test.fastingHours ? `${test.fastingHours} hrs` : 'Overnight'}` : 'No fasting required'}
+          ${test.instructions ? `<div style="font-size: 7.5pt; color: #64748b;">${escapeHtml(test.instructions)}</div>` : ''}
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  const body = `
+    <!-- Letterhead -->
+    <header style="border-bottom: 2pt solid #0284c7; padding-bottom: 3mm; margin-bottom: 4mm;">
+      <table style="width: 100%; border: none; margin: 0;">
+        <tr>
+          <td style="border: none; padding: 0; vertical-align: top;">
+            <div style="font-size: 15pt; font-weight: 800; color: #0f2942;">
+              ${escapeHtml(doc.clinicName)}
+            </div>
+            <div style="font-size: 9pt; font-weight: 600; color: #0284c7; text-transform: uppercase;">
+              DEPARTMENT OF PATHOLOGY & CLINICAL LABORATORY SERVICES
+            </div>
+            <div style="font-size: 8.5pt; color: #64748b; margin-top: 1mm;">
+              ${[doc.clinicAddress, doc.clinicPhone].filter(Boolean).map(escapeHtml).join(' &middot; ')}
+            </div>
+            ${doc.dohLtoNo ? `<div style="font-size: 8pt; color: #94a3b8;">DOH Clinical Lab LTO No. ${escapeHtml(doc.dohLtoNo)} &middot; Tertiary Category</div>` : ''}
+          </td>
+          <td style="border: none; padding: 0; vertical-align: top; text-align: right; width: 150px;">
+            <div style="display: inline-block; background: ${priorityBg}; color: ${priorityColor}; border: 1pt solid ${priorityColor}; font-size: 9pt; font-weight: 800; padding: 1.5mm 3.5mm; border-radius: 4px; letter-spacing: 0.5pt;">
+              ${doc.priority === 'STAT' ? '⚡ STAT / IMMEDIATE' : doc.priority === 'URGENT' ? 'URGENT' : 'ROUTINE'}
+            </div>
+            <div style="font-family: Consolas, monospace; font-size: 9.5pt; font-weight: 700; color: #0f172a; margin-top: 2mm;">
+              Requisition #${escapeHtml(doc.orderNo)}
+            </div>
+            <div style="font-size: 8.5pt; color: #64748b;">
+              Date: ${escapeHtml(doc.issuedAt)}
+            </div>
+          </td>
+        </tr>
+      </table>
+    </header>
+
+    <!-- Patient Details -->
+    <div style="background: #f8fafc; border: 1pt solid #cbd5e1; border-radius: 4px; padding: 2.5mm 3.5mm; margin-bottom: 3.5mm;">
+      <table style="width: 100%; border: none; margin: 0;">
+        <tr>
+          <td style="border: none; padding: 0.8mm 2mm 0.8mm 0; font-size: 9pt; width: 45%;">
+            <span style="color: #64748b; text-transform: uppercase; font-size: 8pt;">Patient:</span>
+            <div style="font-size: 10.5pt; font-weight: 700; color: #0f172a;">${escapeHtml(doc.patientName)}</div>
+          </td>
+          <td style="border: none; padding: 0.8mm 2mm; font-size: 9pt; width: 25%;">
+            <span style="color: #64748b; text-transform: uppercase; font-size: 8pt;">Age / Sex:</span>
+            <div style="font-size: 10pt; color: #1e293b;">${escapeHtml(doc.patientAge ? `${doc.patientAge} yo` : 'N/A')} / ${escapeHtml(doc.patientSex || 'N/A')}</div>
+          </td>
+          <td style="border: none; padding: 0.8mm 0; font-size: 9pt; width: 30%; text-align: right;">
+            <span style="color: #64748b; text-transform: uppercase; font-size: 8pt;">MRN / DOB:</span>
+            <div style="font-size: 9.5pt; color: #1e293b;">${escapeHtml(doc.patientMrn || 'N/A')} &middot; ${escapeHtml(doc.patientDob || 'N/A')}</div>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Clinical Impression / Medical Justification -->
+    <div style="margin-bottom: 4mm; padding: 2mm 3.5mm; border-left: 3pt solid #0284c7; background: #f0f9ff; border-radius: 2px;">
+      <span style="font-size: 8pt; font-weight: 700; text-transform: uppercase; color: #0369a1; letter-spacing: 0.4pt;">Clinical Impression / ICD-10 Diagnosis:</span>
+      <div style="font-size: 10pt; font-weight: 600; color: #0c4a6e; margin-top: 0.5mm;">
+        ${escapeHtml(doc.clinicalImpression || 'Diagnostic evaluation and clinical monitoring')}
+      </div>
+    </div>
+
+    <!-- Requisition Items Table -->
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 4mm;">
+      <thead>
+        <tr style="background: #f1f5f9; border-bottom: 1.5pt solid #cbd5e1;">
+          <th style="padding: 2mm; font-size: 8.5pt; text-transform: uppercase; color: #475569; width: 25px;">#</th>
+          <th style="padding: 2mm; font-size: 8.5pt; text-transform: uppercase; color: #475569;">Diagnostic Examination / Test Panel</th>
+          <th style="padding: 2mm; font-size: 8.5pt; text-transform: uppercase; color: #475569; width: 140px;">Specimen / Container</th>
+          <th style="padding: 2mm; font-size: 8.5pt; text-transform: uppercase; color: #475569; width: 140px;">Preparation & Fasting</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+      </tbody>
+    </table>
+
+    <!-- Phlebotomist Checklist & Accessioning Block -->
+    <div style="border: 1pt solid #cbd5e1; border-radius: 4px; padding: 2.5mm 3.5mm; background: #fff; margin-bottom: 5mm;">
+      <div style="font-size: 8pt; font-weight: 700; text-transform: uppercase; color: #475569; letter-spacing: 0.3pt; margin-bottom: 2mm;">
+        Phlebotomy &amp; Specimen Accessioning Section (Laboratory Staff Only):
+      </div>
+      <table style="width: 100%; border: none;">
+        <tr>
+          <td style="border: none; padding: 0; font-size: 8.5pt; color: #334155; width: 33%;">
+            Date & Time Extracted: ____________________
+          </td>
+          <td style="border: none; padding: 0; font-size: 8.5pt; color: #334155; width: 33%;">
+            Phlebotomist Name / Lic: __________________
+          </td>
+          <td style="border: none; padding: 0; font-size: 8.5pt; color: #334155; width: 34%; text-align: right;">
+            Accession Barcode: [ &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; ]
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Requesting Physician Signature Block -->
+    <div style="margin-top: 6mm;">
+      <table style="width: 100%; border: none;">
+        <tr>
+          <td style="border: none; padding: 0; vertical-align: bottom; width: 60%;">
+            <div style="font-size: 7.5pt; color: #64748b;">
+              <strong>NOTICE TO PATIENT:</strong> Present this requisition slip at the Laboratory Reception desk.<br>
+              Ensure all fasting instructions are strictly observed to avoid erroneous test parameters.
+            </div>
+          </td>
+          <td style="border: none; padding: 0; vertical-align: bottom; text-align: right; width: 40%;">
+            <div style="display: inline-block; text-align: center; width: 65mm;">
+              <div style="border-top: 1pt solid #0f172a; margin-top: 12mm; padding-top: 1.5mm;">
+                <div style="font-size: 10.5pt; font-weight: 800; color: #0f172a; text-transform: uppercase;">
+                  ${escapeHtml(doc.orderingPhysician)}
+                </div>
+                <div style="font-size: 8.5pt; color: #475569;">
+                  Requesting Physician &middot; PRC Lic. No. <strong>${escapeHtml(doc.physicianPrcNo || 'N/A')}</strong>
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Footer -->
+    <footer style="margin-top: 6mm; border-top: 0.5pt solid #cbd5e1; padding-top: 1.5mm; font-size: 7.5pt; color: #64748b; display: flex; justify-content: space-between;">
+      <span>${escapeHtml(doc.clinicName)} &middot; Laboratory Requisition #${escapeHtml(doc.orderNo)}</span>
+      <span>Electronic Health Record &middot; Page 1 of 1</span>
+    </footer>
+  `;
+
+  return shell(`Lab Requisition ${doc.orderNo}`, body);
+}
+
+export interface EncounterOrdersDocument {
+  clinicName: string;
+  branchName?: string;
+  clinicAddress?: string;
+  clinicPhone?: string;
+
+  visitNo: string;
+  issuedAt: string;
+
+  patientName: string;
+  patientAge?: string | number;
+  patientSex?: string;
+  patientDob?: string;
+  patientMrn?: string;
+  allergies?: Array<{ substance: string; severity?: string }>;
+
+  clinicalImpression?: string;
+  planNotes?: string;
+
+  prescriberName: string;
+  prcLicenseNo?: string;
+  ptrNo?: string;
+  s2LicenseNo?: string;
+
+  prescriptions: PrescriptionItemDocument[];
+  labRequests: LabRequisitionItem[];
+
+  advice?: string;
+  verificationHash?: string;
+}
+
+/**
+ * Official Combined Encounter Orders & Clinical Summary Sheet
+ */
+export function renderEncounterOrdersHtml(doc: EncounterOrdersDocument): string {
+  const rxList = doc.prescriptions.map((rx, idx) => `
+    <li style="margin-bottom: 2.5mm;">
+      <strong>${idx + 1}. ${escapeHtml(rx.genericName)}</strong>
+      ${rx.brandName ? ` (${escapeHtml(rx.brandName)})` : ''}
+      ${rx.strength ? ` &mdash; ${escapeHtml(rx.strength)}` : ''}
+      ${rx.dosageForm ? ` (${escapeHtml(rx.dosageForm)})` : ''} &middot; <strong>Qty: #${escapeHtml(rx.quantity)}</strong><br>
+      <span style="color: #334155; font-size: 9pt;">Sig: ${escapeHtml(rx.sig || [rx.route, rx.frequency, rx.duration].filter(Boolean).join(' '))}</span>
+    </li>
+  `).join('');
+
+  const labList = doc.labRequests.map((lab, idx) => `
+    <li style="margin-bottom: 2mm;">
+      <strong>${idx + 1}. ${escapeHtml(lab.testName)}</strong> (${escapeHtml(lab.testCode)}) &mdash;
+      <span style="color: #475569;">Specimen: ${escapeHtml(lab.specimenType || 'Routine')}</span>
+      ${lab.fastingRequired ? ` &middot; <span style="color: #b45309; font-weight: 600;">Fasting Required (${lab.fastingHours || 8}h)</span>` : ''}
+    </li>
+  `).join('');
+
+  const body = `
+    <!-- Header -->
+    <header style="border-bottom: 2pt solid #0284c7; padding-bottom: 3mm; margin-bottom: 4mm;">
+      <table style="width: 100%; border: none; margin: 0;">
+        <tr>
+          <td style="border: none; padding: 0; vertical-align: top;">
+            <div style="font-size: 15pt; font-weight: 800; color: #0f2942;">
+              ${escapeHtml(doc.clinicName)}
+            </div>
+            <div style="font-size: 9pt; font-weight: 600; color: #0284c7; text-transform: uppercase;">
+              CLINICAL CONSULTATION ORDERS &amp; MANAGEMENT PLAN
+            </div>
+            <div style="font-size: 8.5pt; color: #64748b;">
+              ${[doc.branchName, doc.clinicAddress, doc.clinicPhone].filter(Boolean).map(escapeHtml).join(' &middot; ')}
+            </div>
+          </td>
+          <td style="border: none; padding: 0; vertical-align: top; text-align: right; width: 140px;">
+            <div style="font-family: Consolas, monospace; font-size: 10pt; font-weight: 700; color: #0f172a;">
+              Visit #${escapeHtml(doc.visitNo)}
+            </div>
+            <div style="font-size: 8.5pt; color: #64748b;">
+              Date: ${escapeHtml(doc.issuedAt)}
+            </div>
+          </td>
+        </tr>
+      </table>
+    </header>
+
+    <!-- Patient Bar -->
+    <div style="background: #f8fafc; border: 1pt solid #cbd5e1; border-radius: 4px; padding: 2.5mm 3.5mm; margin-bottom: 4mm;">
+      <table style="width: 100%; border: none;">
+        <tr>
+          <td style="border: none; padding: 0; font-size: 9.5pt;">
+            Patient: <strong>${escapeHtml(doc.patientName)}</strong> &middot;
+            ${doc.patientAge ? `${escapeHtml(doc.patientAge)} yo / ` : ''}${escapeHtml(doc.patientSex || 'N/A')} &middot;
+            MRN: ${escapeHtml(doc.patientMrn || 'N/A')}
+          </td>
+          <td style="border: none; padding: 0; text-align: right; font-size: 8.5pt; color: #64748b;">
+            Physician: <strong>${escapeHtml(doc.prescriberName)}</strong>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Clinical Impression -->
+    ${doc.clinicalImpression ? `
+      <div style="margin-bottom: 4mm; padding: 2mm 3.5mm; border-left: 3pt solid #0284c7; background: #f0f9ff; border-radius: 2px;">
+        <span style="font-size: 8pt; font-weight: 700; text-transform: uppercase; color: #0369a1;">Clinical Impression & Working Diagnoses:</span>
+        <div style="font-size: 10pt; font-weight: 600; color: #0c4a6e; margin-top: 0.5mm;">
+          ${escapeHtml(doc.clinicalImpression)}
+        </div>
+      </div>
+    ` : ''}
+
+    <!-- 1. Prescribed Medications -->
+    <div style="margin-bottom: 5mm;">
+      <div style="font-size: 10.5pt; font-weight: 800; color: #0f2942; border-bottom: 1pt solid #cbd5e1; padding-bottom: 1mm; margin-bottom: 2.5mm; text-transform: uppercase;">
+        1. Prescribed Medications & Pharmacy Orders (Rx)
+      </div>
+      ${doc.prescriptions.length > 0 ? `
+        <ul style="margin: 0; padding-left: 20px; font-size: 9.5pt; line-height: 1.4;">
+          ${rxList}
+        </ul>
+      ` : '<div style="font-size: 9pt; color: #64748b; font-style: italic;">No outpatient medications prescribed during this encounter.</div>'}
+    </div>
+
+    <!-- 2. Diagnostic Requisitions -->
+    <div style="margin-bottom: 5mm;">
+      <div style="font-size: 10.5pt; font-weight: 800; color: #0f2942; border-bottom: 1pt solid #cbd5e1; padding-bottom: 1mm; margin-bottom: 2.5mm; text-transform: uppercase;">
+        2. Laboratory & Diagnostic Requisitions
+      </div>
+      ${doc.labRequests.length > 0 ? `
+        <ul style="margin: 0; padding-left: 20px; font-size: 9.5pt; line-height: 1.4;">
+          ${labList}
+        </ul>
+      ` : '<div style="font-size: 9pt; color: #64748b; font-style: italic;">No diagnostic laboratory examinations requested.</div>'}
+    </div>
+
+    <!-- 3. Plan & Advice -->
+    ${doc.advice || doc.planNotes ? `
+      <div style="margin-bottom: 5mm;">
+        <div style="font-size: 10.5pt; font-weight: 800; color: #0f2942; border-bottom: 1pt solid #cbd5e1; padding-bottom: 1mm; margin-bottom: 2.5mm; text-transform: uppercase;">
+          3. Patient Care Advice & Return Instructions
+        </div>
+        <div style="font-size: 9.5pt; color: #334155; line-height: 1.45; background: #f8fafc; padding: 2.5mm 3.5mm; border-radius: 4px; border: 0.5pt solid #cbd5e1;">
+          ${escapeHtml(doc.advice || doc.planNotes)}
+        </div>
+      </div>
+    ` : ''}
+
+    <!-- Signature -->
+    <div style="margin-top: 8mm;">
+      <table style="width: 100%; border: none;">
+        <tr>
+          <td style="border: none; padding: 0; vertical-align: bottom; width: 60%;">
+            <div style="font-size: 7.5pt; color: #64748b;">
+              This clinical summary is issued for patient reference and continuity of care.
+            </div>
+          </td>
+          <td style="border: none; padding: 0; vertical-align: bottom; text-align: right; width: 40%;">
+            <div style="display: inline-block; text-align: center; width: 65mm;">
+              <div style="border-top: 1pt solid #0f172a; margin-top: 12mm; padding-top: 1.5mm;">
+                <div style="font-size: 10.5pt; font-weight: 800; color: #0f172a; text-transform: uppercase;">
+                  ${escapeHtml(doc.prescriberName)}
+                </div>
+                <div style="font-size: 8.5pt; color: #475569;">
+                  Attending Physician &middot; PRC Lic. No. <strong>${escapeHtml(doc.prcLicenseNo || 'N/A')}</strong>
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Footer -->
+    <footer style="margin-top: 6mm; border-top: 0.5pt solid #cbd5e1; padding-top: 1.5mm; font-size: 7.5pt; color: #64748b; display: flex; justify-content: space-between;">
+      <span>${escapeHtml(doc.clinicName)} &middot; Consultation Orders ${escapeHtml(doc.visitNo)}</span>
+      <span>EMR Document &middot; Page 1 of 1</span>
+    </footer>
+  `;
+
+  return shell(`Encounter Orders ${doc.visitNo}`, body);
+}
+

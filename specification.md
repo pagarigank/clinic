@@ -250,7 +250,8 @@ A tenant does not get the whole platform. At creation the superadmin ticks the m
 | `discount_types` | code, name, pct/amount, requires_id, legal_basis |
 | `payment_methods` | code, name, type (cash, card, e-wallet, bank) |
 | `service_catalog` | code, name, category (consult, procedure, lab, other), default_price, is_active |
-| `price_lists` / `price_list_items` | name, effective_from/to; item/service price |
+| `price_lists` | service_id, amount, effective_from/to — effective-dated override; resolved unit price = latest effective price_lists entry, else service_catalog.default_price |
+| `lab_tests` / `items` | optional service_id → maps a lab test / inventory item to a billable service_catalog row for charge capture |
 | `holidays` / `operating_hours` | date/label; weekday hours |
 | `notification_templates` | event, channel, locale, subject, body |
 | `api_keys` | name, hash, scopes, last_used_at, expires_at |

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { withTenant, type QueryResultRow } from '@clinic/db';
+import { renderRxLabel } from '@clinic/print';
 import { ProblemException } from '../http/problem.exception.js';
 import { SupplyService } from '../supply/supply.service.js';
 import type {
@@ -418,6 +419,48 @@ export class PharmacyService {
 
   // ── Verification Queue & Automated Checks (PHM-T1) ─────────────────────────
 
+  async getPrescription(tenantId: string, id: string) {
+    return withTenant({ tenantId }, async (tx) => {
+      const rxRes = await tx.query(
+        `SELECT p.*,
+                pt.first_name as patient_first_name, pt.last_name as patient_last_name,
+                pt.first_name || ' ' || pt.last_name as patient_name,
+                (SELECT value FROM patient_identifiers WHERE tenant_id = pt.tenant_id AND patient_id = pt.id AND type = 'HRN' LIMIT 1) as hrn,
+                pt.date_of_birth as birth_date, pt.gender as patient_sex,
+                u.name as prescriber_name,
+                v.visit_no
+         FROM prescriptions p
+         JOIN patients pt ON pt.tenant_id = p.tenant_id AND pt.id = p.patient_id
+         LEFT JOIN users u ON u.tenant_id = p.tenant_id AND u.id = p.prescriber_id
+         LEFT JOIN visits v ON v.tenant_id = p.tenant_id AND v.id = p.visit_id
+         WHERE p.tenant_id = $1 AND p.id = $2`,
+        [tenantId, id],
+      );
+      if (!rxRes.rows[0]) {
+        throw new ProblemException('NOT_FOUND', { detail: 'Prescription not found' });
+      }
+      const rx = rxRes.rows[0];
+
+      const itemsRes = await tx.query(
+        `SELECT pi.id, pi.drug_product_id, pi.generic_name, pi.brand_name, pi.strength, pi.form,
+                pi.route, pi.sig_dose, pi.sig_frequency, pi.sig_duration,
+                pi.qty_prescribed, pi.qty_dispensed, pi.dispense_as_written,
+                COALESCE(dp.item_id, (SELECT dp2.item_id FROM drug_products dp2 WHERE dp2.tenant_id = pi.tenant_id AND dp2.brand_name ILIKE pi.generic_name LIMIT 1)) as item_id,
+                dp.rx_required, dp.controlled_schedule, dp.high_alert, dp.allergy_class,
+                COALESCE(i.code, (SELECT i2.code FROM drug_products dp2 JOIN items i2 ON i2.id = dp2.item_id AND i2.tenant_id = dp2.tenant_id WHERE dp2.tenant_id = pi.tenant_id AND dp2.brand_name ILIKE pi.generic_name LIMIT 1)) as item_code,
+                COALESCE(i.name, pi.brand_name, pi.generic_name) as item_name
+         FROM prescription_items pi
+         LEFT JOIN drug_products dp ON dp.tenant_id = pi.tenant_id AND dp.id = pi.drug_product_id
+         LEFT JOIN items i ON i.tenant_id = dp.tenant_id AND i.id = dp.item_id
+         WHERE pi.tenant_id = $1 AND pi.rx_id = $2
+         ORDER BY pi.id ASC`,
+        [tenantId, id],
+      );
+
+      return { ...rx, items: itemsRes.rows };
+    });
+  }
+
   async getVerificationQueue(tenantId: string, status = 'ISSUED') {
     return withTenant({ tenantId }, async (tx) => {
       const res = await tx.query(
@@ -660,6 +703,30 @@ export class PharmacyService {
           [tenantId, rxId, `Prescription rejected: ${dto.rejectReason}`, userId],
         );
 
+        // JOB-02 notification: enqueue for prescriber
+        const rxRes = await tx.query(
+          `SELECT prescriber_id FROM prescriptions WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, rxId],
+        );
+        if (rxRes.rows[0]?.prescriber_id) {
+          await tx.query(
+            `INSERT INTO outbox (tenant_id, event_type, payload)
+             VALUES ($1, 'notification.send', $2)`,
+            [
+              tenantId,
+              {
+                recipientId: rxRes.rows[0].prescriber_id,
+                channel: 'IN_APP',
+                template: 'RX_REJECTED',
+                data: {
+                  rxId,
+                  reason: dto.rejectReason,
+                },
+              },
+            ],
+          );
+        }
+
         return {
           success: true,
           action: 'REJECT',
@@ -841,11 +908,16 @@ export class PharmacyService {
       if (dto.lines && dto.lines.length > 0) {
         for (const line of dto.lines) {
           const itemRes = await tx.query(
-            `SELECT base_uom_id, standard_cost FROM items WHERE tenant_id = $1 AND id = $2`,
+            `SELECT i.base_uom_id, i.standard_cost
+             FROM items i
+             JOIN drug_products dp ON dp.tenant_id = i.tenant_id AND dp.item_id = i.id
+             WHERE i.tenant_id = $1 AND i.id = $2`,
             [tenantId, line.itemId],
           );
           if (!itemRes.rows[0]) {
-            throw new ProblemException('NOT_FOUND', { detail: `Item not found: ${line.itemId}` });
+            throw new ProblemException('NOT_FOUND', {
+              detail: `Item not found or not a pharmacy drug product: ${line.itemId}`,
+            });
           }
           const item = itemRes.rows[0];
           const unitPrice = line.unitPrice ?? (await this.calculateItemPrice(tenantId, line.itemId, Number(item.standard_cost), tx));
@@ -951,6 +1023,17 @@ export class PharmacyService {
       const dispense = dRes.rows[0];
       if (dispense.status !== 'DRAFT' && dispense.status !== 'READY') {
         throw new ProblemException('CONFLICT', { detail: `Cannot post dispense with status ${dispense.status}` });
+      }
+
+      // Charges require an open visit (specification §11.3 BIL-T1; §7.2).
+      if (dispense.visit_id) {
+        const openVisit = await tx.query(
+          `SELECT 1 FROM visits WHERE tenant_id = $1 AND id = $2 AND status NOT IN ('CLOSED','CANCELLED')`,
+          [tenantId, dispense.visit_id],
+        );
+        if ((openVisit.rowCount ?? 0) === 0) {
+          throw new ProblemException('VISIT_CLOSED', { detail: 'Dispensing requires an open visit.' });
+        }
       }
 
       // 2. Check if supply module is enabled for tenant
@@ -1445,13 +1528,19 @@ export class PharmacyService {
            WHERE dp.tenant_id = $1 AND dp.item_id = $2`,
           [tenantId, item.itemId],
         );
-        if (prodRes.rows[0]) {
-          const req = prodRes.rows[0].rx_required;
-          if (req === 'CONTROLLED' || req === 'RX') {
-            throw new ProblemException('FORBIDDEN', {
-              detail: `Item "${prodRes.rows[0].brand_name}" is classified as ${req} and cannot be sold OTC without a prescription`,
-            });
-          }
+        // Membership in drug_products is what makes an item a pharmacy item; an
+        // item with no drug product has no rx_required, so absence must not be
+        // treated as "unrestricted".
+        if (!prodRes.rows[0]) {
+          throw new ProblemException('VALIDATION_FAILED', {
+            detail: `Item ${item.itemId} is not a pharmacy drug product and cannot be sold OTC`,
+          });
+        }
+        const req = prodRes.rows[0].rx_required;
+        if (req === 'CONTROLLED' || req === 'RX') {
+          throw new ProblemException('FORBIDDEN', {
+            detail: `Item "${prodRes.rows[0].brand_name}" is classified as ${req} and cannot be sold OTC without a prescription`,
+          });
         }
       }
 
@@ -1591,11 +1680,26 @@ export class PharmacyService {
       );
       const hasSupply = supplyModRes.rows.length > 0;
 
-      const itemRes = await tx.query(`SELECT base_uom_id, standard_cost FROM items WHERE tenant_id = $1 AND id = $2`, [tenantId, dto.drugItemId]);
+      const itemRes = await tx.query(
+        `SELECT i.base_uom_id, i.standard_cost
+         FROM items i
+         JOIN drug_products dp ON dp.tenant_id = i.tenant_id AND dp.item_id = i.id
+         WHERE i.tenant_id = $1 AND i.id = $2`,
+        [tenantId, dto.drugItemId],
+      );
       if (!itemRes.rows[0]) {
-        throw new ProblemException('NOT_FOUND', { detail: 'Medication item not found' });
+        throw new ProblemException('NOT_FOUND', { detail: 'Medication item not found or not a pharmacy drug product' });
       }
       const item = itemRes.rows[0];
+
+      // Charges require an open visit (specification §11.3 BIL-T1; §7.2).
+      const openVisit = await tx.query(
+        `SELECT 1 FROM visits WHERE tenant_id = $1 AND id = $2 AND status NOT IN ('CLOSED','CANCELLED')`,
+        [tenantId, dto.visitId],
+      );
+      if ((openVisit.rowCount ?? 0) === 0) {
+        throw new ProblemException('VISIT_CLOSED', { detail: 'Medication administration requires an open visit.' });
+      }
 
       // 2. Insert medication_administrations record
       const adminRes = await tx.query(
@@ -1891,6 +1995,19 @@ export class PharmacyService {
 
   // ── Stock View & Rx Label Print ────────────────────────────────────────────
 
+  async listPharmacyLocations(tenantId: string) {
+    return withTenant({ tenantId }, async (tx) => {
+      const res = await tx.query(
+        `SELECT id, branch_id, code, name, type
+         FROM stock_locations
+         WHERE tenant_id = $1 AND type IN ('PHARMACY', 'CENTRAL_STORE', 'CLINIC_ROOM')
+         ORDER BY name ASC`,
+        [tenantId],
+      );
+      return res.rows;
+    });
+  }
+
   async getPharmacyStock(tenantId: string, query: { itemId?: string; locationId?: string; nearExpiry?: boolean }) {
     return withTenant({ tenantId }, async (tx) => {
       const params: any[] = [tenantId];
@@ -1903,7 +2020,7 @@ export class PharmacyService {
                  JOIN stock_batches sb ON sb.tenant_id = sbal.tenant_id AND sb.id = sbal.batch_id
                  JOIN items i ON i.tenant_id = sbal.tenant_id AND i.id = sb.item_id
                  JOIN stock_locations sl ON sl.tenant_id = sbal.tenant_id AND sl.id = sbal.location_id
-                 LEFT JOIN drug_products dp ON dp.tenant_id = i.tenant_id AND dp.item_id = i.id
+                 JOIN drug_products dp ON dp.tenant_id = i.tenant_id AND dp.item_id = i.id
                  WHERE sbal.tenant_id = $1 AND sbal.qty_on_hand > 0`;
 
       if (query.itemId) {
@@ -1964,6 +2081,42 @@ export class PharmacyService {
         [tenantId, dispenseId],
       );
 
+      const patientFullName = `${d.first_name} ${d.last_name}`;
+      
+      const labels = itemsRes.rows.map((row: any) => {
+        const drugName = row.brand_name || row.item_name;
+        const sig = row.sig_dose 
+          ? `${row.sig_dose} ${row.sig_frequency || ''} ${row.sig_duration ? 'for ' + row.sig_duration : ''}`.trim()
+          : 'Take as directed by prescriber';
+        
+        const zpl = renderRxLabel({
+          patientName: patientFullName,
+          drugName,
+          strength: row.strength || '',
+          sig,
+          quantity: String(row.qty),
+          batchNo: row.batch_no,
+          expiry: row.expiry_date,
+          pharmacistName: d.pharmacist_name || 'System',
+          serialNo: d.special_rx_serial,
+          issuedAt: new Date(d.dispensed_at).toLocaleDateString(),
+        });
+
+        return {
+          itemId: row.item_id,
+          brandName: drugName,
+          genericName: row.generic_name,
+          strength: row.strength,
+          dosageForm: row.dosage_form,
+          directionsForUse: sig,
+          quantity: row.qty,
+          batchNo: row.batch_no,
+          expiryDate: row.expiry_date,
+          specialRxSerial: d.special_rx_serial,
+          zpl,
+        };
+      });
+
       return {
         dispenseId,
         dispenseNo: d.dispense_no,
@@ -1971,24 +2124,11 @@ export class PharmacyService {
         branchName: d.branch_name,
         pharmacistName: d.pharmacist_name,
         patient: {
-          fullName: `${d.first_name} ${d.last_name}`,
+          fullName: patientFullName,
           hrn: d.hrn,
           birthDate: d.birth_date,
         },
-        labels: itemsRes.rows.map((row: any) => ({
-          itemId: row.item_id,
-          brandName: row.brand_name || row.item_name,
-          genericName: row.generic_name,
-          strength: row.strength,
-          dosageForm: row.dosage_form,
-          directionsForUse: row.sig_dose
-            ? `${row.sig_dose} ${row.sig_frequency || ''} ${row.sig_duration ? 'for ' + row.sig_duration : ''}`.trim()
-            : 'Take as directed by prescriber',
-          quantity: row.qty,
-          batchNo: row.batch_no,
-          expiryDate: row.expiry_date,
-          specialRxSerial: d.special_rx_serial,
-        })),
+        labels,
       };
     });
   }

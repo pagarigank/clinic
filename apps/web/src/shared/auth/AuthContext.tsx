@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, type ReactNode } from "react";
-import { apiGet, apiPost, setAccessToken } from "../api/client.js";
+import { apiGet, apiPost, setAccessToken, getAccessToken, refreshAccessToken } from "../api/client.js";
 import type { SessionInfo } from "@clinic/contracts";
 
 export interface UserSession {
@@ -58,9 +58,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let mounted = true;
     async function initSession() {
       try {
+        // A hard reload drops the in-memory access token. Exchange the refresh
+        // cookie for a fresh one before asking for the session, otherwise
+        // /auth/session (and every later API call) returns 401 even though the
+        // saved demo session keeps the UI looking signed in.
+        if (!getAccessToken()) {
+          // No-ops (resolves null) when there is no refresh cookie or the
+          // endpoint is unavailable in tests.
+          await refreshAccessToken();
+        }
         const info = await apiGet<SessionInfo>("/auth/session");
+        if (!mounted) return;
         const activeBranch = info.assignedBranches.find((b) => b.id === info.branchId);
         const mapped: UserSession = {
           userId: info.user.id,
@@ -76,15 +87,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession(mapped);
         localStorage.setItem(DEMO_SESSION_KEY, JSON.stringify(mapped));
       } catch {
-        // If not authenticated via cookie, check if we have a demo session or stay logged out
-        if (!session) {
-          setSession(null);
-        }
+        if (!mounted) return;
+        // If the backend rejects the session (e.g. 401), we are logged out.
+        // Clear the zombie session state from UI and storage so the user can log in again.
+        setSession(null);
+        getSafeStorage()?.removeItem(DEMO_SESSION_KEY);
       } finally {
-        setIsLoading(false);
+        if (mounted) {
+          setIsLoading(false);
+        }
       }
     }
     initSession();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const login = async (tenantSlug: string, email: string, password: string) => {
@@ -92,7 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     try {
       const res = await apiPost<{ status: string; accessToken?: string }>("/auth/login", {
-        slug: tenantSlug,
+        tenant: tenantSlug,
         email,
         password,
       });

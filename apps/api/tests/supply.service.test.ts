@@ -633,4 +633,78 @@ LOC-CSV-${rand},INVALID_ITEM,10,50,20,15
     const postedRet = await svc.postSupplierReturn(tenantId, user1Id, 'req-rtv-post', ret.id, centralStoreId);
     expect(postedRet.status).toBe('POSTED');
   });
+
+  it('BIL-T1: posts a SUPPLY charge when consumption is tied to a visit', async () => {
+    // Catalog service priced at 12.50, mapped to the item.
+    const svcRes = await ownerPool.query(
+      `INSERT INTO service_catalog (tenant_id, code, name, category, default_price, is_active)
+       VALUES ($1, $2, 'Amoxicillin 500mg (issue)', 'other', 12.50, true) RETURNING id`,
+      [tenantId, `SUPSVC-${Math.floor(Math.random() * 1000000)}`],
+    );
+    const serviceId = svcRes.rows[0].id;
+    await ownerPool.query(`UPDATE items SET service_id = $2 WHERE tenant_id = $1 AND id = $3`, [tenantId, serviceId, itemId]);
+
+    // Stock the central store with a batch.
+    const supplier = await svc.createSupplier(tenantId, { code: `SUP-BIL-${Date.now()}`, name: 'Billing Supply Co' });
+    const grn = await svc.createGrn(tenantId, user1Id, {
+      branchId,
+      locationId: centralStoreId,
+      supplierId: supplier.id,
+      lines: [{
+        itemId,
+        lotNo: 'LOT-BIL-1',
+        expiryDate: new Date(Date.now() + 180 * 86400000).toISOString().slice(0, 10),
+        qtyReceived: 10,
+        uomId: uomPcsId,
+        unitCost: 5,
+      }],
+    });
+    const postedGrn = await svc.postGrn(tenantId, user1Id, `req-grn-bil-${Date.now()}`, grn.id);
+    const batchId = postedGrn.lines[0].batch_id;
+
+    // Open the visit the supply is issued against.
+    const pRes = await ownerPool.query(
+      `INSERT INTO patients (tenant_id, first_name, last_name, date_of_birth, gender)
+       VALUES ($1, 'Supply', 'Visit', '1990-01-01', 'MALE') RETURNING id`,
+      [tenantId],
+    );
+    const patientId = pRes.rows[0].id;
+    const vRes = await ownerPool.query(
+      `INSERT INTO visits (tenant_id, branch_id, visit_no, patient_id, practitioner_id, visit_type, status, opened_at, created_by)
+       VALUES ($1, $2, $3, $4, $5, 'OPD', 'IN_PROGRESS', now(), $6)
+       RETURNING id`,
+      [tenantId, branchId, `VIS-SUP-${Date.now()}`, patientId, user2Id, user1Id],
+    );
+    const visitId = vRes.rows[0].id;
+
+    const res = await svc.postConsumption(tenantId, user1Id, `req-cons-${Date.now()}`, {
+      locationId: centralStoreId,
+      itemId,
+      batchId,
+      qty: 3,
+      uomId: uomPcsId,
+      refType: 'VISIT',
+      refId: visitId,
+    });
+    expect(res.status).toBe('POSTED');
+
+    const charge = await ownerPool.query(
+      `SELECT charge_type, service_id, quantity, unit_price, amount, visit_id
+         FROM billing_charges
+        WHERE tenant_id = $1 AND charge_type = 'SUPPLY' AND visit_id = $2`,
+      [tenantId, visitId],
+    );
+    expect(charge.rows).toHaveLength(1);
+    expect(charge.rows[0].service_id).toBe(serviceId);
+    expect(Number(charge.rows[0].quantity)).toBe(3);
+    expect(Number(charge.rows[0].unit_price)).toBe(12.5);
+    expect(Number(charge.rows[0].amount)).toBe(37.5);
+
+    await ownerPool.query(`DELETE FROM billing_charges WHERE tenant_id = $1 AND visit_id = $2`, [tenantId, visitId]);
+    await ownerPool.query(`DELETE FROM consumption_logs WHERE tenant_id = $1 AND ref_id = $2`, [tenantId, visitId]);
+    await ownerPool.query(`DELETE FROM visits WHERE id = $1`, [visitId]);
+    await ownerPool.query(`DELETE FROM patients WHERE id = $1`, [patientId]);
+    await ownerPool.query(`UPDATE items SET service_id = NULL WHERE tenant_id = $1 AND id = $2`, [tenantId, itemId]);
+    await ownerPool.query(`DELETE FROM service_catalog WHERE id = $1`, [serviceId]);
+  });
 });

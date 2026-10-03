@@ -20,56 +20,66 @@ import { renderPdf, renderLabReportHtml, type LabReport as LabReportDocument } f
  * If an alert in `lab_critical_notifications` is not acknowledged within the configured threshold
  * (e.g. 15 minutes by default), mark escalated_at and post an outbox escalation notification.
  */
-export async function runLabCriticalEscalate(thresholdMinutes = 15): Promise<{ escalatedCount: number }> {
-  const pool = getAppPool();
-
-  const unacked = await pool.query(
-    `SELECT lcn.id, lcn.tenant_id, lcn.result_id, lcn.detected_at, lcn.notified_to,
-            lr.analyte_id, lr.value_num, lr.value_text, lr.flag,
-            la.name as analyte_name, lo.order_no, lo.patient_id, lo.branch_id
-     FROM lab_critical_notifications lcn
-     JOIN lab_results lr ON lr.id = lcn.result_id AND lr.tenant_id = lcn.tenant_id
-     JOIN lab_analytes la ON la.id = lr.analyte_id AND la.tenant_id = lcn.tenant_id
-     JOIN lab_order_items loi ON loi.id = lr.order_item_id AND loi.tenant_id = lcn.tenant_id
-     JOIN lab_orders lo ON lo.id = loi.order_id AND lo.tenant_id = lcn.tenant_id
-     WHERE lcn.acknowledged_at IS NULL
-       AND lcn.escalated_at IS NULL
-       AND lcn.detected_at < now() - ($1 || ' minutes')::interval`,
-    [thresholdMinutes],
-  );
-
+export async function runLabCriticalEscalate(
+  thresholdMinutes = 15,
+  targetTenantId?: string,
+): Promise<{ escalatedCount: number }> {
+  const tenantIds = targetTenantId ? [targetTenantId] : await activeTenantIds();
   let escalatedCount = 0;
 
-  for (const row of unacked.rows) {
-    await pool.query(
-      `UPDATE lab_critical_notifications
-       SET escalated_at = now()
-       WHERE tenant_id = $1 AND id = $2`,
-      [row.tenant_id, row.id],
-    );
+  for (const tenantId of tenantIds) {
+    escalatedCount += await withTenant({ tenantId }, async (tx) => {
+      const unacked = await tx.query(
+        `SELECT lcn.id, lcn.result_id, lcn.detected_at,
+                lr.analyte_id, lr.value_num, lr.value_text, lr.flag,
+                la.name as analyte_name, lo.order_no, lo.patient_id, lo.branch_id
+         FROM lab_critical_notifications lcn
+         JOIN lab_results lr ON lr.id = lcn.result_id AND lr.tenant_id = lcn.tenant_id
+         JOIN lab_analytes la ON la.id = lr.analyte_id AND la.tenant_id = lcn.tenant_id
+         JOIN lab_order_items loi ON loi.id = lr.order_item_id AND loi.tenant_id = lcn.tenant_id
+         JOIN lab_orders lo ON lo.id = loi.order_id AND lo.tenant_id = lcn.tenant_id
+         WHERE lcn.tenant_id = $1
+           AND lcn.acknowledged_at IS NULL
+           AND lcn.escalated_at IS NULL
+           AND lcn.detected_at < now() - ($2 || ' minutes')::interval`,
+        [tenantId, thresholdMinutes],
+      );
 
-    await pool.query(
-      `INSERT INTO outbox (tenant_id, event_type, payload)
-       VALUES ($1, 'lab.critical.escalated', $2)
-       ON CONFLICT DO NOTHING`,
-      [
-        row.tenant_id,
-        JSON.stringify({
-          notificationId: row.id,
-          resultId: row.result_id,
-          orderNo: row.order_no,
-          patientId: row.patient_id,
-          branchId: row.branch_id,
-          analyteName: row.analyte_name,
-          value: row.value_num ?? row.value_text,
-          flag: row.flag,
-          escalatedTo: 'LAB_MANAGER',
-          detectedAt: row.detected_at,
-          escalatedAt: new Date().toISOString(),
-        }),
-      ],
-    );
-    escalatedCount++;
+      let count = 0;
+      for (const row of unacked.rows) {
+        await tx.query(
+          `UPDATE lab_critical_notifications
+           SET escalated_at = now()
+           WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, row.id],
+        );
+
+        await tx.query(
+          `INSERT INTO outbox (tenant_id, event_type, payload, dedup_key)
+           VALUES ($1, 'lab.critical.escalated', $2, $3)
+           ON CONFLICT (tenant_id, event_type, dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING`,
+          [
+            tenantId,
+            JSON.stringify({
+              notificationId: row.id,
+              resultId: row.result_id,
+              orderNo: row.order_no,
+              patientId: row.patient_id,
+              branchId: row.branch_id,
+              analyteName: row.analyte_name,
+              value: row.value_num ?? row.value_text,
+              flag: row.flag,
+              escalatedTo: 'LAB_MANAGER',
+              detectedAt: row.detected_at,
+              escalatedAt: new Date().toISOString(),
+            }),
+            `critical-notification:${row.id}`,
+          ],
+        );
+        count++;
+      }
+      return count;
+    });
   }
 
   return { escalatedCount };
@@ -79,45 +89,53 @@ export async function runLabCriticalEscalate(thresholdMinutes = 15): Promise<{ e
  * JOB-42: lab.tat.monitor
  * Detects STAT and routine orders that have exceeded target turnaround time.
  */
-export async function runLabTatMonitor(): Promise<{ breachedCount: number }> {
-  const pool = getAppPool();
-
-  const overdue = await pool.query(
-    `SELECT loi.id as item_id, loi.tenant_id, lo.order_no, lo.priority, lo.ordered_at,
-            lt.name as test_name, lt.tat_minutes, lo.branch_id
-     FROM lab_order_items loi
-     JOIN lab_orders lo ON lo.id = loi.order_id AND lo.tenant_id = loi.tenant_id
-     JOIN lab_tests lt ON lt.id = loi.test_id AND lt.tenant_id = loi.tenant_id
-     WHERE loi.status NOT IN ('VERIFIED', 'RELEASED', 'CANCELLED', 'REJECTED')
-       AND lo.status != 'CANCELLED'
-       AND (
-         (lo.priority = 'STAT' AND lo.ordered_at < now() - (COALESCE(lt.tat_minutes / 2, 30) || ' minutes')::interval)
-         OR
-         (lo.priority != 'STAT' AND lo.ordered_at < now() - (COALESCE(lt.tat_minutes, 60) || ' minutes')::interval)
-       )`,
-  );
-
+export async function runLabTatMonitor(targetTenantId?: string): Promise<{ breachedCount: number }> {
+  const tenantIds = targetTenantId ? [targetTenantId] : await activeTenantIds();
   let breachedCount = 0;
 
-  for (const row of overdue.rows) {
-    await pool.query(
-      `INSERT INTO outbox (tenant_id, event_type, payload)
-       VALUES ($1, 'lab.tat.breached', $2)
-       ON CONFLICT DO NOTHING`,
-      [
-        row.tenant_id,
-        JSON.stringify({
-          orderItemId: row.item_id,
-          orderNo: row.order_no,
-          testName: row.test_name,
-          priority: row.priority,
-          branchId: row.branch_id,
-          orderedAt: row.ordered_at,
-          detectedAt: new Date().toISOString(),
-        }),
-      ],
-    );
-    breachedCount++;
+  for (const tenantId of tenantIds) {
+    breachedCount += await withTenant({ tenantId }, async (tx) => {
+      const overdue = await tx.query(
+        `SELECT loi.id as item_id, lo.order_no, lo.priority, lo.ordered_at,
+                lt.name as test_name, lt.tat_minutes, lo.branch_id
+         FROM lab_order_items loi
+         JOIN lab_orders lo ON lo.id = loi.order_id AND lo.tenant_id = loi.tenant_id
+         JOIN lab_tests lt ON lt.id = loi.test_id AND lt.tenant_id = loi.tenant_id
+         WHERE loi.tenant_id = $1
+           AND loi.status NOT IN ('VERIFIED', 'RELEASED', 'CANCELLED', 'REJECTED')
+           AND lo.status != 'CANCELLED'
+           AND (
+             (lo.priority = 'STAT' AND lo.ordered_at < now() - (COALESCE(lt.tat_minutes / 2, 30) || ' minutes')::interval)
+             OR
+             (lo.priority != 'STAT' AND lo.ordered_at < now() - (COALESCE(lt.tat_minutes, 60) || ' minutes')::interval)
+           )`,
+        [tenantId],
+      );
+
+      let count = 0;
+      for (const row of overdue.rows) {
+        await tx.query(
+          `INSERT INTO outbox (tenant_id, event_type, payload, dedup_key)
+           VALUES ($1, 'lab.tat.breached', $2, $3)
+           ON CONFLICT (tenant_id, event_type, dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING`,
+          [
+            tenantId,
+            JSON.stringify({
+              orderItemId: row.item_id,
+              orderNo: row.order_no,
+              testName: row.test_name,
+              priority: row.priority,
+              branchId: row.branch_id,
+              orderedAt: row.ordered_at,
+              detectedAt: new Date().toISOString(),
+            }),
+            `order-item:${row.item_id}`,
+          ],
+        );
+        count++;
+      }
+      return count;
+    });
   }
 
   return { breachedCount };
@@ -355,39 +373,48 @@ function buildLabReportDocument(report: {
  * JOB-44: lab.qc.missing.remind
  * Reminds technicians when daily QC runs have not been recorded for instruments with active tests.
  */
-export async function runLabQcMissingRemind(): Promise<{ remindedCount: number }> {
-  const pool = getAppPool();
-
-  const missingQc = await pool.query(
-    `SELECT DISTINCT li.tenant_id, li.id as instrument_id, li.name as instrument_name, li.branch_id
-     FROM lab_instruments li
-     WHERE li.deleted_at IS NULL
-       AND NOT EXISTS (
-         SELECT 1 FROM lab_qc_runs lqr
-         WHERE lqr.tenant_id = li.tenant_id
-           AND lqr.instrument_id = li.id
-           AND lqr.run_at >= CURRENT_DATE
-       )`,
-  );
-
+export async function runLabQcMissingRemind(targetTenantId?: string): Promise<{ remindedCount: number }> {
+  const tenantIds = targetTenantId ? [targetTenantId] : await activeTenantIds();
   let remindedCount = 0;
 
-  for (const row of missingQc.rows) {
-    await pool.query(
-      `INSERT INTO outbox (tenant_id, event_type, payload)
-       VALUES ($1, 'lab.qc.missing.reminder', $2)
-       ON CONFLICT DO NOTHING`,
-      [
-        row.tenant_id,
-        JSON.stringify({
-          instrumentId: row.instrument_id,
-          instrumentName: row.instrument_name,
-          branchId: row.branch_id,
-          date: new Date().toISOString().slice(0, 10),
-        }),
-      ],
-    );
-    remindedCount++;
+  for (const tenantId of tenantIds) {
+    remindedCount += await withTenant({ tenantId }, async (tx) => {
+      const missingQc = await tx.query(
+        `SELECT DISTINCT li.id as instrument_id, li.name as instrument_name, li.branch_id
+         FROM lab_instruments li
+         WHERE li.tenant_id = $1
+           AND li.is_active = true
+           AND NOT EXISTS (
+             SELECT 1 FROM lab_qc_runs lqr
+             WHERE lqr.tenant_id = li.tenant_id
+               AND lqr.instrument_id = li.id
+               AND lqr.run_at >= CURRENT_DATE
+           )`,
+        [tenantId],
+      );
+
+      const date = new Date().toISOString().slice(0, 10);
+      let count = 0;
+      for (const row of missingQc.rows) {
+        await tx.query(
+          `INSERT INTO outbox (tenant_id, event_type, payload, dedup_key)
+           VALUES ($1, 'lab.qc.missing.reminder', $2, $3)
+           ON CONFLICT (tenant_id, event_type, dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING`,
+          [
+            tenantId,
+            JSON.stringify({
+              instrumentId: row.instrument_id,
+              instrumentName: row.instrument_name,
+              branchId: row.branch_id,
+              date,
+            }),
+            `instrument-qc:${row.instrument_id}:${date}`,
+          ],
+        );
+        count++;
+      }
+      return count;
+    });
   }
 
   return { remindedCount };
@@ -397,41 +424,49 @@ export async function runLabQcMissingRemind(): Promise<{ remindedCount: number }
  * JOB-45: lab.specimen.stale.flag
  * Flags unreceived or un-resulted specimens that have exceeded specimen stability hours.
  */
-export async function runLabSpecimenStaleFlag(): Promise<{ staleCount: number }> {
-  const pool = getAppPool();
-
-  const stale = await pool.query(
-    `SELECT s.id as specimen_id, s.tenant_id, s.accession_no, s.collected_at,
-            st.name as specimen_type_name, st.stability_hours, lo.order_no
-     FROM specimens s
-     JOIN specimen_types st ON st.id = s.specimen_type_id AND st.tenant_id = s.tenant_id
-     JOIN lab_orders lo ON lo.id = s.order_id AND lo.tenant_id = s.tenant_id
-     WHERE s.condition = 'OK'
-       AND s.received_at IS NULL
-       AND s.collected_at IS NOT NULL
-       AND s.collected_at < now() - (COALESCE(st.stability_hours, 24) || ' hours')::interval`,
-  );
-
+export async function runLabSpecimenStaleFlag(targetTenantId?: string): Promise<{ staleCount: number }> {
+  const tenantIds = targetTenantId ? [targetTenantId] : await activeTenantIds();
   let staleCount = 0;
 
-  for (const row of stale.rows) {
-    await pool.query(
-      `INSERT INTO outbox (tenant_id, event_type, payload)
-       VALUES ($1, 'lab.specimen.stale', $2)
-       ON CONFLICT DO NOTHING`,
-      [
-        row.tenant_id,
-        JSON.stringify({
-          specimenId: row.specimen_id,
-          accessionNo: row.accession_no,
-          orderNo: row.order_no,
-          specimenType: row.specimen_type_name,
-          collectedAt: row.collected_at,
-          stabilityHours: row.stability_hours,
-        }),
-      ],
-    );
-    staleCount++;
+  for (const tenantId of tenantIds) {
+    staleCount += await withTenant({ tenantId }, async (tx) => {
+      const stale = await tx.query(
+        `SELECT s.id as specimen_id, s.accession_no, s.collected_at,
+                st.name as specimen_type_name, st.stability_hours, lo.order_no
+         FROM specimens s
+         JOIN lab_specimen_types st ON st.id = s.specimen_type_id AND st.tenant_id = s.tenant_id
+         JOIN lab_orders lo ON lo.id = s.order_id AND lo.tenant_id = s.tenant_id
+         WHERE s.tenant_id = $1
+           AND s.condition = 'OK'
+           AND s.received_at IS NULL
+           AND s.collected_at IS NOT NULL
+           AND s.collected_at < now() - (COALESCE(st.stability_hours, 24) || ' hours')::interval`,
+        [tenantId],
+      );
+
+      let count = 0;
+      for (const row of stale.rows) {
+        await tx.query(
+          `INSERT INTO outbox (tenant_id, event_type, payload, dedup_key)
+           VALUES ($1, 'lab.specimen.stale', $2, $3)
+           ON CONFLICT (tenant_id, event_type, dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING`,
+          [
+            tenantId,
+            JSON.stringify({
+              specimenId: row.specimen_id,
+              accessionNo: row.accession_no,
+              orderNo: row.order_no,
+              specimenType: row.specimen_type_name,
+              collectedAt: row.collected_at,
+              stabilityHours: row.stability_hours,
+            }),
+            `specimen:${row.specimen_id}`,
+          ],
+        );
+        count++;
+      }
+      return count;
+    });
   }
 
   return { staleCount };
@@ -441,37 +476,45 @@ export async function runLabSpecimenStaleFlag(): Promise<{ staleCount: number }>
  * JOB-46: lab.instrument.calibration.remind
  * Reminds when lab instruments are due or past due for calibration.
  */
-export async function runLabInstrumentCalibrationRemind(): Promise<{ remindedCount: number }> {
-  const pool = getAppPool();
-
-  const due = await pool.query(
-    `SELECT li.id, li.tenant_id, li.name, li.model, li.serial_no, li.calibration_due, li.branch_id
-     FROM lab_instruments li
-     WHERE li.deleted_at IS NULL
-       AND li.calibration_due IS NOT NULL
-       AND li.calibration_due <= CURRENT_DATE + INTERVAL '7 days'`,
-  );
-
+export async function runLabInstrumentCalibrationRemind(targetTenantId?: string): Promise<{ remindedCount: number }> {
+  const tenantIds = targetTenantId ? [targetTenantId] : await activeTenantIds();
   let remindedCount = 0;
 
-  for (const row of due.rows) {
-    await pool.query(
-      `INSERT INTO outbox (tenant_id, event_type, payload)
-       VALUES ($1, 'lab.instrument.calibration.due', $2)
-       ON CONFLICT DO NOTHING`,
-      [
-        row.tenant_id,
-        JSON.stringify({
-          instrumentId: row.id,
-          name: row.name,
-          model: row.model,
-          serialNo: row.serial_no,
-          calibrationDue: row.calibration_due,
-          branchId: row.branch_id,
-        }),
-      ],
-    );
-    remindedCount++;
+  for (const tenantId of tenantIds) {
+    remindedCount += await withTenant({ tenantId }, async (tx) => {
+      const due = await tx.query(
+        `SELECT li.id, li.name, li.model, li.serial_no, li.calibration_due_at, li.branch_id
+         FROM lab_instruments li
+         WHERE li.tenant_id = $1
+           AND li.is_active = true
+           AND li.calibration_due_at IS NOT NULL
+           AND li.calibration_due_at <= now() + INTERVAL '7 days'`,
+        [tenantId],
+      );
+
+      let count = 0;
+      for (const row of due.rows) {
+        await tx.query(
+          `INSERT INTO outbox (tenant_id, event_type, payload, dedup_key)
+           VALUES ($1, 'lab.instrument.calibration.due', $2, $3)
+           ON CONFLICT (tenant_id, event_type, dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING`,
+          [
+            tenantId,
+            JSON.stringify({
+              instrumentId: row.id,
+              name: row.name,
+              model: row.model,
+              serialNo: row.serial_no,
+              calibrationDue: row.calibration_due_at,
+              branchId: row.branch_id,
+            }),
+            `instrument-calibration:${row.id}:${row.calibration_due_at instanceof Date ? row.calibration_due_at.toISOString() : row.calibration_due_at}`,
+          ],
+        );
+        count++;
+      }
+      return count;
+    });
   }
 
   return { remindedCount };
@@ -481,32 +524,74 @@ export async function runLabInstrumentCalibrationRemind(): Promise<{ remindedCou
  * JOB-47: lab.interface.poll (P2)
  * Polls unparsed/pending instrument messages and reports errors or matches.
  */
-export async function runLabInterfacePoll(): Promise<{ processedCount: number; exceptionCount: number }> {
-  const pool = getAppPool();
-
-  // If there are unhandled outbox events or raw interface messages, process them
-  const pending = await pool.query(
-    `SELECT id, tenant_id, payload
-     FROM outbox
-     WHERE event_type = 'lab.interface.raw_message'
-       AND processed_at IS NULL
-     LIMIT 50`,
-  );
-
+export async function runLabInterfacePoll(targetTenantId?: string): Promise<{ processedCount: number; exceptionCount: number }> {
+  const tenantIds = targetTenantId ? [targetTenantId] : await activeTenantIds();
   let processedCount = 0;
   let exceptionCount = 0;
 
-  for (const row of pending.rows) {
-    try {
-      // Mark as processed
-      await pool.query(
-        `UPDATE outbox SET processed_at = now() WHERE id = $1`,
-        [row.id],
+  for (const tenantId of tenantIds) {
+    await withTenant({ tenantId }, async (tx) => {
+      // If there are unhandled outbox events or raw interface messages, process them
+      const pending = await tx.query(
+        `SELECT id, tenant_id, payload
+         FROM outbox
+         WHERE event_type = 'lab.interface.raw_message'
+           AND processed_at IS NULL
+         LIMIT 50`,
       );
-      processedCount++;
-    } catch {
-      exceptionCount++;
-    }
+
+      for (const row of pending.rows) {
+        let hasError = false;
+        let errorMessage = '';
+        
+        try {
+          // Simulate LIS message parsing
+          const payload = row.payload;
+          if (!payload || typeof payload !== 'object') {
+            throw new Error('Invalid payload format');
+          }
+          
+          if (payload.simulateError || payload.message === 'ERROR') {
+            throw new Error(payload.errorMessage || 'Simulated LIS interface exception');
+          }
+          
+          // Mark as processed
+          await tx.query(
+            `UPDATE outbox SET processed_at = now() WHERE id = $1`,
+            [row.id],
+          );
+          processedCount++;
+        } catch (err: any) {
+          hasError = true;
+          errorMessage = err.message || 'Unknown error';
+        }
+
+        if (hasError) {
+          // Surface exception by marking original as processed and emitting an exception event
+          // Using a nested sub-transaction to isolate the failure
+          await tx.query('SAVEPOINT interface_error');
+          try {
+            await tx.query(
+              `UPDATE outbox SET processed_at = now() WHERE id = $1`,
+              [row.id],
+            );
+            await tx.query(
+              `INSERT INTO outbox (tenant_id, aggregate_type, aggregate_id, event_type, payload)
+               VALUES ($1, 'lab_interface', $2, 'lab.interface.exception', $3)`,
+              [
+                row.tenant_id,
+                row.id,
+                { originalMessageId: row.id, originalPayload: row.payload, error: errorMessage }
+              ]
+            );
+            await tx.query('RELEASE SAVEPOINT interface_error');
+            exceptionCount++;
+          } catch {
+            await tx.query('ROLLBACK TO SAVEPOINT interface_error');
+          }
+        }
+      }
+    });
   }
 
   return { processedCount, exceptionCount };

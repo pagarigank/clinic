@@ -398,7 +398,7 @@ export const SYSTEM_ROLE_TEMPLATES: Readonly<Record<string, readonly string[]>> 
     "admin.template.read", "admin.template.create", "admin.template.update",
     "admin.settings.read", "admin.settings.update",
     "admin.apikey.read", "admin.apikey.create", "admin.apikey.update", "admin.apikey.delete",
-    "patient.record.create", "patient.record.read", "patient.record.update",
+    "patient.record.create", "patient.record.read", "patient.record.update", "patient.record.merge",
     "patient.document.read", "patient.document.create", "patient.document.delete",
     "clinical.schedule.read", "clinical.appointment.read",
     "clinical.visit.read", "clinical.vitals.read",

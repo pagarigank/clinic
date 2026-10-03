@@ -23,6 +23,7 @@ import {
   ApproveCreditNoteSchema, type ApproveCreditNoteRequest,
   CreateChargeSchema, type CreateChargeRequest,
   DailyCloseRunSchema, type DailyCloseRunRequest,
+  SaveCashSessionSchema, type SaveCashSessionRequest,
 } from '@clinic/contracts';
 
 @ApiTags('Billing')
@@ -34,7 +35,6 @@ export class BillingController {
   constructor(
     @Inject(BillingService) private readonly svc: BillingService,
   ) {}
-
   // ── 1. Invoices (BIL-T1) ───────────────────────────────────────────────────
 
   @RequirePermission('billing.invoice.read')
@@ -204,6 +204,23 @@ export class BillingController {
   async voidPayment(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: VoidPaymentRequest) {
     const parsed = VoidPaymentSchema.parse(body);
     return this.svc.voidPayment(req.tenantId!, req.authContext!.userId!, id, parsed);
+  }
+
+  // ── 3.5 Cash Sessions (POS State) ──────────────────────────────────────────
+
+  @RequirePermission('billing.payment.create')
+  @Get('sessions')
+  @ApiOperation({ summary: 'List active POS sessions for cashier' })
+  async listCashSessions(@Req() req: RequestWithAuth) {
+    return this.svc.listCashSessions(req.tenantId!, req.authContext!.userId!);
+  }
+
+  @RequirePermission('billing.payment.create')
+  @Post('sessions/:id')
+  @ApiOperation({ summary: 'Save or update POS session' })
+  async saveCashSession(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: SaveCashSessionRequest) {
+    const parsed = SaveCashSessionSchema.parse(body);
+    return this.svc.saveCashSession(req.tenantId!, req.authContext!.userId!, id, parsed);
   }
 
   // ── 4. Cashier Shifts (BIL-T5) ─────────────────────────────────────────────

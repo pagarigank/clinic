@@ -156,6 +156,8 @@ describe.skipIf(!hasDb)('Phase 2 Multi-Tenant Isolation (§49)', () => {
     const sA = await configService.createService(TENANT_A, USER_A, {
       code: `srv_${code}`,
       name: 'Tenant A Only Service',
+      category: 'consult',
+      defaultPrice: 0,
     });
     cleanupServiceIds.push(sA.id);
 

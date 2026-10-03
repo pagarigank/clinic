@@ -363,18 +363,18 @@ describe.skipIf(!hasDb)('ClinicalService (Phase 3)', () => {
       // Create a service in catalog for the procedure
       const ownerPool = createPool({ role: 'owner' });
       const srv = await ownerPool.query(
-        `INSERT INTO service_catalog (tenant_id, code, name, is_active)
-         VALUES ($1, 'PROC-001', 'Wound Debridement & Dressing', true) RETURNING id`,
+        `INSERT INTO service_catalog (tenant_id, code, name, category, default_price, is_active)
+         VALUES ($1, 'PROC-001', 'Wound Debridement & Dressing', 'procedure', 750, true)
+         ON CONFLICT (tenant_id, code) DO UPDATE SET default_price = EXCLUDED.default_price RETURNING id`,
         [TENANT_A],
       );
       const serviceId = srv.rows[0].id;
 
-      // Record procedure with unit price
+      // Record procedure — price is resolved server-side from the catalog.
       const proc = await clinicalSvc.recordProcedure(TENANT_A, DOCTOR_A, visit.id, {
         serviceId,
         performedBy: DOCTOR_A,
         notes: 'Dressing applied with sterile saline',
-        unitPrice: 750.0,
       });
       expect(proc.id).toBeDefined();
 
@@ -463,5 +463,54 @@ describe.skipIf(!hasDb)('ClinicalService (Phase 3)', () => {
       const listAfterVoid = await clinicalSvc.listImmunizations(TENANT_A, DOCTOR_A, patient.id);
       expect(listAfterVoid.data.length).toBe(0);
     });
+
+    it('renders real PDF bytes with SHA-256 integrity hash for visit prescription and orders', async () => {
+      const patient = await patientsSvc.createPatient(TENANT_A, USER_A, {
+        firstName: 'PrintPatient',
+        lastName: 'PdfTest',
+        dateOfBirth: '1990-05-20',
+        gender: 'M',
+      });
+      cleanupPatientIds.push(patient.id);
+
+      const visit = await clinicalSvc.openVisit(TENANT_A, USER_A, {
+        branchId: BRANCH_A,
+        patientId: patient.id,
+        practitionerId: DOCTOR_A,
+        visitType: 'OPD',
+        chiefComplaint: 'Annual Checkup',
+      });
+      cleanupVisitIds.push(visit.id);
+
+      await clinicalSvc.createPrescription(TENANT_A, DOCTOR_A, {
+        visitId: visit.id,
+        patientId: patient.id,
+        isControlled: false,
+        items: [
+          {
+            genericName: 'Paracetamol',
+            brandName: 'Biogesic',
+            strength: '500mg',
+            sigDose: '1 tablet',
+            sigFrequency: 'every 6 hours',
+            sigDuration: '3 days',
+            qtyPrescribed: 12,
+            dispenseAsWritten: false,
+          },
+        ],
+      });
+
+      const pdfDoc = await clinicalSvc.renderVisitPrescriptionPdf(TENANT_A, DOCTOR_A, visit.id);
+      expect(pdfDoc.mediaType).toBe('application/pdf');
+      expect(pdfDoc.bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+      expect(pdfDoc.sha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(pdfDoc.byteLength).toBeGreaterThan(1000);
+
+      const ordersPdf = await clinicalSvc.renderVisitOrdersPdf(TENANT_A, DOCTOR_A, visit.id);
+      expect(ordersPdf.mediaType).toBe('application/pdf');
+      expect(ordersPdf.bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+      expect(ordersPdf.sha256).toMatch(/^[a-f0-9]{64}$/);
+    });
   });
 });
+

@@ -4,7 +4,14 @@ import {
   renderCertificateHtml,
   renderLabReportHtml,
   renderReceiptHtml,
+  renderPrescriptionHtml,
+  renderLabRequisitionHtml,
+  renderEncounterOrdersHtml,
+  type PrescriptionDocument,
+  type LabRequisitionDocument,
 } from "../src/templates.js";
+
+
 
 /**
  * Template tests. No browser needed: these assert *which fields appear* in the
@@ -357,3 +364,145 @@ describe("renderReceiptHtml", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 });
+
+describe("renderPrescriptionHtml", () => {
+  const baseRx: PrescriptionDocument = {
+    clinicName: "Metro Health Medical Center",
+    rxNo: "RX-2026-0001",
+    issuedAt: "2026-10-04",
+    patientName: "Santos, Maria Elena",
+    patientAge: 38,
+    patientSex: "FEMALE",
+    prescriberName: "Dr. Roberto Mendoza, MD",
+    prcLicenseNo: "0123456",
+    ptrNo: "PTR-889900",
+    items: [
+      {
+        genericName: "Amoxicillin + Clavulanic Acid",
+        brandName: "Augmentin",
+        strength: "500 mg / 125 mg",
+        dosageForm: "Film-Coated Tablet",
+        quantity: "21",
+        sig: "Take 1 tablet every 8 hours with meals for 7 days",
+      },
+    ],
+  };
+
+  it("renders compliant Rx pad with uppercase generic name (RA 6675)", () => {
+    const html = renderPrescriptionHtml(baseRx);
+    expect(html).toContain("AMOXICILLIN + CLAVULANIC ACID");
+    expect(html).toContain("(Augmentin)");
+    expect(html).toContain("RX-2026-0001");
+    expect(html).toContain("Santos, Maria Elena");
+    expect(html).toContain("Dr. Roberto Mendoza, MD");
+    expect(html).toContain("PRC Lic. No.");
+    expect(html).toContain("0123456");
+    expect(html).toContain("Philippine Generics Act");
+    expect(html).toContain("No Known Drug Allergies (NKDA)");
+  });
+
+  it("renders allergy warning when patient allergies exist", () => {
+    const html = renderPrescriptionHtml({
+      ...baseRx,
+      allergies: [{ substance: "Penicillin", severity: "SEVERE" }],
+    });
+    expect(html).toContain("DRUG ALLERGY WARNING");
+    expect(html).toContain("Penicillin (SEVERE)");
+    expect(html).not.toContain("NKDA");
+  });
+
+  it("renders S2 Dangerous Drugs warning when item is controlled or s2SerialNo provided", () => {
+    const html = renderPrescriptionHtml({
+      ...baseRx,
+      s2LicenseNo: "S2-998877",
+      s2SerialNo: "PDEA-S2-2026-001",
+      s2QuantityInWords: "Twenty-one tablets",
+      items: [
+        {
+          ...baseRx.items[0]!,
+          isControlled: true,
+        },
+      ],
+    });
+    expect(html).toContain("DANGEROUS DRUGS BOARD / PDEA CONTROLLED SUBSTANCE");
+    expect(html).toContain("S2-998877");
+    expect(html).toContain("PDEA-S2-2026-001");
+    expect(html).toContain("Twenty-one tablets");
+  });
+});
+
+describe("renderLabRequisitionHtml", () => {
+  const baseReq: LabRequisitionDocument = {
+    clinicName: "Metro Health Clinical Lab",
+    orderNo: "LAB-2026-9001",
+    issuedAt: "2026-10-04",
+    priority: "STAT" as const,
+    patientName: "Dela Cruz, Juan",
+    orderingPhysician: "Dr. Roberto Mendoza",
+    clinicalImpression: "Acute Abdomen, r/o Appendicitis",
+    tests: [
+      {
+        testCode: "CBC",
+        testName: "Complete Blood Count w/ Diff",
+        specimenType: "Whole Blood",
+        collectionTube: "EDTA Purple Top",
+        fastingRequired: false,
+      },
+      {
+        testCode: "FBS",
+        testName: "Fasting Blood Sugar",
+        specimenType: "Serum",
+        collectionTube: "Gold SST",
+        fastingRequired: true,
+        fastingHours: 10,
+      },
+    ],
+  };
+
+  it("renders STAT requisition with clinical impression and specimen tubes", () => {
+    const html = renderLabRequisitionHtml(baseReq);
+    expect(html).toContain("STAT / IMMEDIATE");
+    expect(html).toContain("LAB-2026-9001");
+    expect(html).toContain("Complete Blood Count w/ Diff");
+    expect(html).toContain("EDTA Purple Top");
+    expect(html).toContain("Fasting Blood Sugar");
+    expect(html).toContain("Fasting Required:</strong> 10 hrs");
+    expect(html).toContain("Acute Abdomen, r/o Appendicitis");
+    expect(html).toContain("Phlebotomy &amp; Specimen Accessioning Section");
+  });
+});
+
+describe("renderEncounterOrdersHtml", () => {
+  it("renders combined consultation orders with medications and diagnostic requisitions", () => {
+    const html = renderEncounterOrdersHtml({
+      clinicName: "Metro Health Clinic",
+      visitNo: "VIS-2026-100",
+      issuedAt: "2026-10-04",
+      patientName: "Santos, Maria",
+      prescriberName: "Dr. Roberto Mendoza",
+      prescriptions: [
+        {
+          genericName: "Paracetamol",
+          strength: "500 mg",
+          quantity: 10,
+          sig: "1 tab q4h prn fever",
+        },
+      ],
+      labRequests: [
+        {
+          testCode: "URINE",
+          testName: "Urinalysis Routine",
+          specimenType: "Urine Cup",
+        },
+      ],
+      advice: "Drink plenty of water and rest.",
+    });
+
+    expect(html).toContain("CLINICAL CONSULTATION ORDERS &amp; MANAGEMENT PLAN");
+    expect(html).toContain("VIS-2026-100");
+    expect(html).toContain("Paracetamol");
+    expect(html).toContain("Urinalysis Routine");
+    expect(html).toContain("Drink plenty of water and rest.");
+  });
+});
+

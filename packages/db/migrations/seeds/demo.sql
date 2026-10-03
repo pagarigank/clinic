@@ -36,6 +36,7 @@ SELECT set_config('app.tenant_id', '11111111-1111-4111-8111-111111111111', true)
 DELETE FROM user_roles        WHERE tenant_id = '11111111-1111-4111-8111-111111111111';
 DELETE FROM role_permissions  WHERE tenant_id = '11111111-1111-4111-8111-111111111111';
 DELETE FROM user_branches     WHERE tenant_id = '11111111-1111-4111-8111-111111111111';
+DELETE FROM files             WHERE tenant_id = '11111111-1111-4111-8111-111111111111';
 DELETE FROM users             WHERE tenant_id = '11111111-1111-4111-8111-111111111111';
 DELETE FROM roles             WHERE tenant_id = '11111111-1111-4111-8111-111111111111';
 DELETE FROM branch_licences   WHERE tenant_id = '11111111-1111-4111-8111-111111111111';
@@ -66,8 +67,15 @@ INSERT INTO roles (id, tenant_id, code, name, is_system) VALUES
 INSERT INTO role_permissions (tenant_id, role_id, permission_id)
 SELECT t.tenant_id, rp.role_id::uuid, p.id
 FROM (VALUES
-  ('a2000000-0000-4000-8000-000000000001', 'admin.users.manage'),
-  ('a2000000-0000-4000-8000-000000000001', 'admin.roles.manage'),
+  ('a2000000-0000-4000-8000-000000000001', 'admin.user.read'),
+  ('a2000000-0000-4000-8000-000000000001', 'admin.user.create'),
+  ('a2000000-0000-4000-8000-000000000001', 'admin.user.update'),
+  ('a2000000-0000-4000-8000-000000000001', 'admin.user.deactivate'),
+  ('a2000000-0000-4000-8000-000000000001', 'admin.user.reset'),
+  ('a2000000-0000-4000-8000-000000000001', 'admin.role.read'),
+  ('a2000000-0000-4000-8000-000000000001', 'admin.role.create'),
+  ('a2000000-0000-4000-8000-000000000001', 'admin.role.update'),
+  ('a2000000-0000-4000-8000-000000000001', 'admin.role.delete'),
   ('a2000000-0000-4000-8000-000000000001', 'patients.read'),
   ('a2000000-0000-4000-8000-000000000001', 'patients.write'),
   ('a2000000-0000-4000-8000-000000000002', 'patients.read'),
@@ -103,6 +111,7 @@ SELECT set_config('app.tenant_id', '22222222-2222-4222-8222-222222222222', true)
 DELETE FROM user_roles        WHERE tenant_id = '22222222-2222-4222-8222-222222222222';
 DELETE FROM role_permissions  WHERE tenant_id = '22222222-2222-4222-8222-222222222222';
 DELETE FROM user_branches     WHERE tenant_id = '22222222-2222-4222-8222-222222222222';
+DELETE FROM files             WHERE tenant_id = '22222222-2222-4222-8222-222222222222';
 DELETE FROM users             WHERE tenant_id = '22222222-2222-4222-8222-222222222222';
 DELETE FROM roles             WHERE tenant_id = '22222222-2222-4222-8222-222222222222';
 DELETE FROM branch_licences   WHERE tenant_id = '22222222-2222-4222-8222-222222222222';
@@ -133,8 +142,15 @@ INSERT INTO roles (id, tenant_id, code, name, is_system) VALUES
 INSERT INTO role_permissions (tenant_id, role_id, permission_id)
 SELECT t.tenant_id, rp.role_id::uuid, p.id
 FROM (VALUES
-  ('b2000000-0000-4000-8000-000000000001', 'admin.users.manage'),
-  ('b2000000-0000-4000-8000-000000000001', 'admin.roles.manage'),
+  ('b2000000-0000-4000-8000-000000000001', 'admin.user.read'),
+  ('b2000000-0000-4000-8000-000000000001', 'admin.user.create'),
+  ('b2000000-0000-4000-8000-000000000001', 'admin.user.update'),
+  ('b2000000-0000-4000-8000-000000000001', 'admin.user.deactivate'),
+  ('b2000000-0000-4000-8000-000000000001', 'admin.user.reset'),
+  ('b2000000-0000-4000-8000-000000000001', 'admin.role.read'),
+  ('b2000000-0000-4000-8000-000000000001', 'admin.role.create'),
+  ('b2000000-0000-4000-8000-000000000001', 'admin.role.update'),
+  ('b2000000-0000-4000-8000-000000000001', 'admin.role.delete'),
   ('b2000000-0000-4000-8000-000000000001', 'patients.read'),
   ('b2000000-0000-4000-8000-000000000001', 'patients.write'),
   ('b2000000-0000-4000-8000-000000000002', 'patients.read'),

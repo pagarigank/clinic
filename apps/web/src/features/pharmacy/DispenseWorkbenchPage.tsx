@@ -1,720 +1,812 @@
-import React, { useState } from "react";
-import { Link } from "react-router";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router";
 import {
   Alert,
-  AlertBanner,
   Badge,
   Button,
+  EmptyState,
   Form,
   Modal,
   PatientBanner,
-  ScanInput,
+  SkeletonTable,
   StatusPill,
 } from "@clinic/ui";
-import { apiGet, apiPost } from "../../shared/api/client.js";
+import { ApiError } from "../../shared/api/client.js";
+import { pharmacyApi } from "./api.js";
+import type {
+  DispenseDetail,
+  PharmacyQueueRow,
+  PharmacyStockRow,
+  PrescriptionDetail,
+  StockLocation,
+} from "./api.js";
+import type { DispenseItemInput } from "@clinic/contracts";
 
-interface AvailableBatch {
-  id: string;
-  lotNo: string;
-  expiryDate: string;
-  qtyAvailable: number;
-  isFefoRecommended: boolean;
-}
-
-interface DispenseLineItem {
-  id: string;
+interface LineState {
+  prescriptionItemId: string;
   itemId: string;
-  drugName: string;
+  itemCode?: string;
+  itemName: string;
   genericName: string;
-  dosage: string;
   sig: string;
   prescribedQty: number;
-  dispenseQty: number;
-  uom: string;
-  unitPrice: number;
-  availableBatches: AvailableBatch[];
-  selectedBatchId: string;
-  batchOverrideReason?: string;
-  isSubstituted: boolean;
-  substitutionReason?: string;
-  isControlled: boolean;
+  qty: number;
+  controlled: boolean;
+  batches: PharmacyStockRow[];
+  batchId: string;
+  overrideReason?: string;
 }
 
-interface ControlledDrugDetails {
+interface ControlledDetails {
   specialRxSerial: string;
-  prescriberS2: string;
-  qtyInWords: string;
-  qtyInNumerals: number;
+  prescriberS2No: string;
+  qtyWords: string;
   witnessId: string;
-  witnessName: string;
-  witnessVerified: boolean;
 }
+
+function num(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function errText(e: unknown): string {
+  if (e instanceof ApiError) {
+    const base = e.problem.title || e.problem.code;
+    return e.problem.detail ? `${base} — ${e.problem.detail}` : base;
+  }
+  return e instanceof Error ? e.message : "Unexpected error";
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function batchesFor(
+  stock: PharmacyStockRow[],
+  itemId: string,
+  locationId: string,
+): PharmacyStockRow[] {
+  return stock
+    .filter(
+      (s) =>
+        s.item_id === itemId &&
+        s.batch_status === "AVAILABLE" &&
+        num(s.qty_on_hand) > 0 &&
+        (!locationId || s.location_id === locationId),
+    )
+    .sort((a, b) => String(a.expiry_date).localeCompare(String(b.expiry_date)));
+}
+
+/** Earliest-expiring batch with enough quantity, else the earliest available. */
+function fefoBatchId(batches: PharmacyStockRow[], qty: number): string {
+  const enough = batches.find((b) => num(b.qty_on_hand) >= qty);
+  return (enough ?? batches[0])?.batch_id ?? "";
+}
+
+function buildLines(
+  rx: PrescriptionDetail,
+  stock: PharmacyStockRow[],
+  locationId: string,
+): LineState[] {
+  return rx.items
+    .filter((it) => !!it.item_id)
+    .map((it) => {
+      const remaining = Math.max(0, num(it.qty_prescribed) - num(it.qty_dispensed));
+      const batches = batchesFor(stock, it.item_id as string, locationId);
+      return {
+        prescriptionItemId: it.id,
+        itemId: it.item_id as string,
+        itemCode: it.item_code ?? undefined,
+        itemName: it.item_name || it.brand_name || it.generic_name,
+        genericName: [it.generic_name, it.strength].filter(Boolean).join(" "),
+        sig: [it.sig_dose, it.sig_frequency, it.sig_duration].filter(Boolean).join(" · "),
+        prescribedQty: remaining,
+        qty: remaining,
+        controlled: !!it.controlled_schedule,
+        batches,
+        batchId: fefoBatchId(batches, remaining),
+      };
+    })
+    .filter((l) => l.prescribedQty > 0);
+}
+
+const SEXES = new Set(["MALE", "FEMALE", "OTHER"]);
 
 export function DispenseWorkbenchPage() {
-  const [activePrescriptionNumber, setActivePrescriptionNumber] = useState("RX-2026-00409");
-  const [patient] = useState({
-    name: "Lourdes Bautista",
-    hrn: "HRN-2026-0042",
-    birthDate: "1995-02-18",
-    sex: "FEMALE" as const,
-    allergies: ["None recorded"],
-  });
+  const { id: rxId } = useParams();
+  const navigate = useNavigate();
 
-  const [dispenseLines, setDispenseLines] = useState<DispenseLineItem[]>([
-    {
-      id: "line-1",
-      itemId: "item-pcm-500",
-      drugName: "Paracetamol 500mg Tablet",
-      genericName: "Paracetamol",
-      dosage: "500 mg",
-      sig: "Take 1 tablet every 4-6 hours PRN fever",
-      prescribedQty: 15,
-      dispenseQty: 15,
-      uom: "TAB",
-      unitPrice: 5.5,
-      selectedBatchId: "batch-pcm-1",
-      availableBatches: [
-        {
-          id: "batch-pcm-1",
-          lotNo: "LOT-PCM-2026A",
-          expiryDate: "2026-11-30",
-          qtyAvailable: 150,
-          isFefoRecommended: true,
-        },
-        {
-          id: "batch-pcm-2",
-          lotNo: "LOT-PCM-2027B",
-          expiryDate: "2027-05-31",
-          qtyAvailable: 400,
-          isFefoRecommended: false,
-        },
-      ],
-      isSubstituted: false,
-      isControlled: false,
-    },
-    {
-      id: "line-2",
-      itemId: "item-amox-500",
-      drugName: "Amoxicillin 500mg Capsule",
-      genericName: "Amoxicillin Trihydrate",
-      dosage: "500 mg",
-      sig: "Take 1 capsule 3 times a day for 7 days",
-      prescribedQty: 21,
-      dispenseQty: 21,
-      uom: "CAP",
-      unitPrice: 12.0,
-      selectedBatchId: "batch-amx-1",
-      availableBatches: [
-        {
-          id: "batch-amx-1",
-          lotNo: "LOT-AMX-2026C",
-          expiryDate: "2026-10-15",
-          qtyAvailable: 80,
-          isFefoRecommended: true,
-        },
-        {
-          id: "batch-amx-2",
-          lotNo: "LOT-AMX-2027A",
-          expiryDate: "2027-04-30",
-          qtyAvailable: 250,
-          isFefoRecommended: false,
-        },
-      ],
-      isSubstituted: false,
-      isControlled: false,
-    },
-  ]);
+  const [queue, setQueue] = useState<PharmacyQueueRow[]>([]);
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [queueError, setQueueError] = useState<string | null>(null);
+  const [queueFilter, setQueueFilter] = useState("");
 
-  const [isControlledRx, setIsControlledRx] = useState(false);
-  const [controlledDetails, setControlledDetails] = useState<ControlledDrugDetails>({
+  const [rx, setRx] = useState<PrescriptionDetail | null>(null);
+  const [stock, setStock] = useState<PharmacyStockRow[]>([]);
+  const [locations, setLocations] = useState<StockLocation[]>([]);
+  const [locationId, setLocationId] = useState("");
+  const [lines, setLines] = useState<LineState[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [draft, setDraft] = useState<DispenseDetail | null>(null);
+  const [posted, setPosted] = useState<DispenseDetail | null>(null);
+  const [busy, setBusy] = useState<"allocate" | "post" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const [controlled, setControlled] = useState<ControlledDetails>({
     specialRxSerial: "",
-    prescriberS2: "S2-NCR-2026-8812",
-    qtyInWords: "",
-    qtyInNumerals: 0,
+    prescriberS2No: "",
+    qtyWords: "",
     witnessId: "",
-    witnessName: "",
-    witnessVerified: false,
   });
+  const [isControlledOpen, setIsControlledOpen] = useState(false);
+  const [isLabelOpen, setIsLabelOpen] = useState(false);
 
-  const [isControlledModalOpen, setIsControlledModalOpen] = useState(false);
-  const [isLabelModalOpen, setIsLabelModalOpen] = useState(false);
-  const [isPosted, setIsPosted] = useState(false);
-  const [postedDispenseId, setPostedDispenseId] = useState<string | null>(null);
-  const [postError, setPostError] = useState<string | null>(null);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  // Witness users list for AC-7 co-signature
-  const witnessOptions = [
-    { id: "usr-phm-2", name: "Kristine Reyes, RPh (PRC 008912)" },
-    { id: "usr-nur-1", name: "Gabriel Mendoza, RN (PRC 004561)" },
-    { id: "usr-doc-2", name: "Dr. Roberto Santos, MD (PRC 0098412)" },
-  ];
-
-  const subtotal = dispenseLines.reduce((acc, l) => acc + l.dispenseQty * l.unitPrice, 0);
-
-  const toggleControlledDemo = () => {
-    const nextVal = !isControlledRx;
-    setIsControlledRx(nextVal);
-    if (nextVal) {
-      setDispenseLines([
-        {
-          id: "line-ctrl-1",
-          itemId: "item-morph-10",
-          drugName: "Morphine Sulfate 10mg/mL Ampoule",
-          genericName: "Morphine Sulfate",
-          dosage: "10 mg/mL",
-          sig: "Inject 1 ampoule SC for pain score > 7 PRN",
-          prescribedQty: 6,
-          dispenseQty: 6,
-          uom: "AMP",
-          unitPrice: 85.0,
-          selectedBatchId: "batch-mor-1",
-          availableBatches: [
-            {
-              id: "batch-mor-1",
-              lotNo: "LOT-MOR-2026A",
-              expiryDate: "2026-12-31",
-              qtyAvailable: 24,
-              isFefoRecommended: true,
-            },
-          ],
-          isSubstituted: false,
-          isControlled: true,
-        },
-      ]);
-      setControlledDetails((prev) => ({
-        ...prev,
-        qtyInNumerals: 6,
-        qtyInWords: "Six",
-        specialRxSerial: "PDEA-DDB-2026-00981",
-      }));
-    } else {
-      // revert to regular
-      setDispenseLines([
-        {
-          id: "line-1",
-          itemId: "item-pcm-500",
-          drugName: "Paracetamol 500mg Tablet",
-          genericName: "Paracetamol",
-          dosage: "500 mg",
-          sig: "Take 1 tablet every 4-6 hours PRN fever",
-          prescribedQty: 15,
-          dispenseQty: 15,
-          uom: "TAB",
-          unitPrice: 5.5,
-          selectedBatchId: "batch-pcm-1",
-          availableBatches: [
-            {
-              id: "batch-pcm-1",
-              lotNo: "LOT-PCM-2026A",
-              expiryDate: "2026-11-30",
-              qtyAvailable: 150,
-              isFefoRecommended: true,
-            },
-          ],
-          isSubstituted: false,
-          isControlled: false,
-        },
-      ]);
-    }
-  };
-
-  const handleBatchChange = (lineId: string, batchId: string) => {
-    setDispenseLines((prev) =>
-      prev.map((l) => {
-        if (l.id !== lineId) return l;
-        const b = l.availableBatches.find((item) => item.id === batchId);
-        const isNotFefo = b && !b.isFefoRecommended;
-        return {
-          ...l,
-          selectedBatchId: batchId,
-          batchOverrideReason: isNotFefo ? "Client or prescriber requested specific batch lot" : undefined,
-        };
+  // ── Load the ready-to-dispense queue when no Rx is selected ────────────────
+  useEffect(() => {
+    if (rxId) return;
+    let cancelled = false;
+    setQueueLoading(true);
+    setQueueError(null);
+    Promise.all([pharmacyApi.getQueue("VERIFIED"), pharmacyApi.getQueue("ISSUED")])
+      .then(([verified, issued]) => {
+        if (cancelled) return;
+        const merged = [...verified, ...issued].filter(
+          (row, idx, arr) => arr.findIndex((r) => r.id === row.id) === idx,
+        );
+        merged.sort((a, b) => String(a.issued_at ?? "").localeCompare(String(b.issued_at ?? "")));
+        setQueue(merged);
       })
-    );
-  };
+      .catch((e) => !cancelled && setQueueError(errText(e)))
+      .finally(() => !cancelled && setQueueLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [rxId]);
 
-  const handlePostDispense = async () => {
-    setPostError(null);
-
-    // If controlled drug, verify AC-7 checklist
-    if (isControlledRx) {
-      if (!controlledDetails.specialRxSerial.trim()) {
-        setPostError("AC-7 Requirement: PDEA Yellow Slip Serial number is required.");
-        setIsControlledModalOpen(true);
-        return;
-      }
-      if (!controlledDetails.qtyInWords.trim()) {
-        setPostError("AC-7 Requirement: Quantity in words is required.");
-        setIsControlledModalOpen(true);
-        return;
-      }
-      if (!controlledDetails.witnessId) {
-        setPostError("AC-7 Requirement: Second authorized user witness co-signature is required.");
-        setIsControlledModalOpen(true);
-        return;
-      }
+  // ── Load the selected prescription + pharmacy locations + stock ────────────
+  useEffect(() => {
+    if (!rxId) {
+      setRx(null);
+      setLines([]);
+      setDraft(null);
+      setPosted(null);
+      return;
     }
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+    setPosted(null);
+    setDraft(null);
+    setNotice(null);
+    setActionError(null);
+    Promise.all([pharmacyApi.getPrescription(rxId), pharmacyApi.listLocations(), pharmacyApi.getStock()])
+      .then(([rxData, locs, stockData]) => {
+        if (cancelled) return;
+        setRx(rxData);
+        setStock(stockData);
+        setLocations(locs);
+        const firstLoc = locs[0]?.id ?? "";
+        setLocationId(firstLoc);
+        setLines(buildLines(rxData, stockData, firstLoc));
+        setControlled((prev) => ({
+          ...prev,
+          specialRxSerial: "",
+          qtyWords: "",
+          witnessId: "",
+        }));
+      })
+      .catch((e) => !cancelled && setLoadError(errText(e)))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [rxId]);
 
-    try {
-      const payload = {
-        prescriptionId: "rx-demo-id",
-        branchId: "branch-main-1",
-        patientId: "pat-1",
-        isControlled: isControlledRx,
-        specialRxSerial: isControlledRx ? controlledDetails.specialRxSerial : undefined,
-        witnessId: isControlledRx ? controlledDetails.witnessId : undefined,
-        qtyWords: isControlledRx ? controlledDetails.qtyInWords : undefined,
-        lines: dispenseLines.map((l) => ({
+  const onLocationChange = useCallback(
+    (nextLoc: string) => {
+      setLocationId(nextLoc);
+      setLines((prev) =>
+        prev.map((l) => {
+          const batches = batchesFor(stock, l.itemId, nextLoc);
+          return { ...l, batches, batchId: fefoBatchId(batches, l.qty), overrideReason: undefined };
+        }),
+      );
+    },
+    [stock],
+  );
+
+  const controlledRx = useMemo(
+    () => !!rx?.is_controlled || lines.some((l) => l.controlled),
+    [rx, lines],
+  );
+
+  const selectedLocation = locations.find((l) => l.id === locationId);
+
+  const filteredQueue = useMemo(() => {
+    const q = queueFilter.trim().toLowerCase();
+    if (!q) return queue;
+    return queue.filter((row) => {
+      const hay = `${row.rx_no} ${row.patient_first_name} ${row.patient_last_name} ${row.hrn ?? ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [queue, queueFilter]);
+
+  const buildLineInputs = useCallback(
+    (): DispenseItemInput[] =>
+      lines
+        .filter((l) => l.qty > 0)
+        .map((l) => ({
+          prescriptionItemId: l.prescriptionItemId,
           itemId: l.itemId,
-          batchId: l.selectedBatchId,
-          qty: l.dispenseQty,
-          unitPrice: l.unitPrice,
-          isSubstituted: l.isSubstituted,
-          substitutionReason: l.substitutionReason,
-          batchOverrideReason: l.batchOverrideReason,
+          batchId: l.batchId || undefined,
+          qty: l.qty,
+          overrideReason: l.overrideReason,
         })),
-      };
+    [lines],
+  );
 
-      const res = await apiPost<{ id: string }>("/pharmacy/dispenses", payload);
-      const newId = res?.id || `disp-${Date.now().toString().slice(-6)}`;
-      setPostedDispenseId(newId);
-    } catch {
-      setPostedDispenseId(`disp-${Date.now().toString().slice(-6)}`);
+  const handleAllocate = useCallback(async () => {
+    if (!rx || !selectedLocation) return;
+    setActionError(null);
+    setNotice(null);
+    setBusy("allocate");
+    try {
+      let current = draft;
+      if (!current) {
+        current = await pharmacyApi.createDispense({
+          branchId: selectedLocation.branch_id,
+          patientId: rx.patient_id,
+          rxId: rx.id,
+          isControlled: controlledRx,
+          lines: buildLineInputs(),
+        });
+        setDraft(current);
+      }
+      const allocated = await pharmacyApi.allocateFefo(current.id, selectedLocation.id);
+      setDraft(allocated);
+      setLines((prev) =>
+        prev.map((l) => {
+          const allocatedLine = allocated.items.find(
+            (ai) => ai.prescription_item_id === l.prescriptionItemId,
+          );
+          return allocatedLine?.batch_id
+            ? { ...l, batchId: allocatedLine.batch_id }
+            : l;
+        }),
+      );
+      const unresolved = allocated.items.filter((ai) => !ai.batch_id).length;
+      setNotice(
+        unresolved > 0
+          ? `FEFO allocation ran, but ${unresolved} line(s) have insufficient stock in ${selectedLocation.name}.`
+          : `FEFO batches allocated from ${selectedLocation.name}. Review and post.`,
+      );
+    } catch (e) {
+      setActionError(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  }, [rx, selectedLocation, draft, controlledRx, buildLineInputs]);
+
+  const handlePost = useCallback(async () => {
+    if (!rx || !selectedLocation) return;
+    setActionError(null);
+    setNotice(null);
+
+    if (lines.length === 0 || lines.every((l) => l.qty <= 0)) {
+      setActionError("Add at least one line with a quantity greater than zero.");
+      return;
+    }
+    if (controlledRx) {
+      if (!controlled.specialRxSerial.trim()) {
+        setActionError("AC-7: the PDEA Yellow Slip serial number is required for controlled drugs.");
+        setIsControlledOpen(true);
+        return;
+      }
+      if (!controlled.qtyWords.trim()) {
+        setActionError("AC-7: the quantity in words is required for controlled drugs.");
+        setIsControlledOpen(true);
+        return;
+      }
+      if (!UUID_RE.test(controlled.witnessId.trim())) {
+        setActionError("AC-7: a valid witness user ID is required for co-signature.");
+        setIsControlledOpen(true);
+        return;
+      }
     }
 
-    setIsPosted(true);
-    setToastMessage("Dispense posted successfully! Inventory deducted via FEFO and ledger updated.");
-  };
+    setBusy("post");
+    try {
+      let current = draft;
+      if (!current) {
+        current = await pharmacyApi.createDispense({
+          branchId: selectedLocation.branch_id,
+          patientId: rx.patient_id,
+          rxId: rx.id,
+          isControlled: controlledRx,
+          lines: buildLineInputs(),
+        });
+        setDraft(current);
+      }
+      const result = await pharmacyApi.postDispense(current.id, {
+        locationId: selectedLocation.id,
+        counsellingDone: true,
+        lines: buildLineInputs(),
+        specialRxSerial: controlledRx ? controlled.specialRxSerial.trim() : undefined,
+        prescriberS2No: controlledRx ? controlled.prescriberS2No.trim() || undefined : undefined,
+        qtyWords: controlledRx ? controlled.qtyWords.trim() : undefined,
+        witnessId: controlledRx ? controlled.witnessId.trim() : undefined,
+      });
+      setPosted(result);
+      setDraft(result);
+      setNotice(`Dispense ${result.dispense_no} posted. Inventory and charges updated.`);
+    } catch (e) {
+      setActionError(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  }, [rx, selectedLocation, lines, controlledRx, controlled, draft, buildLineInputs]);
 
-  const handlePrintLabel = () => {
-    setIsLabelModalOpen(true);
-  };
+  const resetForNew = useCallback(() => {
+    pharmacyApi.getStock().then(setStock).catch(() => undefined);
+    setDraft(null);
+    setPosted(null);
+    setNotice(null);
+    setActionError(null);
+    if (rx) setLines(buildLines(rx, stock, locationId));
+  }, [rx, stock, locationId]);
 
-  return (
-    <div className="container-fluid py-4" style={{ maxWidth: 1440 }}>
-      {/* Header */}
-      <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
-        <div>
-          <nav aria-label="breadcrumb">
-            <ol className="breadcrumb mb-1 text-muted" style={{ fontSize: "0.85rem" }}>
-              <li className="breadcrumb-item"><Link to="/dashboard">Home</Link></li>
-              <li className="breadcrumb-item"><Link to="/pharmacy/queue">Pharmacy</Link></li>
-              <li className="breadcrumb-item active" aria-current="page">Dispense Workbench</li>
-            </ol>
-          </nav>
-          <h1 className="h3 fw-bold mb-1" style={{ color: "var(--brand-primary)" }}>
-            ⚖️ Pharmacy Dispense Workbench
-          </h1>
-          <p className="text-secondary mb-0" style={{ fontSize: "0.9rem" }}>
-            Deterministic FEFO allocation, batch substitution override, single-transaction atomic post.
-          </p>
+  // ── Queue picker (no Rx selected) ─────────────────────────────────────────
+  if (!rxId) {
+    return (
+      <div className="container-fluid py-4" style={{ maxWidth: 1200 }}>
+        <h1 className="h3 fw-bold mb-1" style={{ color: "var(--brand-primary)" }}>
+          Pharmacy Dispense Workbench
+        </h1>
+        <p className="text-secondary">
+          Select a verified prescription to begin FEFO batch allocation.
+        </p>
+
+        {queueError && <Alert variant="danger">{queueError}</Alert>}
+
+        <div className="card shadow-sm border-0" style={{ background: "var(--surface-raised)" }}>
+          <div className="card-body p-3">
+            <Form.Control
+              type="search"
+              placeholder="Search by Rx number, patient, or HRN…"
+              value={queueFilter}
+              onChange={(e) => setQueueFilter(e.target.value)}
+              aria-label="Search prescriptions"
+            />
+          </div>
+          {queueLoading ? (
+            <SkeletonTable rows={4} />
+          ) : filteredQueue.length === 0 ? (
+            <EmptyState
+              headline="No prescriptions awaiting dispensing"
+              explanation="Verified and issued prescriptions will appear here."
+            />
+          ) : (
+            <div className="table-responsive">
+              <table className="table table-hover align-middle mb-0">
+                <thead className="table-light">
+                  <tr style={{ fontSize: "0.78rem", textTransform: "uppercase" }}>
+                    <th>Rx No.</th>
+                    <th>Patient</th>
+                    <th>Items</th>
+                    <th>Status</th>
+                    <th className="text-end">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredQueue.map((row) => (
+                    <tr key={row.id}>
+                      <td className="font-monospace fw-bold text-primary">
+                        {row.rx_no}
+                        {row.is_controlled && (
+                          <div>
+                            <Badge bg="danger" style={{ fontSize: "0.66rem" }}>
+                              CONTROLLED
+                            </Badge>
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <div className="fw-semibold">
+                          {row.patient_first_name} {row.patient_last_name}
+                        </div>
+                        <div className="text-muted small font-monospace">{row.hrn}</div>
+                      </td>
+                      <td>{row.item_count}</td>
+                      <td>
+                        <StatusPill
+                          tone={row.status === "VERIFIED" ? "normal" : "pending"}
+                          label={row.status}
+                        />
+                      </td>
+                      <td className="text-end">
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          onClick={() => navigate(`/pharmacy/dispenses/${row.id}`)}
+                        >
+                          Dispense
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-
-        <div className="d-flex align-items-center gap-2">
-          <Button
-            variant={isControlledRx ? "danger" : "outline-danger"}
-            size="sm"
-            onClick={toggleControlledDemo}
-          >
-            {isControlledRx ? "✓ AC-7 Controlled Drug Mode (Active)" : "Switch to AC-7 Controlled Demo"}
-          </Button>
-          <Link to="/pharmacy/controlled-register">
+        <div className="mt-3">
+          <Link to="/pharmacy/queue">
             <Button variant="outline-secondary" size="sm">
-              Dangerous Drugs Book
+              ← Verification Queue
             </Button>
           </Link>
         </div>
       </div>
+    );
+  }
 
-      {toastMessage && (
-        <Alert variant="success" dismissible onClose={() => setToastMessage(null)} className="mb-4">
-          <div className="d-flex align-items-center gap-2">
-            <span>🎉</span>
-            <strong>{toastMessage}</strong>
-          </div>
+  // ── Workbench for the selected prescription ────────────────────────────────
+  const undispensable = rx?.items.filter((it) => !it.item_id) ?? [];
+
+  return (
+    <div className="container-fluid py-4" style={{ maxWidth: 1440 }}>
+      <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+        <div>
+          <nav aria-label="breadcrumb">
+            <ol className="breadcrumb mb-1 text-muted" style={{ fontSize: "0.85rem" }}>
+              <li className="breadcrumb-item">
+                <Link to="/pharmacy/queue">Pharmacy</Link>
+              </li>
+              <li className="breadcrumb-item">
+                <Link to="/pharmacy/dispenses">Dispense Workbench</Link>
+              </li>
+              <li className="breadcrumb-item active" aria-current="page">
+                {rx?.rx_no ?? "…"}
+              </li>
+            </ol>
+          </nav>
+          <h1 className="h3 fw-bold mb-0" style={{ color: "var(--brand-primary)" }}>
+            Dispense {rx?.rx_no ?? ""}
+          </h1>
+        </div>
+        <Link to="/pharmacy/dispenses">
+          <Button variant="outline-secondary" size="sm">
+            Change prescription
+          </Button>
+        </Link>
+      </div>
+
+      {loadError && <Alert variant="danger">{loadError}</Alert>}
+      {actionError && (
+        <Alert variant="danger" dismissible onClose={() => setActionError(null)}>
+          {actionError}
+        </Alert>
+      )}
+      {notice && (
+        <Alert
+          variant={posted ? "success" : "info"}
+          dismissible
+          onClose={() => setNotice(null)}
+        >
+          {notice}
         </Alert>
       )}
 
-      {postError && (
-        <Alert variant="danger" dismissible onClose={() => setPostError(null)} className="mb-4">
-          <div className="d-flex align-items-center gap-2">
-            <span>⚠️</span>
-            <strong>{postError}</strong>
-          </div>
-        </Alert>
-      )}
-
-      {/* Prescription Lookup Bar */}
-      <div className="card shadow-sm border-0 mb-4" style={{ background: "var(--surface-raised)", borderRadius: "var(--radius-md)" }}>
-        <div className="card-body p-3">
-          <div className="row g-3 align-items-center">
-            <div className="col-md-6">
-              <ScanInput
-                id="rxLookup"
-                label="Scan Rx Barcode or Enter Number"
-                value={activePrescriptionNumber}
-                onChange={setActivePrescriptionNumber}
-                onScan={(code) => setActivePrescriptionNumber(code)}
-                placeholder="Scan prescription barcode or type RX number…"
+      {loading ? (
+        <SkeletonTable rows={5} />
+      ) : rx ? (
+        <>
+          <div className="row g-3 mb-4">
+            <div className="col-lg-8">
+              <PatientBanner
+                patient={{
+                  id: rx.patient_id,
+                  name: `${rx.patient_first_name} ${rx.patient_last_name}`,
+                  dateOfBirth: rx.birth_date,
+                  sex: rx.patient_sex && SEXES.has(rx.patient_sex.toUpperCase()) ? rx.patient_sex.toUpperCase() : undefined,
+                  mrn: rx.hrn,
+                }}
+                allergiesCount={0}
               />
             </div>
-            <div className="col-md-3">
-              <div className="text-muted small">Status:</div>
-              <span className="badge bg-success-subtle text-success border border-success-subtle px-2 py-1">
-                ✓ VERIFIED BY PHARMACIST
-              </span>
-            </div>
-            <div className="col-md-3 text-md-end">
-              <Link to="/pharmacy/queue">
-                <Button variant="outline-primary" size="sm">
-                  ← Back to Verification Queue
-                </Button>
-              </Link>
+            <div className="col-lg-4">
+              <div className="card h-100 shadow-sm border-0" style={{ background: "var(--surface-raised)" }}>
+                <div className="card-body">
+                  <Form.Label htmlFor="dispenseLocation" className="fw-bold">
+                    Dispensing Location
+                  </Form.Label>
+                  <Form.Select
+                    id="dispenseLocation"
+                    value={locationId}
+                    onChange={(e) => onLocationChange(e.target.value)}
+                    disabled={!!posted || busy !== null}
+                  >
+                    {locations.length === 0 && <option value="">No pharmacy locations configured</option>}
+                    {locations.map((loc) => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.name} ({loc.type})
+                      </option>
+                    ))}
+                  </Form.Select>
+                  <div className="small text-muted mt-2">
+                    Prescriber: {rx.prescriber_name ?? "—"}
+                    {rx.visit_no ? ` · Visit ${rx.visit_no}` : ""}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* Patient Banner */}
-      <div className="mb-4">
-        <PatientBanner
-          patient={{
-            id: "pat-demo-1",
-            name: patient.name,
-            dateOfBirth: patient.birthDate,
-            sex: patient.sex,
-            mrn: patient.hrn,
-          }}
-          allergies={patient.allergies.filter((a) => a !== "None recorded").map((a) => ({ substance: a }))}
-          allergiesCount={patient.allergies.filter((a) => a !== "None recorded").length}
-        />
-      </div>
+          {undispensable.length > 0 && (
+            <Alert variant="warning">
+              {undispensable.length} prescribed line(s) have no linked pharmacy drug product and
+              cannot be dispensed here:{" "}
+              {undispensable.map((it) => it.generic_name).join(", ")}.
+            </Alert>
+          )}
 
-      {/* Controlled Drug Alert Banner if applicable */}
-      {isControlledRx && (
-        <div className="mb-4">
-          <AlertBanner
-            tone="danger"
-            title="AC-7 Controlled Substance Dispensing Flow Active"
-          >
-            Dangerous Drug Schedule II detected. Law mandates Yellow Prescription Slip validation, words &amp; numerals confirmation, running register record, and witness co-signature.
-          </AlertBanner>
-        </div>
-      )}
-
-      {/* Dispense Lines Workbench Card */}
-      <div className="card shadow-sm border-0 mb-4" style={{ background: "var(--surface-raised)", borderRadius: "var(--radius-md)" }}>
-        <div className="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
-          <h5 className="mb-0 fw-bold d-flex align-items-center gap-2">
-            <span>📦</span>
-            <span>Prescribed Lines &amp; Batch Allocation</span>
-          </h5>
-          <span className="text-muted small">
-            Batch suggested by <strong>FEFO (First-Expiring, First-Out)</strong>
-          </span>
-        </div>
-
-        <div className="table-responsive">
-          <table className="table table-hover align-middle mb-0">
-            <thead className="table-light">
-              <tr style={{ fontSize: "0.78rem", textTransform: "uppercase" }}>
-                <th>Item Description</th>
-                <th>Directions (Sig)</th>
-                <th>Prescribed</th>
-                <th>Dispense Qty</th>
-                <th>FEFO Batch Allocation</th>
-                <th>Price / Line</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dispenseLines.map((line) => {
-                const selectedBatch = line.availableBatches.find((b) => b.id === line.selectedBatchId);
-                const isShortfall = (selectedBatch?.qtyAvailable ?? 0) < line.dispenseQty;
-
-                return (
-                  <tr key={line.id}>
-                    <td style={{ minWidth: 240 }}>
-                      <div className="fw-bold">{line.drugName}</div>
-                      <div className="text-muted small">{line.genericName} — {line.dosage}</div>
-                      {line.isControlled && (
-                        <Badge bg="danger" className="mt-1" style={{ fontSize: "0.68rem" }}>
-                          SCHEDULE II CONTROLLED
-                        </Badge>
-                      )}
-                    </td>
-                    <td style={{ maxWidth: 220 }} className="small text-secondary">
-                      {line.sig}
-                    </td>
-                    <td>
-                      <span className="fw-semibold">{line.prescribedQty}</span> {line.uom}
-                    </td>
-                    <td style={{ width: 140 }}>
-                      <Form.Control
-                        type="number"
-                        min={1}
-                        max={line.prescribedQty}
-                        value={line.dispenseQty}
-                        disabled={isPosted}
-                        onChange={(e) => {
-                          const val = Number(e.target.value);
-                          setDispenseLines((prev) =>
-                            prev.map((item) => (item.id === line.id ? { ...item, dispenseQty: val } : item))
-                          );
-                        }}
-                      />
-                      {isShortfall && (
-                        <span className="text-danger small fw-semibold">
-                          ⚠️ Shortfall! Only {selectedBatch?.qtyAvailable} available
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ minWidth: 260 }}>
-                      <Form.Select
-                        value={line.selectedBatchId}
-                        disabled={isPosted}
-                        onChange={(e) => handleBatchChange(line.id, e.target.value)}
-                        className="mb-1"
-                        style={{ fontSize: "0.85rem" }}
-                      >
-                        {line.availableBatches.map((batch) => (
-                          <option key={batch.id} value={batch.id}>
-                            Lot: {batch.lotNo} · Exp: {batch.expiryDate} (Avail: {batch.qtyAvailable} {line.uom})
-                            {batch.isFefoRecommended ? " ★ FEFO Primary" : ""}
-                          </option>
-                        ))}
-                      </Form.Select>
-                      {selectedBatch?.isFefoRecommended ? (
-                        <span className="badge bg-success-subtle text-success border border-success-subtle" style={{ fontSize: "0.7rem" }}>
-                          ✓ FEFO Earliest Expiry Matched
-                        </span>
-                      ) : (
-                        <span className="badge bg-warning-subtle text-warning border border-warning-subtle" style={{ fontSize: "0.7rem" }}>
-                          Override: Non-earliest batch selected
-                        </span>
-                      )}
-                    </td>
-                    <td className="fw-bold">
-                      ₱{(line.dispenseQty * line.unitPrice).toFixed(2)}
-                      <div className="text-muted small fw-normal">₱{line.unitPrice.toFixed(2)} / {line.uom}</div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="card-footer bg-light p-3 d-flex flex-wrap justify-content-between align-items-center gap-3">
-          <div className="d-flex align-items-center gap-3">
-            <div>
-              <span className="text-muted small">Total Dispense Amount:</span>
-              <h4 className="fw-bold text-primary mb-0">₱{subtotal.toFixed(2)}</h4>
+          <div className="card shadow-sm border-0 mb-4" style={{ background: "var(--surface-raised)" }}>
+            <div className="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+              <h2 className="h5 mb-0 fw-bold">Prescribed Lines &amp; FEFO Allocation</h2>
+              <span className="text-muted small">Batch suggested by earliest expiry</span>
             </div>
-            {isControlledRx && (
-              <Button
-                variant={controlledDetails.witnessVerified ? "success" : "warning"}
-                size="sm"
-                onClick={() => setIsControlledModalOpen(true)}
-                className="d-inline-flex align-items-center gap-1"
-              >
-                <span>{controlledDetails.witnessVerified ? "✓" : "📝"}</span>
-                <span>
-                  {controlledDetails.witnessVerified ? "AC-7 Witness Verified" : "Complete AC-7 Requirements"}
-                </span>
-              </Button>
-            )}
-          </div>
-
-          <div className="d-flex align-items-center gap-2">
-            {isPosted ? (
-              <>
-                <Button
-                  variant="outline-primary"
-                  onClick={handlePrintLabel}
-                  className="d-inline-flex align-items-center gap-1"
-                >
-                  <span>🖨️</span>
-                  <span>Print Rx Labels</span>
-                </Button>
-                <span className="badge bg-success p-2">✓ POSTED ({postedDispenseId})</span>
-              </>
+            {lines.length === 0 ? (
+              <EmptyState
+                headline="Nothing left to dispense"
+                explanation="All prescribed quantities have already been dispensed."
+              />
             ) : (
-              <Button
-                variant="primary"
-                size="lg"
-                onClick={handlePostDispense}
-                className="d-inline-flex align-items-center gap-2 px-4 shadow-sm"
-              >
-                <span>🚀</span>
-                <span>Post Dispense &amp; Deduct Stock</span>
-              </Button>
+              <div className="table-responsive">
+                <table className="table table-hover align-middle mb-0">
+                  <thead className="table-light">
+                    <tr style={{ fontSize: "0.78rem", textTransform: "uppercase" }}>
+                      <th>Item</th>
+                      <th>Directions</th>
+                      <th>Prescribed</th>
+                      <th style={{ width: 130 }}>Dispense Qty</th>
+                      <th style={{ minWidth: 280 }}>Batch</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lines.map((line) => {
+                      const sel = line.batches.find((b) => b.batch_id === line.batchId);
+                      const short = !sel || num(sel.qty_on_hand) < line.qty;
+                      return (
+                        <tr key={line.prescriptionItemId}>
+                          <td style={{ minWidth: 220 }}>
+                            <div className="fw-bold">{line.itemName}</div>
+                            <div className="text-muted small">{line.genericName}</div>
+                            {line.controlled && (
+                              <Badge bg="danger" className="mt-1" style={{ fontSize: "0.66rem" }}>
+                                CONTROLLED
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="small text-secondary" style={{ maxWidth: 220 }}>
+                            {line.sig}
+                          </td>
+                          <td className="fw-semibold">{line.prescribedQty}</td>
+                          <td>
+                            <Form.Control
+                              type="number"
+                              min={0}
+                              max={line.prescribedQty}
+                              value={line.qty}
+                              disabled={!!posted}
+                              onChange={(e) =>
+                                setLines((prev) =>
+                                  prev.map((l) =>
+                                    l.prescriptionItemId === line.prescriptionItemId
+                                      ? { ...l, qty: Number(e.target.value) }
+                                      : l,
+                                  ),
+                                )
+                              }
+                            />
+                          </td>
+                          <td>
+                            {line.batches.length === 0 ? (
+                              <span className="text-danger small fw-semibold">
+                                No available stock at this location
+                              </span>
+                            ) : (
+                              <>
+                                <Form.Select
+                                  size="sm"
+                                  value={line.batchId}
+                                  disabled={!!posted}
+                                  onChange={(e) => {
+                                    const batchId = e.target.value;
+                                    const isFefo = batchId === fefoBatchId(line.batches, line.qty);
+                                    setLines((prev) =>
+                                      prev.map((l) =>
+                                        l.prescriptionItemId === line.prescriptionItemId
+                                          ? {
+                                              ...l,
+                                              batchId,
+                                              overrideReason: isFefo
+                                                ? undefined
+                                                : "Non-FEFO batch selected by operator",
+                                            }
+                                          : l,
+                                      ),
+                                    );
+                                  }}
+                                >
+                                  {line.batches.map((b) => (
+                                    <option key={b.batch_id} value={b.batch_id}>
+                                      Lot {b.batch_no} · Exp {String(b.expiry_date).slice(0, 10)} (Avail{" "}
+                                      {num(b.qty_on_hand)})
+                                    </option>
+                                  ))}
+                                </Form.Select>
+                                {short ? (
+                                  <span className="text-danger small fw-semibold">
+                                    Insufficient quantity in selected batch
+                                  </span>
+                                ) : (
+                                  <span className="badge bg-success-subtle text-success border border-success-subtle mt-1">
+                                    ✓ FEFO earliest expiry
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
-          </div>
-        </div>
-      </div>
 
-      {/* Controlled Substance Verification Modal (AC-7) */}
-      <Modal show={isControlledModalOpen} onHide={() => setIsControlledModalOpen(false)} centered size="lg">
+            <div className="card-footer bg-light p-3 d-flex flex-wrap justify-content-between align-items-center gap-3">
+              <div className="small text-muted">
+                Line charges are computed and posted by the server from item price rules.
+              </div>
+              <div className="d-flex align-items-center gap-2">
+                {posted ? (
+                  <>
+                    <Button variant="outline-primary" onClick={() => setIsLabelOpen(true)}>
+                      Print Rx Labels
+                    </Button>
+                    <Button variant="outline-secondary" onClick={resetForNew}>
+                      New dispense
+                    </Button>
+                    <Badge bg="success" className="p-2">
+                      POSTED · {posted.dispense_no}
+                    </Badge>
+                  </>
+                ) : (
+                  <>
+                    {controlledRx && (
+                      <Button variant="outline-danger" onClick={() => setIsControlledOpen(true)}>
+                        AC-7 Requirements
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline-primary"
+                      onClick={handleAllocate}
+                      disabled={busy !== null || !selectedLocation || lines.length === 0}
+                    >
+                      {busy === "allocate" ? "Allocating…" : "Allocate FEFO"}
+                    </Button>
+                    <Button
+                      variant="primary"
+                      onClick={handlePost}
+                      disabled={busy !== null || !selectedLocation || lines.length === 0}
+                    >
+                      {busy === "post" ? "Posting…" : "Post Dispense"}
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {controlledRx && (
+            <Alert variant="danger">
+              <strong>AC-7:</strong> {rx.is_controlled ? "This prescription is flagged controlled." : "One or more lines are controlled drugs."}{" "}
+              Complete the Yellow Slip, quantity-in-words, and witness co-signature before posting.
+            </Alert>
+          )}
+        </>
+      ) : null}
+
+      {/* AC-7 Controlled Dispense Modal */}
+      <Modal show={isControlledOpen} onHide={() => setIsControlledOpen(false)} centered size="lg">
         <Modal.Header closeButton className="bg-danger text-white">
-          <Modal.Title className="h5 fw-bold d-flex align-items-center gap-2">
-            <span>🛡️</span>
-            <span>AC-7 Dangerous Drug Dispense Protocol (PDEA / DOH)</span>
-          </Modal.Title>
+          <Modal.Title className="h5 fw-bold">AC-7 Dangerous Drug Dispense Protocol</Modal.Title>
         </Modal.Header>
-        <Modal.Body className="p-4">
-          <Alert variant="warning" className="mb-4">
-            <strong>Mandatory Segregation of Duties:</strong> In accordance with Republic Act 9165 and AC-7,
-            dangerous drugs must have a verified Special Prescription Yellow Slip, numerals and words matching,
-            and a distinct second authorized witness.
-          </Alert>
-
-          <div className="row g-3 mb-3">
-            <div className="col-md-6">
-              <Form.Group controlId="specialRxSerial">
-                <Form.Label className="fw-bold">PDEA Special Rx Yellow Slip Serial No.</Form.Label>
-                <Form.Control
-                  type="text"
-                  placeholder="e.g. PDEA-DDB-2026-00981"
-                  value={controlledDetails.specialRxSerial}
-                  onChange={(e) => setControlledDetails((prev) => ({ ...prev, specialRxSerial: e.target.value }))}
-                />
-              </Form.Group>
-            </div>
-            <div className="col-md-6">
-              <Form.Group controlId="prescriberS2">
-                <Form.Label className="fw-bold">Prescriber S2 License Number</Form.Label>
-                <Form.Control
-                  type="text"
-                  value={controlledDetails.prescriberS2}
-                  onChange={(e) => setControlledDetails((prev) => ({ ...prev, prescriberS2: e.target.value }))}
-                />
-              </Form.Group>
-            </div>
-          </div>
-
-          <div className="row g-3 mb-3">
-            <div className="col-md-6">
-              <Form.Group controlId="qtyInNumerals">
-                <Form.Label className="fw-bold">Quantity in Numerals</Form.Label>
-                <Form.Control
-                  type="number"
-                  value={controlledDetails.qtyInNumerals}
-                  onChange={(e) => setControlledDetails((prev) => ({ ...prev, qtyInNumerals: Number(e.target.value) }))}
-                />
-              </Form.Group>
-            </div>
-            <div className="col-md-6">
-              <Form.Group controlId="qtyInWords">
-                <Form.Label className="fw-bold">Quantity in Words (Exact Match Required)</Form.Label>
-                <Form.Control
-                  type="text"
-                  placeholder="e.g. Six (6) ampoules only"
-                  value={controlledDetails.qtyInWords}
-                  onChange={(e) => setControlledDetails((prev) => ({ ...prev, qtyInWords: e.target.value }))}
-                />
-              </Form.Group>
-            </div>
-          </div>
-
-          <div className="p-3 bg-light rounded border mb-3">
-            <h6 className="fw-bold mb-2">Second Authorized Witness Co-Signature</h6>
-            <p className="text-muted small mb-2">
-              Select an authorized clinical colleague to witness and co-sign this dangerous drug transaction.
-            </p>
-            <Form.Group controlId="witnessUser" className="mb-2">
-              <Form.Label className="small fw-semibold">Witness User</Form.Label>
-              <Form.Select
-                value={controlledDetails.witnessId}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  const item = witnessOptions.find((w) => w.id === id);
-                  setControlledDetails((prev) => ({
-                    ...prev,
-                    witnessId: id,
-                    witnessName: item?.name || "",
-                  }));
-                }}
-              >
-                <option value="">Select Witness...</option>
-                {witnessOptions.map((opt) => (
-                  <option key={opt.id} value={opt.id}>
-                    {opt.name}
-                  </option>
-                ))}
-              </Form.Select>
-            </Form.Group>
-          </div>
+        <Modal.Body>
+          <Form.Group className="mb-3" controlId="specialRxSerial">
+            <Form.Label className="fw-bold">PDEA Special Rx Yellow Slip Serial No.</Form.Label>
+            <Form.Control
+              value={controlled.specialRxSerial}
+              onChange={(e) => setControlled((p) => ({ ...p, specialRxSerial: e.target.value }))}
+            />
+          </Form.Group>
+          <Form.Group className="mb-3" controlId="prescriberS2No">
+            <Form.Label className="fw-bold">Prescriber S2 License Number</Form.Label>
+            <Form.Control
+              value={controlled.prescriberS2No}
+              onChange={(e) => setControlled((p) => ({ ...p, prescriberS2No: e.target.value }))}
+            />
+          </Form.Group>
+          <Form.Group className="mb-3" controlId="qtyWords">
+            <Form.Label className="fw-bold">Quantity in Words</Form.Label>
+            <Form.Control
+              placeholder="e.g. Six (6) ampoules only"
+              value={controlled.qtyWords}
+              onChange={(e) => setControlled((p) => ({ ...p, qtyWords: e.target.value }))}
+            />
+          </Form.Group>
+          <Form.Group className="mb-3" controlId="witnessId">
+            <Form.Label className="fw-bold">Witness User ID (co-signer)</Form.Label>
+            <Form.Control
+              placeholder="UUID of the second authorized user"
+              value={controlled.witnessId}
+              onChange={(e) => setControlled((p) => ({ ...p, witnessId: e.target.value }))}
+            />
+            <Form.Text className="text-muted">
+              A distinct authorized user must witness and co-sign the transaction.
+            </Form.Text>
+          </Form.Group>
         </Modal.Body>
         <Modal.Footer>
-          <Button variant="secondary" onClick={() => setIsControlledModalOpen(false)}>
+          <Button variant="secondary" onClick={() => setIsControlledOpen(false)}>
             Close
           </Button>
           <Button
             variant="danger"
-            disabled={!controlledDetails.specialRxSerial || !controlledDetails.qtyInWords || !controlledDetails.witnessId}
-            onClick={() => {
-              setControlledDetails((prev) => ({ ...prev, witnessVerified: true }));
-              setIsControlledModalOpen(false);
-            }}
+            disabled={
+              !controlled.specialRxSerial.trim() ||
+              !controlled.qtyWords.trim() ||
+              !UUID_RE.test(controlled.witnessId.trim())
+            }
+            onClick={() => setIsControlledOpen(false)}
           >
-            ✓ Verify &amp; Attest AC-7 Record
+            Attest AC-7 Record
           </Button>
         </Modal.Footer>
       </Modal>
 
-      {/* Prescription Label Print Modal */}
-      <Modal show={isLabelModalOpen} onHide={() => setIsLabelModalOpen(false)} centered size="lg">
+      {/* Rx Label Preview */}
+      <Modal show={isLabelOpen} onHide={() => setIsLabelOpen(false)} centered size="lg">
         <Modal.Header closeButton>
-          <Modal.Title className="h6 fw-bold">Rx Label Preview (Philippine FDA / DOH Standard)</Modal.Title>
+          <Modal.Title className="h6 fw-bold">Rx Label Preview</Modal.Title>
         </Modal.Header>
         <Modal.Body className="p-4 bg-light">
-          {dispenseLines.map((line) => (
+          {(posted?.items ?? []).map((item) => (
             <div
-              key={line.id}
+              key={item.id}
               className="bg-white p-3 border rounded shadow-sm mb-3 font-monospace"
               style={{ fontSize: "0.85rem", borderLeft: "4px solid var(--brand-primary)" }}
             >
-              <div className="text-center pb-2 border-bottom mb-2">
-                <div className="fw-bold" style={{ fontSize: "0.95rem" }}>METROPOLIS CLINIC &amp; PHARMACY</div>
-                <div className="text-muted" style={{ fontSize: "0.72rem" }}>
-                  123 Medical Drive, Quezon City · Tel: (02) 8888-1234
+              <div className="fw-bold text-uppercase">{item.item_name}</div>
+              <div className="mt-2">
+                Qty Dispensed: {num(item.qty)} {item.uom_code}
+              </div>
+              {item.batch_no && (
+                <div className="small text-muted">
+                  Lot {item.batch_no} · Exp {String(item.expiry_date ?? "").slice(0, 10)}
                 </div>
-              </div>
-              <div className="d-flex justify-content-between mb-1">
-                <span>Rx: <strong>{activePrescriptionNumber}</strong></span>
-                <span>Date: {new Date().toLocaleDateString()}</span>
-              </div>
-              <div className="mb-2">
-                Patient: <strong>{patient.name}</strong> ({patient.hrn})
-              </div>
-              <div className="py-2 border-top border-bottom my-2">
-                <div className="fw-bold text-uppercase" style={{ fontSize: "0.95rem" }}>
-                  {line.drugName}
-                </div>
-                <div className="text-muted" style={{ fontSize: "0.75rem" }}>{line.genericName}</div>
-                <div className="mt-2 fw-semibold" style={{ fontSize: "0.9rem" }}>
-                  SIG: {line.sig}
-                </div>
-                <div className="mt-1 small">Qty Dispensed: {line.dispenseQty} {line.uom}</div>
-              </div>
-              <div className="small text-danger fw-bold mb-2">
-                ⚠️ CAUTION: Take exactly as directed. Finish all medication unless instructed otherwise.
-              </div>
-              <div className="d-flex justify-content-between text-muted" style={{ fontSize: "0.72rem" }}>
-                <span>Prescriber: Dr. Roberto Santos, MD</span>
-                <span>Dispensed By: Maria Santos, RPh</span>
-              </div>
+              )}
             </div>
           ))}
         </Modal.Body>
         <Modal.Footer>
-          <Button variant="secondary" onClick={() => setIsLabelModalOpen(false)}>
+          <Button variant="secondary" onClick={() => setIsLabelOpen(false)}>
             Close
           </Button>
-          <Button variant="primary" onClick={() => window.print()} className="d-inline-flex align-items-center gap-1">
-            <span>🖨️</span>
-            <span>Print to Label Printer</span>
+          <Button variant="primary" onClick={() => window.print()}>
+            Print
           </Button>
         </Modal.Footer>
       </Modal>

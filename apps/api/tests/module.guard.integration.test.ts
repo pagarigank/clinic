@@ -122,7 +122,7 @@ describe.skipIf(!dbUp)("ModuleGuard against the real DB (todo 1.6)", () => {
   });
 
   it("refuses a module with no entitlement row", async () => {
-    expect(await codeOf(guard.canActivate(ctxFor("laboratory", TENANT_A)))).toBe(
+    expect(await codeOf(guard.canActivate(ctxFor("compliance", TENANT_A)))).toBe(
       "MODULE_NOT_ENTITLED",
     );
   });

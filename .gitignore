@@ -12,3 +12,5 @@ pgdata/
 # scratch dev notes
 clinic.txt
 *.local.txt
+scratch/
+.playwright-mcp/

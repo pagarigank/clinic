@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router";
 import { AuthProvider } from "../src/shared/auth/AuthContext.js";
 import { DuplicateReviewPage } from "../src/features/patients/DuplicateReviewPage.js";
 import { PatientsPage } from "../src/features/patients/PatientsPage.js";
+import { useStubHandler } from "./setup.js";
 
 /**
  * JOB-22 duplicate candidates review (todo §2.2) and the registration live
@@ -50,6 +51,50 @@ describe("Duplicate candidates review (todo §2.2, JOB-22)", () => {
 
     expect(await screen.findByText(/marked distinct\./i)).toBeInTheDocument();
     expect(screen.getAllByText("ACKNOWLEDGED").length).toBeGreaterThan(0);
+  });
+
+  it("renders the live worklist from GET /patients/duplicates", async () => {
+    useStubHandler((req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      if (req.url?.includes("/patients/duplicates")) {
+        res.end(
+          JSON.stringify({
+            candidates: [
+              {
+                id: "live-1",
+                patientId: "a3000000-0000-4000-8000-000000000001",
+                otherId: "a3000000-0000-4000-8000-000000000002",
+                patientName: "Live, Alpha",
+                otherName: "Live, Beta",
+                patientNo: "",
+                otherNo: "MRN-9",
+                matchType: "TRIGRAM",
+                score: 0.77,
+                status: "OPEN",
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      res.end(JSON.stringify({}));
+    });
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <DuplicateReviewPage />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Live, Alpha")).toBeInTheDocument();
+    expect(screen.getByText("Live, Beta")).toBeInTheDocument();
+    expect(screen.getByText("0.77")).toBeInTheDocument();
+    // A candidate with no MRN renders the placeholder, not a blank cell.
+    expect(screen.getByText("—")).toBeInTheDocument();
+    // Live results replace the demo set entirely.
+    expect(screen.queryByText("Santos, Maria Elena")).not.toBeInTheDocument();
   });
 });
 

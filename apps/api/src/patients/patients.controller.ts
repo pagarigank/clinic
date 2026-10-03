@@ -36,7 +36,6 @@ export class PatientsController {
   constructor(
     @Inject(PatientsService) private readonly patientsService: PatientsService,
   ) {}
-
   // ── Core patient CRUD ──────────────────────────────────────────────────────
 
   @RequirePermission('patient.record.read')
@@ -48,6 +47,13 @@ export class PatientsController {
     @Query('cursor') cursor?: string,
   ) {
     return this.patientsService.listPatients(req.tenantId!, req.authContext!.userId!, q, cursor);
+  }
+
+  @RequirePermission('patient.record.merge')
+  @Get('duplicates')
+  @ApiOperation({ summary: 'JOB-22: list tenant-wide duplicate candidate pairs for merge review' })
+  async listDuplicateCandidates(@Req() req: RequestWithAuth) {
+    return this.patientsService.listDuplicateCandidates(req.tenantId!, req.authContext!.userId!);
   }
 
   @RequirePermission('patient.record.read')

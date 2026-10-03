@@ -21,7 +21,6 @@ export class TemplatesController {
   constructor(
     @Inject(TemplatesService) private readonly svc: TemplatesService,
   ) {}
-
   @RequirePermission('admin.template.read')
   @Get()
   @ApiOperation({ summary: 'List templates with version history' })

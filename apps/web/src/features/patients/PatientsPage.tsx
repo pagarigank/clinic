@@ -81,6 +81,7 @@ export function PatientsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { rememberPatient } = useSearchContext();
   const [patients, setPatients] = useState<PatientRecord[]>(INITIAL_PATIENTS);
+  const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<PatientRecord | null>(null);
@@ -110,43 +111,52 @@ export function PatientsPage() {
   const [duplicateAcknowledged, setDuplicateAcknowledged] = useState(false);
 
   useEffect(() => {
-    async function fetchPatients() {
+    let active = true;
+    const timer = setTimeout(async () => {
+      setLoading(true);
       try {
-        const res = await apiGet<{ data?: any[]; patients?: any[] }>("/patients");
+        const query = search.trim() ? `?q=${encodeURIComponent(search.trim())}` : "";
+        const res = await apiGet<{ data?: any[]; patients?: any[] }>(`/patients${query}`);
         const list = res?.data || res?.patients;
-        if (Array.isArray(list) && list.length > 0) {
-          const mapped: PatientRecord[] = list.map((item: any, idx: number) => ({
-            id: item.id || `p-${idx}`,
-            patientNo: item.patientNo || item.patient_no || `PAT-2026-${String(idx + 1).padStart(4, "0")}`,
-            firstName: item.firstName || item.first_name || item.name?.split(", ")[1] || "Patient",
-            lastName: item.lastName || item.last_name || item.name?.split(", ")[0] || "Record",
-            dob: item.dob || item.birth_date || "1990-01-01",
-            gender: item.gender || "F",
-            phone: item.phone || "N/A",
-            email: item.email,
-            philhealthNo: item.philhealthNo || item.philhealth_no,
-            status: item.status || "ACTIVE",
-            konsultaStatus: item.konsultaStatus || "REGISTERED",
-          }));
+        if (active && Array.isArray(list)) {
+          const mapped: PatientRecord[] = list.map((item: any, idx: number) => {
+            const rawDob = item.dob || item.date_of_birth || item.birth_date;
+            const formattedDob: string =
+              (rawDob
+                ? typeof rawDob === "string"
+                  ? rawDob.split("T")[0] || "1990-01-01"
+                  : new Date(rawDob).toISOString().split("T")[0] || "1990-01-01"
+                : "1990-01-01") || "1990-01-01";
+            return {
+              id: item.id || `p-${idx}`,
+              patientNo: item.patientNo || item.patient_no || `PAT-2026-${String(idx + 1).padStart(4, "0")}`,
+              firstName: item.firstName || item.first_name || item.name?.split(", ")[1] || "Patient",
+              lastName: item.lastName || item.last_name || item.name?.split(", ")[0] || "Record",
+              dob: formattedDob,
+              gender: item.gender || "F",
+              phone: item.phone || "N/A",
+              email: item.email,
+              philhealthNo: item.philhealthNo || item.philhealth_no,
+              status: item.status || "ACTIVE",
+              konsultaStatus: item.konsultaStatus || item.konsulta_status || "NOT_ENROLLED",
+            };
+          });
           setPatients(mapped);
         }
       } catch {
-        // Fall back to INITIAL_PATIENTS
+        if (active) setPatients([]);
+      } finally {
+        if (active) setLoading(false);
       }
-    }
-    fetchPatients();
-  }, []);
+    }, 200);
 
-  const filtered = patients.filter((p) => {
-    const fullName = `${p.lastName}, ${p.firstName}`.toLowerCase();
-    const query = search.toLowerCase();
-    return (
-      fullName.includes(query) ||
-      p.patientNo.toLowerCase().includes(query) ||
-      p.phone.includes(query) ||
-      (p.philhealthNo && p.philhealthNo.includes(query))
-    );
-  });
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [search]);
+
+  const filtered = patients;
 
   // ── Deep link support (todo §2.3): /patients?focus=<id> opens the chart.
   // The URL carries the id only — never a name (frontend §20) — and opening a
@@ -426,71 +436,86 @@ export function PatientsPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((p) => {
-                const birthYear = parseInt(p.dob.split("-")[0] || "1990", 10);
-                const age = 2026 - birthYear;
-                return (
-                  <tr key={p.id}>
-                    <td>
-                      <span className="badge bg-light text-dark border font-monospace">
-                        {p.patientNo}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="fw-semibold text-dark">
-                        {p.lastName}, {p.firstName}
-                      </div>
-                      {p.isEmergency && (
-                        <span className="badge bg-warning text-dark me-1" style={{ fontSize: "0.68rem" }}>
-                          EMERGENCY INTAKE
+              {loading ? (
+                <tr>
+                  <td colSpan={8} className="text-center text-muted py-4">
+                    <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />
+                    Loading patients…
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="text-center text-muted py-4">
+                    No patient records found.
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((p) => {
+                  const birthYear = parseInt(p.dob.split("-")[0] || "1990", 10);
+                  const age = 2026 - birthYear;
+                  return (
+                    <tr key={p.id}>
+                      <td>
+                        <span className="badge bg-light text-dark border font-monospace">
+                          {p.patientNo}
                         </span>
-                      )}
-                      {p.allergies && p.allergies.length > 0 && (
-                        <span className="badge bg-danger-subtle text-danger border border-danger-subtle" style={{ fontSize: "0.68rem" }}>
-                          ⚠️ ALLERGIES
-                        </span>
-                      )}
-                    </td>
-                    <td className="small text-secondary">
-                      {p.dob} ({age}y)
-                    </td>
-                    <td>
-                      <span className="badge bg-light text-dark border">{p.gender}</span>
-                    </td>
-                    <td className="small text-secondary">{p.phone}</td>
-                    <td>
-                      {p.konsultaStatus === "REGISTERED" ? (
-                        <span className="badge bg-success-subtle text-success border border-success-subtle">
-                          ✓ PhilHealth Verified
-                        </span>
-                      ) : p.konsultaStatus === "PENDING" ? (
-                        <span className="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
-                          Konsulta Pending
-                        </span>
-                      ) : (
-                        <span className="badge bg-light text-muted border">Self-Pay</span>
-                      )}
-                    </td>
-                    <td>
-                      <StatusPill tone="normal" label={p.status} />
-                    </td>
-                    <td className="text-end">
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-primary"
-                        onClick={() => {
-                          setSelectedPatient(p);
-                          // Recents power the command palette; memory only — no
-                          // PHI in storage (frontend §9).
-                          rememberPatient({ id: p.id, name: `${p.lastName}, ${p.firstName}`, patientNo: p.patientNo });
-                        }}
-                      >
-                        Open Chart
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
+                      </td>
+                      <td>
+                        <div className="fw-semibold text-dark">
+                          {p.lastName}, {p.firstName}
+                        </div>
+                        {p.isEmergency && (
+                          <span className="badge bg-warning text-dark me-1" style={{ fontSize: "0.68rem" }}>
+                            EMERGENCY INTAKE
+                          </span>
+                        )}
+                        {p.allergies && p.allergies.length > 0 && (
+                          <span className="badge bg-danger-subtle text-danger border border-danger-subtle" style={{ fontSize: "0.68rem" }}>
+                            ⚠️ ALLERGIES
+                          </span>
+                        )}
+                      </td>
+                      <td className="small text-secondary">
+                        {p.dob} ({age}y)
+                      </td>
+                      <td>
+                        <span className="badge bg-light text-dark border">{p.gender}</span>
+                      </td>
+                      <td className="small text-secondary">{p.phone}</td>
+                      <td>
+                        {p.konsultaStatus === "REGISTERED" ? (
+                          <span className="badge bg-success-subtle text-success border border-success-subtle">
+                            ✓ PhilHealth Verified
+                          </span>
+                        ) : p.konsultaStatus === "PENDING" ? (
+                          <span className="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
+                            Konsulta Pending
+                          </span>
+                        ) : (
+                          <span className="badge bg-light text-muted border">Self-Pay</span>
+                        )}
+                      </td>
+                      <td>
+                        <StatusPill tone="normal" label={p.status} />
+                      </td>
+                      <td className="text-end">
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-primary"
+                          onClick={() => {
+                            setSelectedPatient(p);
+                            // Recents power the command palette; memory only — no
+                            // PHI in storage (frontend §9).
+                            rememberPatient({ id: p.id, name: `${p.lastName}, ${p.firstName}`, patientNo: p.patientNo });
+                          }}
+                        >
+                          Open Chart
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>

@@ -31,7 +31,6 @@ export class ProvisioningController {
   constructor(
     @Inject(ProvisioningService) private readonly provisioning: ProvisioningService,
   ) {}
-
   @Get()
   @ApiOperation({ summary: 'List all tenants (platform console)' })
   @ApiQuery({ name: 'limit', required: false })

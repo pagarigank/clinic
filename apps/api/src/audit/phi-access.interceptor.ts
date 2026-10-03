@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Inject,
   type CallHandler,
   type ExecutionContext,
   type NestInterceptor,
@@ -17,9 +18,12 @@ import { PHI_ACCESS_KEY, type PhiAccessOptions } from "./phi-access.decorator.js
  */
 @Injectable()
 export class PhiAccessInterceptor implements NestInterceptor {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(@Inject(Reflector) private readonly reflector: Reflector) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    if (!this.reflector) {
+      return next.handle();
+    }
     const options = this.reflector.get<PhiAccessOptions>(
       PHI_ACCESS_KEY,
       context.getHandler()

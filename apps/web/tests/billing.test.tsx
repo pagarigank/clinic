@@ -225,7 +225,7 @@ describe("Phase 7 Enhancements: SOA, POS Hold/Resume, Shift X/Z Reports", () => 
   it("opens Statement of Account (SOA) modal with aging schedule from BillingWorkbenchPage", async () => {
     renderWithProviders(<BillingWorkbenchPage />);
 
-    const soaBtn = await screen.findByRole("button", { name: /Patient Statement \(SOA\)/i });
+    const soaBtn = (await screen.findAllByRole("button", { name: "SOA" }))[0]!;
     fireEvent.click(soaBtn);
 
     expect(await screen.findByRole("dialog")).toBeInTheDocument();

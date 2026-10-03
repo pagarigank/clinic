@@ -9,7 +9,7 @@
  * Run nightly by the audit.partition.maintain schedule.
  */
 import { createHash } from 'node:crypto';
-import { getAppPool } from '@clinic/db';
+import { getAppPool, withTenant } from '@clinic/db';
 
 export interface AuditRow {
   id: string;
@@ -50,15 +50,17 @@ export async function verifyAuditChain(
   since: Date,
   until: Date,
 ): Promise<{ verified: number; broken: boolean; firstBrokenId?: string }> {
-  const pool = getAppPool();
-
-  const rows = await pool.query<AuditRow>(
-    `SELECT id, tenant_id, created_at::text, prev_hash, row_hash,
-            action, entity_type, entity_id, actor_id
-     FROM audit_log
-     WHERE tenant_id = $1 AND created_at >= $2 AND created_at < $3
-     ORDER BY created_at ASC, id ASC`,
-    [tenantId, since, until],
+  // audit_log is FORCE RLS and the app role is NOBYPASSRLS, so the tenant GUC
+  // must be set or this read returns zero rows — a silent false "chain OK".
+  const rows = await withTenant({ tenantId }, (tx) =>
+    tx.query<AuditRow>(
+      `SELECT id, tenant_id, created_at::text, prev_hash, row_hash,
+              action, entity_type, entity_id, actor_id
+       FROM audit_log
+       WHERE tenant_id = $1 AND created_at >= $2 AND created_at < $3
+       ORDER BY created_at ASC, id ASC`,
+      [tenantId, since, until],
+    ),
   );
 
   let verified = 0;
@@ -91,8 +93,9 @@ export async function handleAuditChainVerify(): Promise<void> {
   const until = new Date();
   const since = new Date(until.getTime() - 24 * 3600 * 1000);
 
+  // `tenants` is FORCE RLS too; the directory is the un-RLS'd enumeration table.
   const tenantRows = await pool.query<{ id: string }>(
-    `SELECT id FROM tenants WHERE status NOT IN ('OFFBOARDED')`,
+    `SELECT id FROM tenant_directory WHERE status = 'ACTIVE'`,
   );
 
   for (const { id: tenantId } of tenantRows.rows) {
@@ -102,19 +105,24 @@ export async function handleAuditChainVerify(): Promise<void> {
         console.error(
           `SECURITY-EVENT: audit chain broken for tenant ${tenantId}, first broken row: ${result.firstBrokenId}`,
         );
-        // Write a security event
-        await pool.query(
-          `INSERT INTO outbox (tenant_id, event_type, payload)
-           VALUES ($1, 'audit.chain.broken', $2)`,
-          [
-            tenantId,
-            JSON.stringify({
+        // Outbox is FORCE RLS; write the security event inside the tenant scope.
+        // Dedup per broken row so repeated nightly runs do not spam subscribers.
+        await withTenant({ tenantId }, (tx) =>
+          tx.query(
+            `INSERT INTO outbox (tenant_id, event_type, payload, dedup_key)
+             VALUES ($1, 'audit.chain.broken', $2, $3)
+             ON CONFLICT (tenant_id, event_type, dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING`,
+            [
               tenantId,
-              since: since.toISOString(),
-              until: until.toISOString(),
-              firstBrokenId: result.firstBrokenId,
-            }),
-          ],
+              JSON.stringify({
+                tenantId,
+                since: since.toISOString(),
+                until: until.toISOString(),
+                firstBrokenId: result.firstBrokenId,
+              }),
+              `audit-chain-broken:${result.firstBrokenId}`,
+            ],
+          ),
         );
       } else {
         console.log(`JOB-10: audit chain OK for tenant ${tenantId}: ${result.verified} rows verified`);

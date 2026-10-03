@@ -32,7 +32,6 @@ export class PlatformModulesController {
   constructor(
     @Inject(TenantModulesService) private readonly modulesService: TenantModulesService,
   ) {}
-
   @Get()
   @ApiOperation({ summary: 'List tenant modules for platform', description: 'Platform-facing view of a tenant\'s modules.' })
   async listModules(@Param('tenantId') tenantId: string) {

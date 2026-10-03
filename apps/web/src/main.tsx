@@ -30,6 +30,7 @@ import { StockExplorerPage } from "./features/supply/StockExplorerPage.js";
 import { GrnWizardPage } from "./features/supply/GrnWizardPage.js";
 import { RequisitionsPage } from "./features/supply/RequisitionsPage.js";
 import { ItemMasterPage } from "./features/supply/ItemMasterPage.js";
+import { SupplyIssueWorkbenchPage } from "./features/supply/SupplyIssueWorkbenchPage.js";
 import { PharmacyQueuePage } from "./features/pharmacy/PharmacyQueuePage.js";
 import { DispenseWorkbenchPage } from "./features/pharmacy/DispenseWorkbenchPage.js";
 import { ControlledRegisterPage } from "./features/pharmacy/ControlledRegisterPage.js";
@@ -115,6 +116,7 @@ const router = createBrowserRouter([
           { path: "grn", element: <GrnWizardPage /> },
           { path: "requisitions", element: <RequisitionsPage /> },
           { path: "items", element: <ItemMasterPage /> },
+          { path: "issue", element: <SupplyIssueWorkbenchPage /> },
         ],
       },
       {

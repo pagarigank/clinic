@@ -40,7 +40,6 @@ export class BranchesController {
   constructor(
     @Inject(BranchesService) private readonly branches: BranchesService,
   ) {}
-
   @RequirePermission('admin.branch.read')
   @Get()
   @ApiOperation({ summary: 'List branches' })

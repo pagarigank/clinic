@@ -330,4 +330,46 @@ body {
   .clinic-print-expand {
     display: revert !important;
   }
+
+  /* Printable consultation order & prescription modal print overrides */
+  .clinic-rx-print-modal-backdrop {
+    position: static !important;
+    display: block !important;
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+  }
+
+  .clinic-rx-print-modal-backdrop .modal-dialog {
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    transform: none !important;
+  }
+
+  .clinic-rx-print-modal-backdrop .modal-content {
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+  }
+
+  .clinic-rx-print-modal-backdrop .modal-body {
+    padding: 0 !important;
+    background: #ffffff !important;
+    overflow: visible !important;
+  }
+
+  .clinic-printable-surface {
+    box-shadow: none !important;
+    border: 1px solid #000000 !important;
+    max-width: 100% !important;
+    min-height: auto !important;
+    padding: 24px !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
 }

@@ -309,6 +309,50 @@ describe.skipIf(!hasDb)('JOB-43 lab.report.render', () => {
     }
   });
 
+  it('retains the superseded version\'s artifact unaltered when an amended version is rendered', async () => {
+    // 1. Create v1
+    const v1ReportId = await seedReport();
+    await runLabReportRender(TENANT);
+    const v1 = await readReport(v1ReportId);
+    expect(v1.file_id).toBeTruthy();
+
+    // 2. Create v2 (Amended)
+    const owner = createPool({ role: 'owner' });
+    let v2ReportId: string;
+    try {
+      const v2Res = await owner.query<{ id: string }>(
+        `INSERT INTO lab_reports (
+           tenant_id, order_id, version, status, report_data, issued_by
+         )
+         SELECT tenant_id, order_id, version + 1, 'CORRECTED', report_data, issued_by
+         FROM lab_reports WHERE id = $1
+         RETURNING id`,
+        [v1ReportId]
+      );
+      v2ReportId = v2Res.rows[0]!.id;
+      createdReports.push(v2ReportId);
+    } finally {
+      await owner.end();
+    }
+
+    // 3. Render v2
+    await runLabReportRender(TENANT);
+    
+    // 4. Read both and compare
+    const v1After = await readReport(v1ReportId);
+    const v2 = await readReport(v2ReportId);
+    
+    // V1 artifact is completely untouched
+    expect(v1After.file_id).toBe(v1.file_id);
+    expect(v1After.sha256_hash).toBe(v1.sha256_hash);
+    
+    // V2 has its own distinct artifact
+    expect(v2.file_id).toBeTruthy();
+    expect(v2.file_id).not.toBe(v1.file_id);
+    expect(v2.sha256_hash).toBeTruthy();
+    expect(v2.sha256_hash).not.toBe(v1.sha256_hash);
+  });
+
   it('leaves other tenants reports and artifacts untouched', async () => {
     const otherTenant = await seedReport(OTHER_TENANT);
 
@@ -340,5 +384,65 @@ describe.skipIf(!hasDb)('JOB-43 lab.report.render', () => {
     );
     expect(after.rows[0]!.n).toBe(before.rows[0]!.n);
     expect(afterFiles.rows[0]!.n).toBe(beforeFiles.rows[0]!.n);
+  });
+});
+
+describe.skipIf(!hasDb)('JOB-47 lab.interface.poll', () => {
+  afterAll(async () => {
+    const owner = createPool({ role: 'owner' });
+    try {
+      await owner.query(`DELETE FROM outbox WHERE event_type IN ('lab.interface.raw_message', 'lab.interface.exception')`);
+    } finally {
+      await owner.end();
+    }
+  });
+
+  it('processes simulator messages and surfaces exceptions into the outbox', async () => {
+    const owner = createPool({ role: 'owner' });
+    try {
+      // Insert a normal message
+      await owner.query(
+        `INSERT INTO outbox (tenant_id, aggregate_type, aggregate_id, event_type, payload)
+         VALUES ($1, 'lab_interface', 'sim1', 'lab.interface.raw_message', $2)`,
+        [TENANT, { message: 'OK', data: 'success' }]
+      );
+
+      // Insert an error message
+      await owner.query(
+        `INSERT INTO outbox (tenant_id, aggregate_type, aggregate_id, event_type, payload)
+         VALUES ($1, 'lab_interface', 'sim2', 'lab.interface.raw_message', $2)`,
+        [TENANT, { simulateError: true, errorMessage: 'HL7 parsing error: unexpected segment' }]
+      );
+    } finally {
+      await owner.end();
+    }
+
+    const { runLabInterfacePoll } = await import('../src/handlers/lab-jobs.handler.js');
+    const result = await runLabInterfacePoll();
+
+    expect(result.processedCount).toBe(1);
+    expect(result.exceptionCount).toBe(1);
+
+    const owner2 = createPool({ role: 'owner' });
+    try {
+      // Check that the exception was surfaced
+      const exceptions = await owner2.query(
+        `SELECT payload FROM outbox WHERE tenant_id = $1 AND event_type = 'lab.interface.exception'`,
+        [TENANT]
+      );
+      expect(exceptions.rowCount).toBe(1);
+      expect(exceptions.rows[0].payload.error).toBe('HL7 parsing error: unexpected segment');
+
+      // Check that the raw messages were marked as processed
+      const raw = await owner2.query(
+        `SELECT processed_at FROM outbox WHERE tenant_id = $1 AND event_type = 'lab.interface.raw_message'`,
+        [TENANT]
+      );
+      expect(raw.rowCount).toBe(2);
+      expect(raw.rows[0].processed_at).toBeTruthy();
+      expect(raw.rows[1].processed_at).toBeTruthy();
+    } finally {
+      await owner2.end();
+    }
   });
 });

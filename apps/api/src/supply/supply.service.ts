@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { withTenant, getAppPool } from '@clinic/db';
 import { ProblemException } from '../http/problem.exception.js';
+import { resolveServicePrice } from '../common/pricing.js';
 import type {
   CreateItemCategoryRequest,
   CreateUomRequest,
@@ -683,6 +684,9 @@ export class SupplyService {
     txClient?: any,
   ) {
     const client = txClient ?? (await getAppPool());
+    // FOR UPDATE serializes concurrent FEFO allocations on the same
+    // item/location (AC-6): without the row lock two transactions can both
+    // read the same qty_on_hand and allocate stock that no longer exists.
     const res = await client.query(
       `SELECT b.batch_id, b.qty_on_hand, sb.lot_no, sb.expiry_date, sb.unit_cost
        FROM stock_balances b
@@ -693,7 +697,8 @@ export class SupplyService {
          AND sb.status = 'AVAILABLE'
          AND (b.hold_until IS NULL OR b.hold_until < now())
          AND b.qty_on_hand > 0
-       ORDER BY sb.expiry_date ASC, sb.received_at ASC`,
+       ORDER BY sb.expiry_date ASC, sb.received_at ASC
+       FOR UPDATE OF b`,
       [tenantId, locationId, itemId],
     );
 
@@ -748,6 +753,24 @@ export class SupplyService {
         batchesToPost = fefo.map(f => ({ batchId: f.batchId, qty: f.qty, unitCost: f.unitCost }));
       }
 
+      // For a patient-visit issue, capture a SUPPLY charge per consumption line
+      // against the visit's invoice (BIL-T1). Price is resolved server-side
+      // from the item's catalog service (todo §49).
+      let billable: { serviceId: string | null; name: string; branchId: string | null } | null = null;
+      if (dto.refType === 'VISIT' && dto.refId) {
+        const itemRes = await tx.query(
+          `SELECT i.name, i.service_id, l.branch_id
+             FROM items i
+             JOIN stock_locations l ON l.tenant_id = i.tenant_id AND l.id = $3
+            WHERE i.tenant_id = $1 AND i.id = $2`,
+          [tenantId, dto.itemId, dto.locationId],
+        );
+        const row = itemRes.rows[0];
+        if (row) {
+          billable = { serviceId: row.service_id ?? null, name: row.name, branchId: row.branch_id ?? null };
+        }
+      }
+
       for (const b of batchesToPost) {
         await this.postMovement(
           tenantId,
@@ -769,16 +792,32 @@ export class SupplyService {
         );
 
         // Record in consumption_logs
-        await tx.query(
+        const logRes = await tx.query(
           `INSERT INTO consumption_logs (
              tenant_id, location_id, item_id, batch_id, qty, uom_id, ref_type, ref_id, notes, logged_by
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           RETURNING id`,
           [
             tenantId, dto.locationId, dto.itemId, b.batchId, b.qty,
             dto.uomId, dto.refType, dto.refId ?? null, dto.notes ?? null, userId,
           ],
         );
+
+        if (billable && billable.branchId) {
+          const unitPrice = billable.serviceId ? await resolveServicePrice(tx, tenantId, billable.serviceId) : 0;
+          const amount = Number((b.qty * unitPrice).toFixed(2));
+          await tx.query(
+            `INSERT INTO billing_charges
+               (tenant_id, branch_id, visit_id, charge_type, source_type, source_id, service_id, description, quantity, unit_price, amount, payer_type, posted_by)
+             VALUES ($1, $2, $3, 'SUPPLY', 'consumption', $4, $5, $6, $7, $8, $9, 'PRIVATE_CASH', $10)
+             ON CONFLICT (tenant_id, source_type, source_id) DO NOTHING`,
+            [
+              tenantId, billable.branchId, dto.refId, logRes.rows[0].id,
+              billable.serviceId, billable.name, b.qty, unitPrice, amount, userId,
+            ],
+          );
+        }
       }
 
       return { status: 'POSTED', allocatedCount: batchesToPost.length };
@@ -1833,6 +1872,19 @@ export class SupplyService {
         [tenantId, id],
       );
 
+      let totalAbsValue = 0;
+      for (const line of itemsRes.rows) {
+        const delta = Number(line.qty_delta);
+        totalAbsValue += Math.abs(delta) * Number(line.unit_cost);
+      }
+      
+      const MAX_ADJUSTMENT_VALUE = 50000;
+      if (totalAbsValue > MAX_ADJUSTMENT_VALUE) {
+        throw new ProblemException('VALIDATION_FAILED', {
+          detail: `Adjustment total value (${totalAbsValue.toFixed(2)}) exceeds maximum allowed threshold of ${MAX_ADJUSTMENT_VALUE}. Requires manual director override.`,
+        });
+      }
+
       for (const line of itemsRes.rows) {
         const delta = Number(line.qty_delta);
         const movementType = delta > 0 ? 'ADJ_GAIN' : 'ADJ_LOSS';
@@ -1995,13 +2047,14 @@ export class SupplyService {
       const dRes = await tx.query(
         `INSERT INTO disposals (
            tenant_id, branch_id, disposal_no, location_id, reason, method,
-           witness1_id, witness2_id, status, disposed_by
+           witness1_id, witness2_id, certificate_url, photo_url, status, disposed_by
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'DRAFT', $9)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'DRAFT', $11)
          RETURNING *`,
         [
           tenantId, dto.branchId, disposalNo, dto.locationId, dto.reason,
-          dto.method, dto.witness1Id ?? null, dto.witness2Id ?? null, userId,
+          dto.method, dto.witness1Id ?? null, dto.witness2Id ?? null,
+          dto.certificateUrl ?? null, dto.photoUrl ?? null, userId,
         ],
       );
       const disposal = dRes.rows[0];

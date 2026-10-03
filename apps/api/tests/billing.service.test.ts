@@ -38,6 +38,7 @@ describe.skipIf(!hasDb)('BillingService (Phase 7)', () => {
   const cleanupShiftIds: string[] = [];
   const cleanupPatientIds: string[] = [];
   const cleanupVisitIds: string[] = [];
+  const cleanupServiceIds: string[] = [];
 
   beforeEach(() => {
     svc = new BillingService();
@@ -66,6 +67,9 @@ describe.skipIf(!hasDb)('BillingService (Phase 7)', () => {
       await ownerPool.query(`DELETE FROM patient_philhealth WHERE patient_id = ANY($1)`, [cleanupPatientIds]);
       await ownerPool.query(`DELETE FROM patients WHERE id = ANY($1)`, [cleanupPatientIds]);
     }
+    if (cleanupServiceIds.length > 0) {
+      await ownerPool.query(`DELETE FROM service_catalog WHERE id = ANY($1)`, [cleanupServiceIds]);
+    }
   });
 
   // Helper to create test patient and visit
@@ -92,7 +96,7 @@ describe.skipIf(!hasDb)('BillingService (Phase 7)', () => {
       `INSERT INTO visits (tenant_id, branch_id, visit_no, patient_id, practitioner_id, visit_type, status, opened_at, created_by)
        VALUES ($1, $2, $3, $4, $5, 'WALK_IN', 'IN_PROGRESS', now(), $6)
        RETURNING id`,
-      [tenantId, branchId, visitNo, patientId, DOCTOR_A, USER_A],
+      [tenantId, branchId, visitNo, patientId, tenantId === TENANT_B ? USER_B : DOCTOR_A, tenantId === TENANT_B ? USER_B : USER_A],
     );
     const visitId = vRes.rows[0]!.id;
     cleanupVisitIds.push(visitId);
@@ -142,15 +146,26 @@ describe.skipIf(!hasDb)('BillingService (Phase 7)', () => {
   it('consumes captured charges from billing_charges into an invoice with traceability', async () => {
     const { patientId, visitId } = await createTestPatientAndVisit(TENANT_A, BRANCH_A);
 
+    // Price is resolved server-side from the catalog (todo §49: no client price).
+    const ownerPool = createPool({ role: 'owner' });
+    const svcRes = await ownerPool.query(
+      `INSERT INTO service_catalog (tenant_id, code, name, category, default_price, is_active)
+       VALUES ($1, 'PROC-DRESS', 'Minor Wound Dressing', 'procedure', 350, true)
+       RETURNING id`,
+      [TENANT_A],
+    );
+    const serviceId = svcRes.rows[0]!.id;
+    cleanupServiceIds.push(serviceId);
+
     // Simulate Phase 3 charge capture
     const charge = await svc.createCharge(TENANT_A, USER_A, {
       visitId,
       chargeType: 'PROCEDURE',
       sourceType: 'PROCEDURE',
       sourceId: '33333333-3333-4333-8333-333333333333',
+      serviceId,
       description: 'Minor Wound Dressing',
       quantity: 1,
-      unitPrice: 350,
       payerType: 'PRIVATE_CASH',
     });
 
@@ -172,7 +187,6 @@ describe.skipIf(!hasDb)('BillingService (Phase 7)', () => {
     expect(invoice.lines[0].source_id).toBe(charge.id);
 
     // Verify billing_charges row is now linked to invoice
-    const ownerPool = createPool({ role: 'owner' });
     const checkCharge = await ownerPool.query(
       `SELECT invoice_id FROM billing_charges WHERE id = $1`,
       [charge.id],
@@ -561,20 +575,20 @@ describe.skipIf(!hasDb)('BillingService (Phase 7)', () => {
     const now = new Date();
     const periodStr = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
 
-    // Lock current period
+    // Lock current period on TENANT_B to avoid race conditions with concurrent TENANT_A tests
     await ownerPool.query(
       `INSERT INTO periods (tenant_id, period, status, locked_by, locked_at)
        VALUES ($1, $2, 'LOCKED', $3, now())
        ON CONFLICT (tenant_id, period) DO UPDATE SET status = 'LOCKED'`,
-      [TENANT_A, periodStr, USER_A],
+      [TENANT_B, periodStr, USER_B],
     );
 
     try {
-      const { patientId } = await createTestPatientAndVisit(TENANT_A, BRANCH_A);
+      const { patientId } = await createTestPatientAndVisit(TENANT_B, BRANCH_B);
 
       await expect(
-        svc.createInvoice(TENANT_A, USER_A, {
-          branchId: BRANCH_A,
+        svc.createInvoice(TENANT_B, USER_B, {
+          branchId: BRANCH_B,
           patientId,
           lines: [{ description: 'Test consultation', qty: 1, unitPrice: 300 }],
         }),
@@ -582,7 +596,7 @@ describe.skipIf(!hasDb)('BillingService (Phase 7)', () => {
     } finally {
       // Re-open period for subsequent tests
       await ownerPool.query(`UPDATE periods SET status = 'OPEN' WHERE tenant_id = $1 AND period = $2`, [
-        TENANT_A,
+        TENANT_B,
         periodStr,
       ]);
     }

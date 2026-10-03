@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { Module, Global } from "@nestjs/common";
 import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { AuthController } from "./auth.controller.js";
 import { AuthService } from "./auth.service.js";
@@ -23,6 +23,7 @@ import { getConfig } from "../config.js";
  * The single APP_INTERCEPTOR runs after every guard, so by the time it executes
  * the tenant has been resolved and cross-checked (todo 1.1).
  */
+@Global()
 @Module({
   controllers: [AuthController],
   providers: [

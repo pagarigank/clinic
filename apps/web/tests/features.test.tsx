@@ -126,4 +126,34 @@ describe("Phase 1 & 2 Frontend Feature Screens", () => {
     await screen.findByText(/Unmasked & Audited/i);
     expect(screen.getByText(/12-345678901-2/i)).toBeInTheDocument();
   });
+
+  it("DashboardPage renders live working data KPI cards, operational tabs, and department workbenches", async () => {
+    const { DashboardPage } = await import("../src/features/dashboard/DashboardPage.js");
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <DashboardPage />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    // Hero and section titles
+    expect(screen.getByText(/Clinic Operations Command/i)).toBeInTheDocument();
+    expect(screen.getByText(/Operational Working Data/i)).toBeInTheDocument();
+    expect(screen.getByText(/Department Workbenches & Operations Hub/i)).toBeInTheDocument();
+
+    // Working KPI labels
+    expect(screen.getByText(/Active Visits/i)).toBeInTheDocument();
+    expect(screen.getByText(/Lab Orders/i)).toBeInTheDocument();
+    expect(screen.getByText(/Pharmacy Rx/i)).toBeInTheDocument();
+    expect(screen.getByText(/Supply Items/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Billing POS/i).length).toBeGreaterThanOrEqual(1);
+
+    // Department quick actions
+    expect(screen.getAllByText(/Clinical Encounters/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/Laboratory Worklist/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/Pharmacy Dispense Queue/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/Central Supply Issues/i).length).toBeGreaterThanOrEqual(1);
+  });
 });
+

@@ -1,7 +1,7 @@
 import React from "react";
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
+import { MemoryRouter, Routes, Route } from "react-router";
 import { AuthProvider } from "../src/shared/auth/AuthContext.js";
 import { StepUpProvider } from "../src/shared/auth/StepUpContext.js";
 import { PharmacyQueuePage } from "../src/features/pharmacy/PharmacyQueuePage.js";
@@ -9,6 +9,21 @@ import { DispenseWorkbenchPage } from "../src/features/pharmacy/DispenseWorkbenc
 import { ControlledRegisterPage } from "../src/features/pharmacy/ControlledRegisterPage.js";
 import { OtcSalesPage } from "../src/features/pharmacy/OtcSalesPage.js";
 import { MedicationAdminPage } from "../src/features/pharmacy/MedicationAdminPage.js";
+
+const apiMock = vi.hoisted(() => ({
+  getQueue: vi.fn(),
+  getPrescription: vi.fn(),
+  listLocations: vi.fn(),
+  getStock: vi.fn(),
+  createDispense: vi.fn(),
+  allocateFefo: vi.fn(),
+  getDispense: vi.fn(),
+  postDispense: vi.fn(),
+  voidDispense: vi.fn(),
+  getDispenseLabel: vi.fn(),
+}));
+
+vi.mock("../src/features/pharmacy/api.js", () => ({ pharmacyApi: apiMock }));
 
 function renderWithProviders(ui: React.ReactElement) {
   return render(
@@ -21,6 +36,111 @@ function renderWithProviders(ui: React.ReactElement) {
     </MemoryRouter>
   );
 }
+
+function renderWorkbench(path = "/pharmacy/dispenses/rx-1") {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <AuthProvider>
+        <StepUpProvider>
+          <Routes>
+            <Route path="/pharmacy/dispenses/:id" element={<DispenseWorkbenchPage />} />
+          </Routes>
+        </StepUpProvider>
+      </AuthProvider>
+    </MemoryRouter>
+  );
+}
+
+const LOCATION = { id: "loc-1", branch_id: "br-1", code: "PHM", name: "Main Pharmacy", type: "PHARMACY" };
+const STOCK = [
+  {
+    location_id: "loc-1",
+    batch_id: "b-1",
+    qty_on_hand: 100,
+    qty_reserved: 0,
+    batch_no: "LOT-1",
+    expiry_date: "2027-01-01",
+    batch_status: "AVAILABLE",
+    unit_cost: 1,
+    item_id: "item-1",
+    item_name: "Paracetamol 500mg Tablet",
+    item_code: "MED-PAR-500",
+    location_name: "Main Pharmacy",
+  },
+];
+const PARACETAMOL_ITEM = {
+  id: "pi-1",
+  drug_product_id: "dp-1",
+  generic_name: "Paracetamol",
+  brand_name: "Biogesic",
+  strength: "500mg",
+  form: "Tablet",
+  route: "PO",
+  sig_dose: "1 tablet",
+  sig_frequency: "TID",
+  sig_duration: "3 days",
+  qty_prescribed: 9,
+  qty_dispensed: 0,
+  dispense_as_written: false,
+  item_id: "item-1",
+  controlled_schedule: null,
+  item_code: "MED-PAR-500",
+  item_name: "Paracetamol 500mg Tablet",
+};
+
+function prescription(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "rx-1",
+    rx_no: "RX-2026-00412",
+    status: "VERIFIED",
+    is_controlled: false,
+    patient_id: "p-1",
+    patient_first_name: "Clara",
+    patient_last_name: "Dela Cruz",
+    hrn: "HRN-0001",
+    birth_date: "1990-01-01",
+    patient_sex: "FEMALE",
+    prescriber_name: "Dr. Reyes",
+    visit_no: "V-2026-001",
+    items: [PARACETAMOL_ITEM],
+    ...overrides,
+  };
+}
+
+const POSTED_DISPENSE = {
+  id: "disp-1",
+  dispense_no: "DSP-2026-0001",
+  status: "POSTED",
+  is_controlled: false,
+  patient_id: "p-1",
+  items: [
+    {
+      id: "di-1",
+      item_id: "item-1",
+      qty: 9,
+      unit_price: 1,
+      total_price: 9,
+      item_name: "Paracetamol 500mg Tablet",
+      batch_no: "LOT-1",
+      expiry_date: "2027-01-01",
+      uom_code: "TAB",
+    },
+  ],
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  apiMock.listLocations.mockResolvedValue([LOCATION]);
+  apiMock.getStock.mockResolvedValue(STOCK);
+  apiMock.getPrescription.mockResolvedValue(prescription());
+  apiMock.createDispense.mockResolvedValue({ ...POSTED_DISPENSE, status: "DRAFT", items: [] });
+  apiMock.postDispense.mockResolvedValue(POSTED_DISPENSE);
+  apiMock.allocateFefo.mockResolvedValue({
+    ...POSTED_DISPENSE,
+    status: "DRAFT",
+    items: [{ ...POSTED_DISPENSE.items[0], prescription_item_id: "pi-1", batch_id: "b-1" }],
+  });
+});
 
 describe("PharmacyQueuePage (todo §5.1, PHM-T1)", () => {
   it("renders queue, patient details, and clinical safety alerts", async () => {
@@ -69,51 +189,48 @@ describe("PharmacyQueuePage (todo §5.1, PHM-T1)", () => {
 });
 
 describe("DispenseWorkbenchPage (todo §5.2, PHM-T2, AC-7)", () => {
-  it("renders prescribed lines and FEFO batch recommendations", async () => {
-    renderWithProviders(<DispenseWorkbenchPage />);
-    expect(screen.getByText(/Pharmacy Dispense Workbench/i)).toBeInTheDocument();
-    expect(screen.getByText("Paracetamol 500mg Tablet")).toBeInTheDocument();
-    expect(screen.getAllByText(/FEFO Earliest Expiry Matched/i).length).toBeGreaterThan(0);
+  it("loads the prescription and shows prescribed lines with a FEFO batch", async () => {
+    renderWorkbench();
+    expect(await screen.findByText(/Dispense RX-2026-00412/i)).toBeInTheDocument();
+    expect(await screen.findByText("Paracetamol 500mg Tablet")).toBeInTheDocument();
+    expect(await screen.findByText(/FEFO earliest expiry/i)).toBeInTheDocument();
+    expect(apiMock.getPrescription).toHaveBeenCalledWith("rx-1");
   });
 
-  it("enforces AC-7 controlled substance verification (yellow slip, words/numerals, witness)", async () => {
-    renderWithProviders(<DispenseWorkbenchPage />);
-    const ctrlToggle = screen.getByRole("button", { name: /Switch to AC-7 Controlled Demo/i });
-    fireEvent.click(ctrlToggle);
+  it("enforces AC-7 controlled substance verification (yellow slip, words, witness)", async () => {
+    apiMock.getPrescription.mockResolvedValue(
+      prescription({
+        is_controlled: true,
+        items: [{ ...PARACETAMOL_ITEM, controlled_schedule: "S2" }],
+      }),
+    );
+    renderWorkbench();
+    await screen.findByText("Paracetamol 500mg Tablet");
 
-    expect(screen.getByText(/AC-7 Controlled Substance Dispensing Flow Active/i)).toBeInTheDocument();
-    expect(screen.getByText("Morphine Sulfate 10mg/mL Ampoule")).toBeInTheDocument();
-
-    const ac7Btn = screen.getByRole("button", { name: /Complete AC-7 Requirements/i });
-    fireEvent.click(ac7Btn);
-
-    expect(screen.getByText(/AC-7 Dangerous Drug Dispense Protocol/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/PDEA Special Rx Yellow Slip Serial No./i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Quantity in Words/i)).toBeInTheDocument();
-
-    const witnessSelect = screen.getByLabelText(/Witness User/i);
-    fireEvent.change(witnessSelect, { target: { value: "usr-phm-2" } });
-
-    const verifyAc7Btn = screen.getByRole("button", { name: /Verify & Attest AC-7 Record/i });
-    fireEvent.click(verifyAc7Btn);
-
-    expect(screen.getByText(/AC-7 Witness Verified/i)).toBeInTheDocument();
-  });
-
-  it("posts dispense transaction and generates printable Rx labels", async () => {
-    renderWithProviders(<DispenseWorkbenchPage />);
-    const postBtn = screen.getByRole("button", { name: /Post Dispense & Deduct Stock/i });
+    const postBtn = await screen.findByRole("button", { name: /Post Dispense/i });
     fireEvent.click(postBtn);
 
-    expect(await screen.findByText(/Dispense posted successfully/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/POSTED/i).length).toBeGreaterThan(0);
+    expect(await screen.findByText(/AC-7 Dangerous Drug Dispense Protocol/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/PDEA Special Rx Yellow Slip Serial No./i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Quantity in Words/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Witness User ID/i)).toBeInTheDocument();
+    expect(apiMock.postDispense).not.toHaveBeenCalled();
+  });
 
-    const printLabelBtn = screen.getByRole("button", { name: /Print Rx Labels/i });
-    fireEvent.click(printLabelBtn);
+  it("posts the dispense and renders printable Rx labels", async () => {
+    renderWorkbench();
+    await screen.findByText("Paracetamol 500mg Tablet");
 
-    expect(screen.getByText(/Rx Label Preview/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/METROPOLIS CLINIC & PHARMACY/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/CAUTION: Take exactly as directed/i).length).toBeGreaterThan(0);
+    fireEvent.click(await screen.findByRole("button", { name: /Post Dispense/i }));
+
+    expect(await screen.findByText(/DSP-2026-0001 posted/i)).toBeInTheDocument();
+    expect(apiMock.postDispense).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /Print Rx Labels/i }));
+
+    expect(await screen.findByText(/Rx Label Preview/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Paracetamol 500mg Tablet/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Qty Dispensed: 9/i)).toBeInTheDocument();
   });
 });
 

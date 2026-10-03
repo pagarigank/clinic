@@ -2,7 +2,7 @@ import { Controller, Get } from "@nestjs/common";
 import { getAppPool } from "@clinic/db";
 import { Public } from "../../auth/auth-context.js";
 
-@Controller(["api/v1/health", "api/v1/ready"])
+@Controller(["health", "ready"])
 @Public()
 export class HealthController {
   @Get()

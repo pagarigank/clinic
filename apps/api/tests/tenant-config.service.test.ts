@@ -53,6 +53,8 @@ describe.skipIf(!hasDb)('TenantConfigService (todo 2.1)', () => {
       const s = await service.createService(TENANT_A, USER_A, {
         code,
         name: 'General Consultation',
+        category: 'consult',
+        defaultPrice: 0,
       });
       createdServiceIds.push(s.id);
       expect(s.id).toBeDefined();

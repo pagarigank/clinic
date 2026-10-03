@@ -18,6 +18,8 @@ const hasDb = await probeDb();
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
 const USER_A = 'a3000000-0000-4000-8000-000000000001';
+const TENANT_B = '22222222-2222-4222-8222-222222222222';
+const USER_B = 'b3000000-0000-4000-8000-000000000001';
 
 describe.skipIf(!hasDb)('PatientsService (todo 2.2)', () => {
   let service: PatientsService;
@@ -230,6 +232,57 @@ describe.skipIf(!hasDb)('PatientsService (todo 2.2)', () => {
         reason: 'Verified distinct individuals (Jr vs Sr)',
       });
       expect(ack.acknowledged).toBe(true);
+    });
+  });
+
+  describe('JOB-22 duplicate candidate worklist', () => {
+    it('lists a live candidate pair with match type and score', async () => {
+      const a = await service.createPatient(TENANT_A, USER_A, {
+        firstName: 'Joselito',
+        lastName: 'Almario',
+        dateOfBirth: '1972-06-14',
+        gender: 'M',
+      });
+      createdPatientIds.push(a.id);
+      const b = await service.createPatient(TENANT_A, USER_A, {
+        firstName: 'Joselito',
+        lastName: 'Almario',
+        dateOfBirth: '1972-06-14',
+        gender: 'M',
+      });
+      createdPatientIds.push(b.id);
+
+      const res = await service.listDuplicateCandidates(TENANT_A, USER_A);
+      const pair = res.candidates.find(
+        (c) => [c.patientId, c.otherId].includes(a.id) && [c.patientId, c.otherId].includes(b.id),
+      );
+
+      expect(pair).toBeDefined();
+      expect(pair!.matchType).toBe('EXACT');
+      expect(pair!.score).toBe(1);
+      expect(pair!.status).toBe('OPEN');
+      expect(pair!.patientName).toContain('Almario');
+      expect(pair!.id).toBe(`${pair!.patientId}:${pair!.otherId}`);
+    });
+
+    it('never leaks candidates across tenants (RLS)', async () => {
+      const b1 = await service.createPatient(TENANT_B, USER_B, {
+        firstName: 'Fernando',
+        lastName: 'Poe',
+        dateOfBirth: '1939-08-20',
+        gender: 'M',
+      });
+      createdPatientIds.push(b1.id);
+      const b2 = await service.createPatient(TENANT_B, USER_B, {
+        firstName: 'Fernando',
+        lastName: 'Poe',
+        dateOfBirth: '1939-08-20',
+        gender: 'M',
+      });
+      createdPatientIds.push(b2.id);
+
+      const res = await service.listDuplicateCandidates(TENANT_A, USER_A);
+      expect(res.candidates.some((c) => c.patientId === b1.id || c.otherId === b1.id || c.patientId === b2.id || c.otherId === b2.id)).toBe(false);
     });
   });
 

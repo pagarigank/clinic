@@ -1,5 +1,5 @@
 import React from "react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { AuthProvider } from "../src/shared/auth/AuthContext.js";
@@ -9,6 +9,55 @@ import { StockExplorerPage } from "../src/features/supply/StockExplorerPage.js";
 import { GrnWizardPage } from "../src/features/supply/GrnWizardPage.js";
 import { RequisitionsPage } from "../src/features/supply/RequisitionsPage.js";
 import { ItemMasterPage } from "../src/features/supply/ItemMasterPage.js";
+import { SupplyIssueWorkbenchPage } from "../src/features/supply/SupplyIssueWorkbenchPage.js";
+
+const supplyApiMock = vi.hoisted(() => ({
+  listItems: vi.fn(),
+  listLocations: vi.fn(),
+  getStock: vi.fn(),
+  postConsumption: vi.fn(),
+}));
+
+vi.mock("../src/features/supply/api.js", () => ({ supplyApi: supplyApiMock }));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  supplyApiMock.listLocations.mockResolvedValue([
+    { id: "loc-1", branch_id: "br-1", code: "CS", name: "Central Store", type: "CENTRAL_STORE" },
+  ]);
+  supplyApiMock.listItems.mockResolvedValue([
+    {
+      id: "item-1",
+      code: "SUP-GLV-M",
+      name: "Latex Examination Gloves (M)",
+      item_type: "SUPPLY",
+      base_uom_id: "uom-box",
+      uom_code: "BOX",
+      category_name: "Consumables",
+      total_on_hand: 50,
+      is_batch_tracked: true,
+      is_expiry_tracked: false,
+    },
+  ]);
+  supplyApiMock.getStock.mockResolvedValue([
+    {
+      location_id: "loc-1",
+      batch_id: "b-1",
+      qty_on_hand: 50,
+      qty_reserved: 0,
+      location_name: "Central Store",
+      lot_no: "LOT-1",
+      expiry_date: "2027-01-01",
+      unit_cost: 2,
+      batch_status: "AVAILABLE",
+      item_id: "item-1",
+      item_name: "Latex Examination Gloves (M)",
+      item_code: "SUP-GLV-M",
+      total_value: 100,
+    },
+  ]);
+  supplyApiMock.postConsumption.mockResolvedValue({ status: "POSTED", allocatedCount: 1 });
+});
 
 function renderWithProviders(ui: React.ReactElement) {
   return render(
@@ -151,6 +200,32 @@ describe("ItemMasterPage (todo §4.1)", () => {
     expect(await screen.findByText(/Import Summary & Error Report/i)).toBeInTheDocument();
     expect(screen.getAllByText(/INVALID-ITEM-CODE/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/Item 'INVALID-ITEM-CODE' not found/i)).toBeInTheDocument();
+  });
+});
+
+describe("SupplyIssueWorkbenchPage (todo §4.4, SUP-T10)", () => {
+  it("selects an item and shows FEFO batches available at the location", async () => {
+    renderWithProviders(<SupplyIssueWorkbenchPage />);
+    fireEvent.click(await screen.findByText("Latex Examination Gloves (M)"));
+
+    expect((await screen.findAllByText(/LOT-1/)).length).toBeGreaterThan(0);
+    expect(await screen.findByRole("button", { name: /Issue Stock/i })).toBeInTheDocument();
+    expect(supplyApiMock.getStock).toHaveBeenCalledWith({ itemId: "item-1" });
+  });
+
+  it("posts consumption and surfaces the server result", async () => {
+    renderWithProviders(<SupplyIssueWorkbenchPage />);
+    fireEvent.click(await screen.findByText("Latex Examination Gloves (M)"));
+
+    const qtyInput = await screen.findByLabelText(/Quantity/i);
+    fireEvent.change(qtyInput, { target: { value: "5" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /Issue Stock/i }));
+
+    expect(await screen.findByText(/Issued 5 BOX/i)).toBeInTheDocument();
+    expect(supplyApiMock.postConsumption).toHaveBeenCalledWith(
+      expect.objectContaining({ itemId: "item-1", locationId: "loc-1", qty: 5, uomId: "uom-box" }),
+    );
   });
 });
 

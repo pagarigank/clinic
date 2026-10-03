@@ -11,6 +11,7 @@ import type {
   CreateCreditNoteRequest,
   ApproveCreditNoteRequest,
   DailyCloseRunRequest,
+  SaveCashSessionRequest,
 } from "@clinic/contracts";
 
 // ── Invoices ─────────────────────────────────────────────────────────────────
@@ -91,6 +92,16 @@ export async function reprintReceipt(paymentId: string, body: ReprintReceiptRequ
 
 export async function voidPayment(paymentId: string, body: VoidPaymentRequest) {
   return apiPost<any>(`/billing/payments/${paymentId}/void`, body);
+}
+
+// ── Cash Sessions ────────────────────────────────────────────────────────────
+
+export async function fetchSessions() {
+  return apiGet<{ data: any[] }>("/billing/sessions");
+}
+
+export async function saveSession(id: string, body: SaveCashSessionRequest) {
+  return apiPost<any>(`/billing/sessions/${id}`, body);
 }
 
 // ── Cashier Shifts ───────────────────────────────────────────────────────────
@@ -201,10 +212,10 @@ export async function fetchShiftZReport(shiftId: string) {
 // ── Metadata & Reference Data ────────────────────────────────────────────────
 
 export async function fetchDiscountTypes() {
-  return apiGet<{ data: any[] }>("/billing/discount-types");
+  return apiGet<{ data: any[] }>("/admin/discount-types");
 }
 
 export async function fetchPaymentMethods() {
-  return apiGet<{ data: any[] }>("/billing/payment-methods");
+  return apiGet<{ data: any[] }>("/admin/payment-methods");
 }
 
