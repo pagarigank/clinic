@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router";
 import { useAuth } from "../../shared/auth/AuthContext.js";
+import { usePermissions } from "../../shared/auth/PermissionsContext.js";
 import { apiGet } from "../../shared/api/client.js";
 import { StatusPill } from "@clinic/ui";
-import { getRegistrationRequests } from "../../shared/services/registrationStore.js";
 
 interface WorkingMetrics {
   totalPatients: number;
@@ -121,8 +121,6 @@ const QUICK_ACTIONS = [
 
 export function DashboardPage() {
   const { session } = useAuth();
-  const requests = getRegistrationRequests();
-  const pendingApprovals = requests.filter((r) => r.status === "PENDING_APPROVAL").length;
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -142,18 +140,33 @@ export function DashboardPage() {
   const [activeTab, setActiveTab] = useState<"VISITS" | "LAB" | "PHARMACY">("VISITS");
 
   const mountedRef = React.useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+    useEffect(() => {
+      mountedRef.current = true;
+      return () => {
+        mountedRef.current = false;
+      };
+    }, []);
 
-  const loadWorkingData = useCallback(async (isManualRefresh = false) => {
+    // Gate every aggregate fetch on the caller's actual grants. Without this the
+    // dashboard fires /lab/worklist, /pharmacy/queue and /supply/* unconditionally
+    // and a receptionist (who correctly holds none of those permissions) collects
+    // a burst of 403s on every page load. Two distinct harms: the console noise
+    // hides real failures, and it makes a correct server-side 403 look like a bug.
+    // RLS/permission enforcement stays server-side — this only avoids asking.
+    const { hasPermission, hasAnyPermission } = usePermissions();
+    const canSeeLab = hasAnyPermission(["lab.order.read", "lab.result.read", "lab.specimen.read"]);
+    const canSeePharmacy = hasAnyPermission(["pharmacy.rx.read", "pharmacy.dispense.read"]);
+    const canSeeSupply = hasAnyPermission(["supply.stock.read", "supply.item.read"]);
+    const canSeeBilling = hasAnyPermission(["billing.invoice.read"]);
+    const canSeeClinical = hasAnyPermission(["clinical.visit.read", "clinical.queue.read"]);
+    const canSeePatients = hasPermission("patient.record.read");
+
+    const loadWorkingData = useCallback(async (isManualRefresh = false) => {
     if (isManualRefresh && mountedRef.current) setRefreshing(true);
     try {
       // 1. Patients
       let patientCount = 0;
+      if (canSeePatients) {
       try {
         const pRes = await apiGet<any>("/patients");
         if (Array.isArray(pRes?.data)) {
@@ -162,10 +175,12 @@ export function DashboardPage() {
           patientCount = pRes.length;
         }
       } catch { /* offline fallback */ }
+      }
 
       // 2. Visits
       let visitList: VisitRow[] = [];
       let activeVisitCount = 0;
+      if (canSeeClinical) {
       try {
         const vRes = await apiGet<any>("/clinical/visits");
         const list = Array.isArray(vRes?.data) ? vRes.data : Array.isArray(vRes) ? vRes : [];
@@ -174,10 +189,12 @@ export function DashboardPage() {
           (v: any) => v.status === "OPEN" || v.status === "IN_PROGRESS" || v.status === "READY_FOR_BILLING"
         ).length;
       } catch { /* offline fallback */ }
+      }
 
       // 3. Laboratory Orders
       let labList: LabOrderRow[] = [];
       let pendingLabCount = 0;
+      if (canSeeLab) {
       try {
         const lRes = await apiGet<any>("/lab/worklist");
         const list = Array.isArray(lRes?.data) ? lRes.data : Array.isArray(lRes) ? lRes : [];
@@ -186,10 +203,12 @@ export function DashboardPage() {
           (o: any) => o.status === "ORDERED" || o.status === "COLLECTED" || o.status === "RECEIVED"
         ).length;
       } catch { /* offline fallback */ }
+      }
 
       // 4. Pharmacy Queue
       let rxList: PrescriptionRow[] = [];
       let pendingRxCount = 0;
+      if (canSeePharmacy) {
       try {
         const rxRes = await apiGet<any>("/pharmacy/queue");
         const list = Array.isArray(rxRes?.data) ? rxRes.data : Array.isArray(rxRes) ? rxRes : [];
@@ -198,24 +217,28 @@ export function DashboardPage() {
           (rx: any) => rx.status === "ISSUED" || rx.status === "VERIFIED"
         ).length;
       } catch { /* offline fallback */ }
-
-      // 5. Supply Stock & Items
-      let supplyItemsCount = 0;
-      let valuation = 0;
-      try {
-        const sRes = await apiGet<any>("/supply/stock");
-        const list = Array.isArray(sRes?.data) ? sRes.data : Array.isArray(sRes) ? sRes : [];
-        supplyItemsCount = list.length;
-        valuation = list.reduce((acc: number, row: any) => acc + (Number(row.total_value) || 0), 0);
-      } catch {
-        try {
-          const itemsRes = await apiGet<any[]>("/supply/items");
-          if (Array.isArray(itemsRes)) supplyItemsCount = itemsRes.length;
-        } catch { /* offline fallback */ }
       }
 
-      // 6. Billing Invoices
+      // 5. Supply Stock & Items
+            let supplyItemsCount = 0;
+            let valuation = 0;
+            if (canSeeSupply) {
+              try {
+                const sRes = await apiGet<any>("/supply/stock");
+                const list = Array.isArray(sRes?.data) ? sRes.data : Array.isArray(sRes) ? sRes : [];
+                supplyItemsCount = list.length;
+                valuation = list.reduce((acc: number, row: any) => acc + (Number(row.total_value) || 0), 0);
+              } catch {
+                try {
+                  const itemsRes = await apiGet<any[]>("/supply/items");
+                  if (Array.isArray(itemsRes)) supplyItemsCount = itemsRes.length;
+                } catch { /* offline fallback */ }
+              }
+            }
+
+            // 6. Billing Invoices
       let unpaidCount = 0;
+      if (canSeeBilling) {
       try {
         const invRes = await apiGet<any>("/billing/invoices");
         const list = Array.isArray(invRes?.data) ? invRes.data : Array.isArray(invRes) ? invRes : [];
@@ -223,6 +246,7 @@ export function DashboardPage() {
           (i: any) => i.status === "ISSUED" || i.status === "DRAFT" || i.status === "PARTIALLY_PAID"
         ).length;
       } catch { /* offline fallback */ }
+      }
 
       if (mountedRef.current) {
         setMetrics({
@@ -247,7 +271,11 @@ export function DashboardPage() {
         setRefreshing(false);
       }
     }
-  }, []);
+      // The permission gates are inputs: without them in the dep list this
+      // callback closes over the first render's values, so a user whose permissions
+      // arrive after the initial fetch (the session loads async) would keep the
+      // ungated behaviour and still 403.
+      }, [canSeePatients, canSeeClinical, canSeeLab, canSeePharmacy, canSeeSupply, canSeeBilling]);
 
   useEffect(() => {
     void loadWorkingData();

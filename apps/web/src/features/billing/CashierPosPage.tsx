@@ -22,6 +22,17 @@ import {
   fetchSessions,
   saveSession,
 } from "./api.js";
+import { printBlob, ApiError } from "../../shared/api/client.js";
+
+/** Surface the API problem (RFC 9457) rather than a generic failure string. */
+function describeError(err: unknown): string {
+  if (err instanceof ApiError) {
+    const p = err.problem;
+    if (p.errors?.length) return p.errors.map((e) => `${e.path}: ${e.message}`).join("; ");
+    return p.detail ?? `${p.code}: ${p.title}`;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
 
 interface TenderLine {
   id: string;
@@ -41,44 +52,35 @@ export function CashierPosPage() {
   const [showOpenShiftModal, setShowOpenShiftModal] = useState(false);
   const [openingFloat, setOpeningFloat] = useState(1000);
 
-  const defaultDemoInvoice = {
-    id: "inv-demo-1",
-    invoice_no: "INV-2026-000101",
-    patient_first_name: "Juan",
-    patient_last_name: "Dela Cruz",
-    patient_number: "P-000123",
-    balance: 1200,
-    total: 1200,
-    lines: [
-      { id: "l1", description: "Consultation (Dr. Jose Rizal)", net_amount: 800, is_professional_fee: true },
-      { id: "l2", description: "Complete Blood Count (CBC)", net_amount: 400, is_professional_fee: false },
-    ],
-  };
+  // All three start empty and are filled from the API by loadInvoices(). Seeding a
+  // demo invoice here made the POS render a fabricated patient (and a ₱1,200
+  // balance) before — and instead of — the real list, so a cashier could act on a
+  // record that does not exist.
+  const [availableInvoices, setAvailableInvoices] = useState<any[]>([]);
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string>(invoiceIdParam ?? "");
+  const [invoice, setInvoice] = useState<any | null>(null);
 
-  const [availableInvoices, setAvailableInvoices] = useState<any[]>([defaultDemoInvoice]);
-  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string>(invoiceIdParam || defaultDemoInvoice.id);
-  const [invoice, setInvoice] = useState<any | null>(defaultDemoInvoice);
-
-  const [paymentMethods, setPaymentMethods] = useState<any[]>([
-    { id: "pm-cash", code: "CASH", name: "Cash" },
-    { id: "pm-card", code: "CARD", name: "Credit / Debit Card" },
-    { id: "pm-gcash", code: "GCASH", name: "GCash" },
-    { id: "pm-maya", code: "MAYA", name: "Maya" },
-    { id: "pm-hmo", code: "HMO", name: "HMO / Insurance" },
-  ]);
+  // Seeded empty and populated from /admin/payment-methods. These ids must be real
+  // UUIDs from the server — a synthetic one is submitted as `methodId` on the
+  // payment and fails validation, so an empty start is the only safe default.
+  const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
+  // One empty tender line; the amount and method are filled once an invoice and the
+  // real payment methods are loaded. Starting with ₱1,200 implied a balance that
+  // may not exist.
   const [tenders, setTenders] = useState<TenderLine[]>([
     {
       id: "t1",
-      methodId: "pm-cash",
-      methodCode: "CASH",
-      methodName: "Cash",
-      amount: 1200,
-      tenderedAmount: 1200,
+      methodId: "",
+      methodCode: "",
+      methodName: "",
+      amount: 0,
+      tenderedAmount: 0,
     },
   ]);
 
   // Receipt Modal State after successful payment
   const [receiptData, setReceiptData] = useState<any | null>(null);
+  const [isPrintingReceipt, setIsPrintingReceipt] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
 
   // Reprint Dialog State
@@ -89,7 +91,9 @@ export function CashierPosPage() {
   const [heldSales, setHeldSales] = useState<any[]>([]);
   const [showHeldModal, setShowHeldModal] = useState(false);
 
-  const [alert, setAlert] = useState<{ tone: "success" | "danger" | "warning"; message: string } | null>(null);
+  // "info" added for neutral states (e.g. nothing awaiting payment), which are not
+  // warnings — a missing invoice is normal between visits, not a fault.
+  const [alert, setAlert] = useState<{ tone: "success" | "danger" | "warning" | "info"; message: string } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const loadSessions = async () => {
@@ -191,14 +195,16 @@ export function CashierPosPage() {
         return;
       }
     } catch {
-      // fallback
+      // fall through to the no-shift state below
     }
-    setActiveShift({
-      id: "shift-demo-1",
-      shift_no: "SFT-2026-000001",
-      opening_cash: 1000,
-      opened_at: new Date().toISOString(),
-      cashier_name: "Cashier Terminal 1",
+
+    // No fabricated shift. A synthetic id would be submitted as `shiftId` on the
+    // payment and rejected as an invalid UUID (500), so "no active shift" is both
+    // the honest state and the one that keeps the rest of the flow truthful.
+    setActiveShift(null);
+    setAlert({
+      tone: "warning",
+      message: "No cashier shift is open. Open one before taking payment.",
     });
   };
 
@@ -210,58 +216,64 @@ export function CashierPosPage() {
         return;
       }
     } catch {
-      // fallback
+      // fall through to the empty state below
     }
-    setPaymentMethods([
-      { id: "pm-cash", code: "CASH", name: "Cash" },
-      { id: "pm-card", code: "CARD", name: "Credit / Debit Card" },
-      { id: "pm-gcash", code: "GCASH", name: "GCash" },
-      { id: "pm-maya", code: "MAYA", name: "Maya" },
-      { id: "pm-hmo", code: "HMO", name: "HMO / Insurance" },
-    ]);
+    // No synthetic payment methods. `pm-cash` is not a UUID, so any tender built
+    // from it fails validation at the API (500 on POST /billing/payments). Better
+    // to show no methods than to offer a set that cannot be used.
+    setPaymentMethods([]);
+    setAlert({
+      tone: "danger",
+      message: "Payment methods could not be loaded. Check that payment methods are configured for this tenant.",
+    });
+    /* legacy fixture list removed — see comment above */
   };
 
   const loadInvoices = async () => {
     try {
       const res = await fetchInvoices({ status: "OPEN" });
-      if (Array.isArray(res?.data) && res.data.length > 0) {
-        setAvailableInvoices(res.data);
-        if (invoiceIdParam) {
-          const inv = await fetchInvoice(invoiceIdParam);
-          if (inv?.id) {
-            setInvoice(inv);
-            setSelectedInvoiceId(inv.id);
+        if (Array.isArray(res?.data) && res.data.length > 0) {
+          setAvailableInvoices(res.data);
+          if (invoiceIdParam) {
+            const inv = await fetchInvoice(invoiceIdParam);
+            if (inv?.id) {
+              setInvoice(inv);
+              setSelectedInvoiceId(inv.id);
+              return;
+            }
+          } else if (res.data[0]) {
+            setInvoice(res.data[0]);
+            setSelectedInvoiceId(res.data[0].id);
             return;
           }
-        } else if (res.data[0]) {
-          setInvoice(res.data[0]);
-          setSelectedInvoiceId(res.data[0].id);
-          return;
         }
+
+        // Empty list: show an empty POS, not a fabricated invoice.
+        //
+        // This used to fall through to a hardcoded demo invoice (INV-2026-000101,
+        // "Juan Dela Cruz", ₱1,200). That made a tenant with no open invoices look
+        // like it had one, and let a cashier "take payment" against a record that
+        // does not exist — the receipt would then fail at the API while the screen
+        // had already looked correct. An empty state is the honest result.
+        setAvailableInvoices([]);
+        setInvoice(null);
+        setSelectedInvoiceId("");
+        setAlert({
+          tone: "info",
+          message: "No invoices are awaiting payment. Create one from a completed visit to begin a sale.",
+        });
+      } catch (err) {
+        // A failed load is NOT an empty list — say so, rather than implying there
+        // is simply nothing to sell.
+        setAvailableInvoices([]);
+        setInvoice(null);
+        setSelectedInvoiceId("");
+        setAlert({
+          tone: "danger",
+          message: `Could not load invoices: ${describeError(err)}`,
+        });
       }
-    } catch {
-      // fallback
-    }
-    const demo = [
-      {
-        id: "inv-demo-1",
-        invoice_no: "INV-2026-000101",
-        patient_first_name: "Juan",
-        patient_last_name: "Dela Cruz",
-        patient_number: "P-000123",
-        balance: 1200,
-        total: 1200,
-        lines: [
-          { id: "l1", description: "Consultation (Dr. Jose Rizal)", net_amount: 800, is_professional_fee: true },
-          { id: "l2", description: "Complete Blood Count (CBC)", net_amount: 400, is_professional_fee: false },
-        ],
-      },
-    ];
-    setAvailableInvoices(demo);
-    const cur = demo.find((d) => d.id === invoiceIdParam) || demo[0];
-    setInvoice(cur);
-    setSelectedInvoiceId(cur?.id || "");
-  };
+    };
 
   useEffect(() => {
     checkShift();
@@ -279,7 +291,7 @@ export function CashierPosPage() {
       setTenders([
         {
           id: "t1",
-          methodId: defaultMethod?.id || "pm-cash",
+          methodId: defaultMethod?.id ?? "",
           methodCode: defaultMethod?.code || "CASH",
           methodName: defaultMethod?.name || "Cash",
           amount: bal,
@@ -391,25 +403,24 @@ export function CashierPosPage() {
         })),
       });
 
-      // Fetch official receipt
+      // Fetch the server-rendered official receipt.
       try {
         const rcpt = await fetchPaymentReceipt(paymentRes.id);
         setReceiptData(rcpt);
-      } catch {
-        setReceiptData({
-          receiptNumber: paymentRes.payment_no || "OR-2026-000101",
-          date: new Date().toISOString(),
-          patientName: `${invoice.patient_first_name || ""} ${invoice.patient_last_name || ""}`.trim() || "Walk-in Patient",
-          patientNumber: invoice.patient_number || "P-000123",
-          invoiceNo: invoice.invoice_no,
-          cashier: activeShift.cashier_name || "Cashier",
-          paymentMethod: primary.methodName,
-          amountPaid: totalTendered,
-          tendered: primary.tenderedAmount,
-          change: cashChange,
-          remainingBalance: Math.max(0, invoiceBalance - totalTendered),
-          lines: invoice.lines || [],
+      } catch (receiptErr) {
+        // Never fabricate a receipt number. This document is the patient's proof of
+        // payment and the cashier's BIR record, so an invented "OR-2026-000101" or
+        // "P-000123" is worse than no receipt: it looks authoritative and is wrong.
+        // The payment itself DID succeed, so say that plainly and name the real
+        // payment_no the server issued.
+        setAlert({
+          tone: "danger",
+          message:
+            `Payment ${paymentRes.payment_no ?? ""} was recorded, but the official receipt ` +
+            `could not be loaded: ${describeError(receiptErr)}. Reprint it from Billing & Invoices ` +
+            `once the receipt service is available.`,
         });
+        setReceiptData(null);
       }
 
       setShowReceiptModal(true);
@@ -883,11 +894,26 @@ export function CashierPosPage() {
               <Button
                 variant="primary"
                 size="sm"
-                onClick={() => {
+                disabled={isPrintingReceipt}
+                onClick={async () => {
+                  // Official route: the server-rendered receipt PDF (same
+                  // Q-17 patient-facing facts as the JSON receipt view, with
+                  // the deterministic SHA-256 header). Screen print fallback
+                  // only when the PDF endpoint is unreachable.
+                  if (receiptData?.id) {
+                    setIsPrintingReceipt(true);
+                    try {
+                      await printBlob(`/billing/payments/${receiptData.id}/receipt-pdf`);
+                      setIsPrintingReceipt(false);
+                      return;
+                    } catch {
+                      setIsPrintingReceipt(false);
+                    }
+                  }
                   window.print();
                 }}
               >
-                🖨️ Print Receipt
+                {isPrintingReceipt ? "Preparing official PDF…" : "🖨️ Print Official Receipt"}
               </Button>
               <Button
                 variant="secondary"

@@ -1,5 +1,5 @@
 import React from "react";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { AuthProvider } from "../src/shared/auth/AuthContext.js";
@@ -9,6 +9,28 @@ import { CashierPosPage } from "../src/features/billing/CashierPosPage.js";
 import { CashierShiftsPage } from "../src/features/billing/CashierShiftsPage.js";
 import { CreditNotesPage } from "../src/features/billing/CreditNotesPage.js";
 import { DailyClosePage } from "../src/features/billing/DailyClosePage.js";
+import * as billingApi from "../src/features/billing/api.js";
+
+/**
+ * The billing pages fetch from ./api.js. Without a stub the network call fails in
+ * jsdom and the pages used to paper over it with hardcoded fixtures, which is how
+ * tests ended up asserting on invented invoices. Stub the module so every test
+ * exercises the real render path and can control exactly what the "server" returns.
+ */
+vi.mock("../src/features/billing/api.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/features/billing/api.js")>();
+  return {
+    ...actual,
+    fetchActiveShift: vi.fn(),
+    fetchInvoices: vi.fn(),
+    fetchPaymentMethods: vi.fn(),
+    fetchSessions: vi.fn(),
+    saveSession: vi.fn(),
+    createPayment: vi.fn(),
+    fetchPaymentReceipt: vi.fn(),
+    reprintReceipt: vi.fn(),
+  };
+});
 
 function renderWithProviders(ui: React.ReactElement, initialEntries: string[] = ["/"]) {
   return render(
@@ -70,35 +92,100 @@ describe("BillingWorkbenchPage (todo.md §7.1, BIL-T1)", () => {
 });
 
 describe("CashierPosPage (todo.md §7.2, BIL-T2, BIL-T3)", () => {
-  it("renders POS interface with active cashier shift status", async () => {
+  // These used to assert on the page's own hardcoded fixtures — a fabricated
+  // shift (shift-demo-1 / SFT-2026-000001), a fabricated invoice
+  // (INV-2026-000101 / "Juan Dela Cruz") and fabricated payment methods
+  // (pm-cash). They passed only because the page fell back to that data whenever
+  // an API call failed, which is exactly the behaviour that let a cashier "take
+  // payment" against records that do not exist. The API layer is now mocked so the
+  // tests exercise the real render path against server-shaped data.
+  const SHIFT = {
+    id: "11111111-2222-4333-8444-555555555555",
+    shift_no: "SH-2026-000243",
+    opening_cash: 1000,
+    opened_at: new Date().toISOString(),
+    cashier_name: "Demo A — Staff / Receptionist",
+    status: "OPEN",
+  };
+  const INVOICE = {
+    id: "22222222-3333-4444-8555-666666666666",
+    invoice_no: "INV-2026-001163",
+    patient_first_name: "Maria",
+    patient_last_name: "Dela Cruz",
+    patient_number: "P-000999",
+    balance: 1200,
+    total: 1200,
+    payer_type: "PRIVATE_CASH",
+    lines: [{ id: "l1", description: "Consultation", net_amount: 1200, is_professional_fee: true }],
+  };
+  const METHODS = [
+    // Real UUIDs — the API rejects non-UUID methodId, which is what surfaced the bug.
+    { id: "33333333-4444-4555-8666-777777777777", code: "CASH", name: "Cash" },
+    { id: "44444444-5555-4666-8777-888888888888", code: "GCASH", name: "GCash" },
+  ];
+
+  beforeEach(() => {
+    vi.mocked(billingApi.fetchActiveShift).mockReset().mockResolvedValue(SHIFT as never);
+    vi.mocked(billingApi.fetchInvoices).mockReset().mockResolvedValue({ data: [INVOICE] } as never);
+    vi.mocked(billingApi.fetchPaymentMethods).mockReset().mockResolvedValue({ data: METHODS } as never);
+    vi.mocked(billingApi.fetchSessions).mockReset().mockResolvedValue({ data: [] } as never);
+  });
+
+  it("renders the POS with the shift and invoice the API returned", async () => {
     renderWithProviders(<CashierPosPage />);
 
     expect(screen.getByText(/Cashier POS & Official Receipts/i)).toBeInTheDocument();
     expect(screen.getByText(/1. Select Invoice to Settle/i)).toBeInTheDocument();
     expect(screen.getByText(/2. Payment & Split Tender/i)).toBeInTheDocument();
 
+    // The shift number must come from the server, not a literal.
     await waitFor(() => {
-      expect(screen.getByText(/SHIFT ACTIVE/i)).toBeInTheDocument();
+      expect(screen.getByText(SHIFT.shift_no)).toBeInTheDocument();
     });
+    expect(screen.getAllByText(/Maria Dela Cruz/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Juan Dela Cruz/i)).not.toBeInTheDocument();
+  });
+
+  it("shows an empty POS rather than a fabricated invoice when none are open", async () => {
+    vi.mocked(billingApi.fetchInvoices).mockResolvedValue({ data: [] } as never);
+    renderWithProviders(<CashierPosPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/No invoices are awaiting payment/i)).toBeInTheDocument();
+    });
+    // The fabricated invoice must never appear.
+    expect(screen.queryByText(/INV-2026-000101/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Juan Dela Cruz/i)).not.toBeInTheDocument();
+  });
+
+  it("does not invent a payment method when none can be loaded", async () => {
+    vi.mocked(billingApi.fetchPaymentMethods).mockRejectedValue(new Error("boom"));
+    renderWithProviders(<CashierPosPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Payment methods could not be loaded/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByText("pm-cash")).not.toBeInTheDocument();
   });
 
   it("handles split tender payments and computes cash change dynamically", async () => {
     renderWithProviders(<CashierPosPage />);
 
     await waitFor(() => {
-      expect(screen.getByText(/SHIFT ACTIVE/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/Maria Dela Cruz/i).length).toBeGreaterThan(0);
     });
 
-    // Verify invoice particulars loaded
+    // The page defaults the first tender to CASH and to the invoice balance once
+    // both the invoice and the real payment methods have loaded, so the cash
+    // field appears on its own — no fabricated method needed.
     await waitFor(() => {
-      expect(screen.getAllByText(/Juan Dela Cruz/i).length).toBeGreaterThan(0);
+      expect(screen.getByPlaceholderText(/Cash handed by patient/i)).toBeInTheDocument();
     });
 
-    // Check cash tender input and change computation
+    // Cash handed 1500 against a 1200 balance -> 300 change.
     const cashInput = screen.getByPlaceholderText(/Cash handed by patient/i);
     fireEvent.change(cashInput, { target: { value: "1500" } });
 
-    // Change should be 1500 - 1200 = 300
     await waitFor(() => {
       expect(screen.getByText("₱300.00")).toBeInTheDocument();
     });

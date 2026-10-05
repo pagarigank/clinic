@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router";
 import { AlertBanner, StatusPill } from "@clinic/ui";
-import { apiGet, apiPost } from "../../shared/api/client.js";
+import { apiGet, apiPost, ApiError } from "../../shared/api/client.js";
 import { useSearchContext } from "../../shared/search/CommandPalette.js";
 
 interface PatientRecord {
@@ -240,18 +240,35 @@ export function PatientsPage() {
     };
 
     try {
-      await apiPost("/patients", {
-        firstName: newPatient.firstName,
-        lastName: newPatient.lastName,
-        dob: newPatient.dob,
-        gender: newPatient.gender,
-        phone: newPatient.phone,
-        philhealthNo: newPatient.philhealthNo,
-        isEmergency: newPatient.isEmergency,
-      });
-    } catch {
-      // Local fallback
-    }
+          // Field names must match CreatePatientSchema (packages/contracts) exactly.
+          // It is a strict object — unknown keys are stripped and `dateOfBirth` is
+          // required — so sending `dob` produced 422 VALIDATION_FAILED on
+          // "dateOfBirth: expected string, received undefined" and the registration
+          // silently never persisted.
+          await apiPost("/patients", {
+            firstName: newPatient.firstName,
+            lastName: newPatient.lastName,
+            dateOfBirth: newPatient.dob,
+            gender: newPatient.gender,
+            // Q-11: emergency intake is expressed as registrationType, not a
+            // boolean the schema does not know about.
+            ...(newPatient.isEmergency ? { registrationType: "EMERGENCY" as const } : {}),
+          });
+        } catch (err) {
+          // Previously an empty catch, so a rejected save still reported
+                    // "registered successfully" and added the patient to local state only —
+                    // the record was never created server-side and the user had no idea.
+                    setIsRegisterOpen(false);
+                    const problem = err instanceof ApiError ? err.problem : undefined;
+                    const reason =
+                      problem?.detail ??
+                      (problem?.errors?.length
+                        ? problem.errors.map((e) => `${e.path}: ${e.message}`).join("; ")
+                        : undefined) ??
+                      "the server rejected the record";
+                    setMessage(`Registration failed: ${reason}. Nothing was saved — please retry.`);
+                    return;
+                  }
 
     setPatients([newPatient, ...patients]);
     setIsRegisterOpen(false);

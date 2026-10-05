@@ -1,4 +1,5 @@
 import {
+  Inject,
   Controller,
   Get,
   Post,
@@ -31,7 +32,12 @@ import { ProblemException } from '../http/problem.exception.js';
 @UseGuards(AuthGuard)
 @ModuleAllowlist()
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationsService) {}
+  // Explicit @Inject: tsx/esbuild does not emit design:paramtypes metadata, so
+  // constructor injection without it binds undefined and every call fails with
+  // "Cannot read properties of undefined". Same trap as auth.module.ts / todo 1.6.
+  constructor(
+    @Inject(NotificationsService) private readonly notificationsService: NotificationsService,
+  ) {}
 
   @Get(['notifications', 'me/notifications'])
   @ApiOperation({ summary: 'List in-app notifications for current user' })
