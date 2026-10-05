@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { ProblemException } from '../http/problem.exception.js';
 import { getAppPool } from '@clinic/db';
 import { TokenService } from '../auth/crypto/tokens.js';
@@ -20,8 +20,13 @@ export interface BreakglassSession {
 
 @Injectable()
 export class BreakglassService {
+  // Explicit @Inject: tsx/esbuild does not emit design:paramtypes, so a constructor
+  // parameter without it binds undefined and every call that uses it throws
+  // "Cannot read properties of undefined" at runtime — never at build time.
   constructor(
+    @Inject(TokenService)
     private readonly tokens: TokenService,
+    @Inject(MfaService)
     private readonly mfa: MfaService,
   ) {}
 

@@ -153,7 +153,12 @@ export function DashboardPage() {
     // a burst of 403s on every page load. Two distinct harms: the console noise
     // hides real failures, and it makes a correct server-side 403 look like a bug.
     // RLS/permission enforcement stays server-side — this only avoids asking.
-    const { hasPermission, hasAnyPermission } = usePermissions();
+    // isLoading matters: `permissions` starts as an empty Set and is filled by an
+    // async /auth/session call. Fetching on the first render therefore evaluated every
+    // gate as false-but-then-fetched-anyway, so a narrow role (e.g. the pharmacy
+    // verifier) fired requests for patients, visits, lab, supply and billing and took
+    // a 403 on each. Wait for the real permission set before asking for anything.
+    const { hasPermission, hasAnyPermission, isLoading: permissionsLoading } = usePermissions();
     const canSeeLab = hasAnyPermission(["lab.order.read", "lab.result.read", "lab.specimen.read"]);
     const canSeePharmacy = hasAnyPermission(["pharmacy.rx.read", "pharmacy.dispense.read"]);
     const canSeeSupply = hasAnyPermission(["supply.stock.read", "supply.item.read"]);
@@ -278,8 +283,13 @@ export function DashboardPage() {
       }, [canSeePatients, canSeeClinical, canSeeLab, canSeePharmacy, canSeeSupply, canSeeBilling]);
 
   useEffect(() => {
+    // Do not fetch while the permission set is still empty: every gate would read
+    // false and the counters would be fetched regardless of role, which is the
+    // 403 storm this guard exists to prevent. loadWorkingData re-runs once the
+    // permissions arrive (it depends on them).
+    if (permissionsLoading) return;
     void loadWorkingData();
-  }, [loadWorkingData]);
+  }, [loadWorkingData, permissionsLoading]);
 
   return (
     <div>

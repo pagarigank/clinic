@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { withTenant } from '@clinic/db';
 import { renderBarcodeLabel } from '@clinic/print';
 import { ProblemException } from '../http/problem.exception.js';
@@ -33,7 +33,10 @@ type Tx = Parameters<Parameters<typeof withTenant>[1]>[0];
 
 @Injectable()
 export class LabService {
-  constructor(private readonly supplyService: SupplyService) {}
+  // Explicit @Inject: tsx/esbuild does not emit design:paramtypes, so a constructor
+  // parameter without it binds undefined and every call that uses it throws
+  // "Cannot read properties of undefined" at runtime — never at build time.
+  constructor(@Inject(SupplyService) private readonly supplyService: SupplyService) {}
 
   // ── Sections ───────────────────────────────────────────────────────────────
 
@@ -1637,6 +1640,46 @@ export class LabService {
       );
       if (!res.rows[0]) throw new ProblemException('NOT_FOUND', { detail: 'Report not found' });
       return res.rows[0];
+    });
+  }
+
+  /**
+   * Fetch the stored rendered PDF for a released report.
+   *
+   * The report artifact is produced by the asynchronous lab job (JOB-43) and
+   * sealed with a SHA-256 hash. We deliberately serve the stored bytes rather
+   * than re-rendering: an official, hash-sealed document must remain byte
+   * identical to what was sealed.
+   */
+async getReportArtifact(
+    tenantId: string,
+    reportId: string,
+  ): Promise<{ bytes: Buffer; fileName: string; sha256: string | null; byteLength: number }> {
+    return withTenant({ tenantId }, async (tx) => {
+      const rep = await tx.query<{ file_id: string | null }>(
+        `SELECT file_id FROM lab_reports WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, reportId],
+      );
+      if (!rep.rows[0]) throw new ProblemException('NOT_FOUND', { detail: 'Report not found' });
+      const fileId = rep.rows[0].file_id;
+      if (!fileId) {
+        throw new ProblemException('CONFLICT', {
+          detail: 'The report PDF has not been rendered yet. Try again once the report finishes processing.',
+        });
+      }
+      const file = await tx.query<{ content: Buffer | null; file_name: string; sha256: string | null }>(
+        `SELECT content, file_name, sha256 FROM files
+              WHERE tenant_id = $1 AND id = $2 AND origin = 'GENERATED'`,
+        [tenantId, fileId],
+      );
+      const row = file.rows[0];
+      if (!row || !row.content) throw new ProblemException('NOT_FOUND', { detail: 'Report artifact not found' });
+      return {
+        bytes: row.content,
+        fileName: row.file_name,
+        sha256: row.sha256,
+        byteLength: row.content.byteLength,
+      };
     });
   }
 

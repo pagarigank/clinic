@@ -25,7 +25,7 @@ import { join } from "node:path";
  * full env, and @nestjs/testing is deliberately not a dependency) or reading
  * emitted metadata. A source scan is cheap, needs no environment, and fails at
  * the exact moment someone adds the offending constructor — which is the moment
- * it matters. Controllers are also a closed set in this codebase, so the scan
+ * it matters. Controllers and services are both a closed set in this codebase, so the scan
  * has no blind spot worth trading a boot-time container for.
  *
  * The rule, stated once: any constructor parameter that is a class-typed
@@ -34,13 +34,17 @@ import { join } from "node:path";
 
 const SRC_ROOT = join(process.cwd(), "apps/api/src");
 
-function controllerFiles(dir: string): string[] {
+function injectableFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
-      out.push(...controllerFiles(full));
-    } else if (entry.endsWith(".controller.ts")) {
+      out.push(...injectableFiles(full));
+    } else if (entry.endsWith(".controller.ts") || entry.endsWith(".service.ts")) {
+      // Services count too: PharmacyService and LabService both injected SupplyService
+      // without a token, so posting a dispense died with
+      // "Cannot read properties of undefined (reading 'postMovement')" — the same
+      // trap, one layer down, where no test or typecheck could see it.
       out.push(full);
     }
   }
@@ -79,8 +83,11 @@ function findUndecoratedInjections(files: string[]): ConstructorFinding[] {
       for (let j = i + 1; j < Math.min(i + 20, lines.length); j++) {
         const l = lines[j]!;
         if (/private|public|protected/.test(l) && /:/.test(l)) {
-          // A parameter that declares a type but has no @Inject token.
-          if (!/@Inject\(/.test(l)) {
+          // A parameter that declares a type but has no @Inject token. The decorator
+          // may sit on its own line above (the idiomatic form for multi-parameter
+          // constructors), so accept either.
+          const decorated = /@Inject\(/.test(l) || /@Inject\(/.test(lines[j - 1] ?? "");
+          if (!decorated) {
             findings.push({ file, line: j + 1, text: l.trim() });
           }
         }
@@ -92,10 +99,10 @@ function findUndecoratedInjections(files: string[]): ConstructorFinding[] {
   return findings;
 }
 
-describe("controller constructor injection", () => {
-  const files = controllerFiles(SRC_ROOT);
+describe("constructor injection (controllers + services)", () => {
+  const files = injectableFiles(SRC_ROOT);
 
-  it("finds controllers to check (sanity: the scan is not silently empty)", () => {
+  it("finds injectable classes to check (sanity: the scan is not silently empty)", () => {
     expect(files.length, "no controllers found — has apps/api/src moved?").toBeGreaterThan(10);
   });
 

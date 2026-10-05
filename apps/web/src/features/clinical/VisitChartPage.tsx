@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { AlertBanner, StatusPill, PatientBanner, Timeline, ReasonModal } from "@clinic/ui";
-import { apiGet, apiPost, ApiError } from "../../shared/api/client.js";
+import { AlertBanner, StatusPill, PatientBanner, Timeline } from "@clinic/ui";
+import { apiGet, apiPost, apiGetBlob, ApiError } from "../../shared/api/client.js";
 import { useStepUp, isStepUpRequired } from "../../shared/auth/StepUpContext.js";
 import { PrescriptionPrintModal } from "./PrescriptionPrintModal.js";
 
@@ -116,44 +116,48 @@ interface SupplyRow {
   notes?: string | null;
 }
 
-const DEMO = {
-  visit: {
-    id: "v-demo",
-    visitNo: "V-20261002-00001",
-    patientId: "a4000000-0000-4000-8000-000000000001",
-    patientName: "Santos, Maria Elena",
-    dateOfBirth: "1988-04-12",
-    sex: "F",
-    status: "IN_PROGRESS",
-    branchId: "a1000000-0000-4000-8000-000000000001",
-    branchName: "Main Branch",
-    clinicName: "Metro Health Clinic & Diagnostic Center",
-    chiefComplaint: "Fever 3 days, productive cough",
-    practitionerName: "Dr. Maria Elena Reyes, MD",
-    allergies: [{ substance: "Penicillin", severity: "high" }],
-  },
-  vitals: [
-    { id: "vt1", recordedAt: "2026-10-02 08:45", bpSys: 118, bpDia: 76, heartRate: 96, temperatureC: "38.4", spo2: 97, flags: ["FEVER"] },
-  ] as VitalsRow[],
-  notes: [] as NoteRow[],
-  diagnoses: [] as DiagnosisRow[],
-  prescriptions: [] as RxRow[],
-  labOrders: [] as LabOrderRow[],
-  supplies: [] as SupplyRow[],
-};
+interface CertificateRow {
+  id: string;
+  doc_no: string;
+  cert_type: "FIT_TO_WORK" | "SICK_LEAVE" | "CLEARANCE";
+  findings?: string | null;
+  valid_from?: string | null;
+  valid_to?: string | null;
+  issued_at?: string;
+  voided_at?: string | null;
+  void_reason?: string | null;
+  patient_name?: string;
+  issuer_name?: string;
+}
 
 export function VisitChartPage() {
-  const { visitId = "v-demo" } = useParams();
+  const { visitId = "" } = useParams();
   const navigate = useNavigate();
   const { requestStepUp } = useStepUp();
 
-  const [visit, setVisit] = useState(DEMO.visit);
-  const [vitals, setVitals] = useState<VitalsRow[]>(DEMO.vitals);
-  const [notes, setNotes] = useState<NoteRow[]>(DEMO.notes);
-  const [diagnoses, setDiagnoses] = useState<DiagnosisRow[]>(DEMO.diagnoses);
-  const [prescriptions, setPrescriptions] = useState<RxRow[]>(DEMO.prescriptions);
-  const [labOrders, setLabOrders] = useState<LabOrderRow[]>(DEMO.labOrders);
-  const [supplies, setSupplies] = useState<SupplyRow[]>(DEMO.supplies);
+  const [loading, setLoading] = useState(true);
+  const [visit, setVisit] = useState<{
+    id: string; visitNo: string; patientId: string; patientName: string;
+    dateOfBirth?: string; sex?: string; status?: string;
+    branchId?: string; branchName?: string; clinicName?: string;
+    chiefComplaint?: string; practitionerName?: string;
+    allergies?: Array<{ substance: string; severity?: string }>;
+  } | null>(null);
+  const [vitals, setVitals] = useState<VitalsRow[]>([]);
+  const [notes, setNotes] = useState<NoteRow[]>([]);
+  const [diagnoses, setDiagnoses] = useState<DiagnosisRow[]>([]);
+  const [prescriptions, setPrescriptions] = useState<RxRow[]>([]);
+  const [labOrders, setLabOrders] = useState<LabOrderRow[]>([]);
+  const [supplies, setSupplies] = useState<SupplyRow[]>([]);
+  const [certificates, setCertificates] = useState<CertificateRow[]>([]);
+
+  // Certificate form (CLN-T8)
+  const [certType, setCertType] = useState<CertificateRow["cert_type"]>("FIT_TO_WORK");
+  const [certFindings, setCertFindings] = useState("");
+  const [certValidFrom, setCertValidFrom] = useState("");
+  const [certValidTo, setCertValidTo] = useState("");
+  const [certSubmitting, setCertSubmitting] = useState(false);
+  const [certPrintingId, setCertPrintingId] = useState<string | null>(null);
 
   const [printModal, setPrintModal] = useState<{ open: boolean; tab: "RX" | "LAB" | "ALL" } | null>(null);
   const [availableDrugs, setAvailableDrugs] = useState<any[]>([]);
@@ -181,6 +185,11 @@ export function VisitChartPage() {
 
   // Rx form
   const [rxGeneric, setRxGeneric] = useState("");
+  // The matched formulary product id. Without it the prescription item is created
+  // with drugProductId = null, and the dispense workbench drops the line
+  // (it requires item_id to allocate stock), so a prescription written in the UI
+  // can never be dispensed. Selecting from the formulary now records the link.
+  const [rxDrugProductId, setRxDrugProductId] = useState<string | null>(null);
   const [rxSigDose, setRxSigDose] = useState("");
   const [rxFrequency, setRxFrequency] = useState("");
   const [rxQty, setRxQty] = useState("");
@@ -235,25 +244,26 @@ export function VisitChartPage() {
   }, []);
 
   useEffect(() => {
-    if (visitId === "v-demo") return;
+    if (!visitId) return;
+    setLoading(true);
     (async () => {
       try {
         const v = await apiGet<any>(`/clinical/visits/${visitId}`);
         if (v?.id) {
           setVisit({
             id: v.id,
-            visitNo: v.visit_no || v.visitNo || "VIS-2026",
-            patientId: v.patient_id || v.patientId || "a4000000-0000-4000-8000-000000000001",
-            patientName: v.patient_name || v.patientName || "Maria Elena Santos",
-            dateOfBirth: v.date_of_birth ? v.date_of_birth.split("T")[0] : "1988-04-12",
-            sex: v.gender || v.sex || "F",
+            visitNo: v.visit_no || v.visitNo || "",
+            patientId: v.patient_id || v.patientId || "",
+            patientName: v.patient_name || v.patientName || "",
+            dateOfBirth: v.date_of_birth ? v.date_of_birth.split("T")[0] : undefined,
+            sex: v.gender || v.sex || undefined,
             status: v.status || "IN_PROGRESS",
-            branchId: v.branch_id || v.branchId || "a1000000-0000-4000-8000-000000000001",
-            branchName: v.branch_name || v.branchName || "Main Branch",
-            clinicName: v.clinic_name || v.clinicName || "Metro Health Clinic & Diagnostic Center",
+            branchId: v.branch_id || v.branchId || undefined,
+            branchName: v.branch_name || v.branchName || undefined,
+            clinicName: v.clinic_name || v.clinicName || undefined,
             chiefComplaint: v.chief_complaint || v.chiefComplaint || "",
-            practitionerName: v.practitioner_name || v.practitionerName || "Dr. Maria Elena Reyes, MD",
-            allergies: Array.isArray(v.allergies) ? v.allergies : [{ substance: "Penicillin", severity: "high" }],
+            practitionerName: v.practitioner_name || v.practitionerName || undefined,
+            allergies: Array.isArray(v.allergies) ? v.allergies : [],
           } as any);
         }
         if (Array.isArray(v?.vitals) && v.vitals.length > 0) setVitals(v.vitals);
@@ -275,8 +285,14 @@ export function VisitChartPage() {
         }
         if (Array.isArray(v?.labOrders)) setLabOrders(v.labOrders);
         if (Array.isArray(v?.supplies)) setSupplies(v.supplies);
+        try {
+          const certs = await apiGet<{ data?: CertificateRow[] }>(`/clinical/visits/${visitId}/certificates`);
+          if (Array.isArray(certs?.data)) setCertificates(certs.data);
+        } catch { /* certificates are optional on the chart */ }
       } catch {
-        setError("Live chart unavailable — showing the demonstration encounter.");
+        setError("Could not load visit chart. The visit may not exist or you may not have access.");
+      } finally {
+        setLoading(false);
       }
     })();
   }, [visitId]);
@@ -370,12 +386,22 @@ export function VisitChartPage() {
       return;
     }
     try {
-      const patientId = visit.patientId || "a4000000-0000-4000-8000-000000000001";
+      if (!visit?.patientId) { setError("Patient information is missing for this visit."); return; }
+      const patientId = visit.patientId;
       const rx = await apiPost<any>("/clinical/prescriptions", {
         visitId,
         patientId,
         isControlled: rxControlled,
-        items: [{ genericName: rxGeneric.trim(), sigDose: rxSigDose.trim(), sigFrequency: rxFrequency.trim(), qtyPrescribed: Number(rxQty) }],
+        items: [{
+          // drugProductId links the line to the formulary so the dispense
+          // workbench can allocate stock against it. Omitted (not null) when
+          // the drug was typed free-form and is not in the formulary.
+          ...(rxDrugProductId ? { drugProductId: rxDrugProductId } : {}),
+          genericName: rxGeneric.trim(),
+          sigDose: rxSigDose.trim(),
+          sigFrequency: rxFrequency.trim(),
+          qtyPrescribed: Number(rxQty),
+        }],
       });
       if (rx?.id) {
         await apiPost(`/clinical/prescriptions/${rx.id}/issue`, {
@@ -392,7 +418,7 @@ export function VisitChartPage() {
           isControlled: rxControlled,
           specialRxNo: rxControlled ? specialRxNo.trim() : undefined,
           qtyWords: rxControlled ? qtyWords.trim() : undefined,
-          prescriberName: (visit as any).practitionerName || "Dr. Maria Elena Reyes, MD",
+          prescriberName: visit.practitionerName || "Attending Physician",
           items: [{
             generic_name: rxGeneric.trim(),
             sig_dose: rxSigDose.trim(),
@@ -414,8 +440,9 @@ export function VisitChartPage() {
     setError(null);
     setLabSubmitting(true);
     try {
-      const branchId = visit.branchId || "a1000000-0000-4000-8000-000000000001";
-      const patientId = visit.patientId || "a4000000-0000-4000-8000-000000000001";
+      const branchId = visit?.branchId || "";
+      if (!visit?.patientId) { setError("Patient information is missing for this visit."); return; }
+      const patientId = visit.patientId;
       const selectedTest = availableTests.find((t) => t.id === selectedTestId);
       const res = await apiPost<any>("/lab/orders", {
         branchId,
@@ -522,17 +549,97 @@ export function VisitChartPage() {
     }
   };
 
+  const loadCertificates = async () => {
+    try {
+      const certs = await apiGet<{ data?: CertificateRow[] }>(`/clinical/visits/${visitId}/certificates`);
+      if (Array.isArray(certs?.data)) setCertificates(certs.data);
+    } catch {
+      /* certificates are optional on the chart */
+    }
+  };
+
+  const issueCertificate = async () => {
+    setError(null);
+    setCertSubmitting(true);
+    try {
+      await apiPost(`/clinical/visits/${visitId}/certificates`, {
+        certType,
+        ...(certFindings.trim() ? { findings: certFindings.trim() } : {}),
+        ...(certValidFrom ? { validFrom: certValidFrom } : {}),
+        ...(certValidTo ? { validTo: certValidTo } : {}),
+      });
+      setNotice("Medical certificate issued and numbered (MC-…).");
+      setCertFindings("");
+      setCertValidFrom("");
+      setCertValidTo("");
+      await loadCertificates();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.problem.detail ?? err.problem.title : "Could not issue the medical certificate.");
+    } finally {
+      setCertSubmitting(false);
+    }
+  };
+
+  const printCertificatePdf = async (cert: CertificateRow) => {
+    setError(null);
+    setCertPrintingId(cert.id);
+    try {
+      const blob = await apiGetBlob(`/clinical/certificates/${cert.id}/pdf`);
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.download = `MedicalCertificate-${cert.doc_no}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      console.warn("Certificate PDF download failed, falling back to window.print():", err);
+      window.print();
+    } finally {
+      setCertPrintingId(null);
+    }
+  };
+
   const history = useMemo(
     () => [
-      { at: "08:30", title: "Visit opened", actor: "Front desk" },
+      ...(visit ? [{ at: "Encounter", title: `Visit ${visit.visitNo} (${visit.status || "IN_PROGRESS"})`, actor: visit.practitionerName || "Attending Physician", tone: "normal" as const }] : []),
       ...vitals.map((v) => ({ at: v.recordedAt, title: "Vitals recorded", actor: "Nurse", tone: (v.flags && v.flags.length > 0 ? "high" : "normal") as "high" | "normal" })),
-      ...prescriptions.map((rx) => ({ at: "Today", title: `Rx ${rx.rxNo} issued`, actor: "Doctor", tone: "normal" as const })),
+      ...prescriptions.map((rx) => ({ at: "Today", title: `Rx ${rx.rxNo} issued`, actor: rx.prescriberName || "Doctor", tone: "normal" as const })),
       ...labOrders.map((ord) => ({ at: "Today", title: `Lab Order ${ord.orderNo || ord.order_no} (${ord.priority})`, actor: "Doctor", tone: (ord.priority === "STAT" ? "high" : "normal") as "high" | "normal" })),
       ...supplies.map((s) => ({ at: "Today", title: `Supply: ${s.itemName || s.item_name} (x${s.qty})`, actor: "Clinical Staff", tone: "normal" as const })),
-      { at: "08:50", title: "Consultation in progress", actor: "Dr. Reyes" },
     ],
-    [vitals, prescriptions, labOrders, supplies],
+    [visit, vitals, prescriptions, labOrders, supplies],
   );
+
+  if (loading) {
+    return (
+      <div className="p-4 text-center">
+        <div className="spinner-border text-primary mb-3" role="status">
+          <span className="visually-hidden">Loading visit chart...</span>
+        </div>
+        <p className="text-muted small">Loading visit chart...</p>
+      </div>
+    );
+  }
+
+  if (!visit) {
+    return (
+      <div className="p-4">
+        <div className="page-header d-flex justify-content-between align-items-center mb-3">
+          <h1 className="page-title">Visit Not Found</h1>
+          <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => navigate("/clinical/visits")}>
+            Back to list
+          </button>
+        </div>
+        <AlertBanner severity="warning">
+          {error || "Could not load visit chart. The visit may not exist or you may not have access."}
+        </AlertBanner>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -564,8 +671,11 @@ export function VisitChartPage() {
       <div className="mb-3">
         <PatientBanner
           patient={{ id: visit.patientId, name: visit.patientName, dateOfBirth: visit.dateOfBirth, sex: visit.sex }}
-          allergies={[{ substance: "Penicillin", reaction: "Urticaria", severity: "high" }]}
-          allergiesCount={1}
+          allergies={(visit.allergies || []).map((a) => ({
+            substance: a.substance,
+            severity: (a.severity as any) || "medium",
+          }))}
+          allergiesCount={visit.allergies?.length || 0}
           onReveal={() => { /* audited PHI read hook */ }}
         />
       </div>
@@ -694,8 +804,13 @@ export function VisitChartPage() {
                           (d.brand_name && d.brand_name.toLowerCase() === val.trim().toLowerCase())
                       );
                       if (matched) {
+                        setRxDrugProductId(matched.id ?? null);
                         if (matched.strength && !rxSigDose) setRxSigDose(matched.strength);
                         if (matched.rx_required === "CONTROLLED") setRxControlled(true);
+                      } else {
+                        // Free text that is not in the formulary cannot be dispensed
+                        // against stock; clear any stale link.
+                        setRxDrugProductId(null);
                       }
                     }}
                   />
@@ -1043,9 +1158,110 @@ export function VisitChartPage() {
           <div className="clinic-card p-3">
             <h2 className="h6">Encounter timeline</h2>
             <Timeline entries={history} />
+</div>
+          </div>
+
+          {/* ── Medical Certificates (CLN-T8) ─────────────────────────────── */}
+          <div className="clinic-card mb-4">
+            <div className="clinic-card-header d-flex justify-content-between align-items-center">
+              <div>
+                <span className="fw-bold">Medical Certificates</span>
+                <span className="small text-muted ms-2">numbered, signed, printable</span>
+              </div>
+              <span className="small text-muted">{certificates.length} issued</span>
+            </div>
+            <div className="p-3">
+              <div className="row g-2 mb-2">
+                <div className="col-md-3">
+                  <label className="form-label small" htmlFor="cert-type">Certificate Type *</label>
+                  <select
+                    id="cert-type"
+                    className="form-select form-select-sm"
+                    value={certType}
+                    onChange={(e) => setCertType(e.target.value as CertificateRow["cert_type"])}
+                  >
+                    <option value="FIT_TO_WORK">Fit to Work</option>
+                    <option value="SICK_LEAVE">Sick Leave</option>
+                    <option value="CLEARANCE">Medical Clearance</option>
+                  </select>
+                </div>
+                <div className="col-md-3">
+                  <label className="form-label small" htmlFor="cert-valid-from">Valid From</label>
+                  <input
+                    id="cert-valid-from"
+                    type="date"
+                    className="form-control form-control-sm"
+                    value={certValidFrom}
+                    onChange={(e) => setCertValidFrom(e.target.value)}
+                  />
+                </div>
+                <div className="col-md-3">
+                  <label className="form-label small" htmlFor="cert-valid-to">Valid To</label>
+                  <input
+                    id="cert-valid-to"
+                    type="date"
+                    className="form-control form-control-sm"
+                    value={certValidTo}
+                    onChange={(e) => setCertValidTo(e.target.value)}
+                  />
+                </div>
+                <div className="col-md-3">
+                  <label className="form-label small" htmlFor="cert-findings">Findings</label>
+                  <input
+                    id="cert-findings"
+                    className="form-control form-control-sm"
+                    placeholder="e.g. Physically fit for employment"
+                    value={certFindings}
+                    onChange={(e) => setCertFindings(e.target.value)}
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-sm btn-cerulean"
+                disabled={certSubmitting}
+                onClick={() => void issueCertificate()}
+              >
+                {certSubmitting ? "Issuing…" : "Issue Certificate"}
+              </button>
+
+              {certificates.length > 0 ? (
+                <div className="mt-3">
+                  <div className="small fw-semibold text-muted mb-1">Issued for this encounter:</div>
+                  {certificates.map((cert) => (
+                    <div key={cert.id} className="d-flex align-items-center justify-content-between py-2 border-bottom small flex-wrap gap-2">
+                      <div className="d-flex align-items-center gap-2 flex-wrap">
+                        <span className="fw-medium text-dark clinic-mono">{cert.doc_no}</span>
+                        <span className="badge bg-light text-muted border">
+                          {cert.cert_type === "FIT_TO_WORK" ? "Fit to Work" : cert.cert_type === "SICK_LEAVE" ? "Sick Leave" : "Clearance"}
+                        </span>
+                        {cert.voided_at ? (
+                          <span className="badge bg-secondary-subtle text-secondary">Voided</span>
+                        ) : (
+                          <span className="badge bg-success-subtle text-success">Valid</span>
+                        )}
+                        {cert.valid_from ? <span className="text-muted">· from {String(cert.valid_from).slice(0, 10)}</span> : null}
+                        {cert.valid_to ? <span className="text-muted">to {String(cert.valid_to).slice(0, 10)}</span> : null}
+                        {cert.findings ? <span className="text-muted italic">({cert.findings})</span> : null}
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-primary py-0 px-2"
+                        style={{ fontSize: "0.78rem" }}
+                        disabled={certPrintingId === cert.id}
+                        onClick={() => void printCertificatePdf(cert)}
+                      >
+                        {certPrintingId === cert.id ? "Preparing…" : "🖨️ Print PDF"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="small text-muted mb-0 mt-3">No certificates issued for this visit.</p>
+              )}
+            </div>
           </div>
         </div>
-      </div>
 
       {/* Sign confirm (StepConfirm pattern; step-up handled by provider) */}
       {signConfirm?.open ? (
@@ -1081,8 +1297,8 @@ export function VisitChartPage() {
           notes={notes}
           prescriptions={prescriptions as any}
           labOrders={labOrders as any}
-          allergies={(visit as any).allergies || [{ substance: "Penicillin", severity: "high" }]}
-          practitionerName={(visit as any).practitionerName || "Dr. Maria Elena Reyes, MD"}
+          allergies={visit.allergies || []}
+          practitionerName={visit.practitionerName}
         />
       ) : null}
     </div>
