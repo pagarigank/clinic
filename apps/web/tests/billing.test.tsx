@@ -196,6 +196,49 @@ describe("CashierPosPage (todo.md §7.2, BIL-T2, BIL-T3)", () => {
 
     expect(screen.getByText("Tender #2")).toBeInTheDocument();
   });
+
+  it("reads the posted payment out of the { payment } envelope the API returns", async () => {
+    // POST /billing/payments answers { payment, changeAmount, invoice }. The record
+    // is nested, so `paymentRes.id` is undefined and the receipt request goes to
+    // /billing/payments/undefined/receipt (500) — the cashier gets a payment with no
+    // official receipt. Pin the unwrap so the envelope cannot silently change.
+    vi.mocked(billingApi.createPayment).mockResolvedValue({
+      payment: {
+        id: "pay-real-1",
+        payment_no: "OR-2026-000584",
+        amount: 585,
+        status: "POSTED",
+      },
+      changeAmount: 0,
+      invoice: { id: "inv-real-1", invoiceNo: "INV-2026-001284", status: "PAID" },
+    } as never);
+    vi.mocked(billingApi.fetchPaymentReceipt).mockResolvedValue({
+      id: "pay-real-1",
+      receipt_no: "OR-2026-000584",
+    } as never);
+
+    renderWithProviders(<CashierPosPage />);
+
+    await waitFor(() => {
+      expect(billingApi.fetchInvoices).toHaveBeenCalled();
+    });
+
+    const payBtn = await screen.findByRole("button", { name: /Complete Payment/i });
+    fireEvent.click(payBtn);
+
+    await waitFor(() => {
+      expect(billingApi.createPayment).toHaveBeenCalled();
+    });
+
+    // The receipt lookup must carry the real payment id, never the string "undefined".
+    await waitFor(() => {
+      expect(billingApi.fetchPaymentReceipt).toHaveBeenCalledWith("pay-real-1");
+    });
+    const receiptArg = vi.mocked(billingApi.fetchPaymentReceipt).mock.calls[0]![0];
+    expect(receiptArg).toBeTruthy();
+    expect(receiptArg).not.toBe("undefined");
+  });
+
 });
 
 describe("CashierShiftsPage (todo.md §7.3, BIL-T5)", () => {
@@ -376,5 +419,7 @@ describe("Phase 7 Enhancements: SOA, POS Hold/Resume, Shift X/Z Reports", () => 
     expect(await screen.findByText(/End-of-Shift Z-Reading & Settlement/i)).toBeInTheDocument();
     expect(screen.getByText(/Reconciliation & Variance/i)).toBeInTheDocument();
   });
+
+
 });
 

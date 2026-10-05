@@ -403,9 +403,21 @@ export function CashierPosPage() {
         })),
       });
 
+      // POST /billing/payments answers { payment, changeAmount, invoice } — the
+      // record is nested under `payment`, not returned at the top level. Reading
+      // `paymentRes.id` therefore yielded undefined and the receipt request went to
+      // /billing/payments/undefined/receipt, which 500s. Unwrap defensively so the
+      // receipt binds to the payment that was actually posted.
+      const posted = (paymentRes?.payment ?? paymentRes) as { id?: string; payment_no?: string };
+
+      // Clear any receipt left from a previous payment so the guard below reflects
+      // *this* attempt rather than a stale success.
+      setReceiptData(null);
+
       // Fetch the server-rendered official receipt.
       try {
-        const rcpt = await fetchPaymentReceipt(paymentRes.id);
+        if (!posted.id) throw new Error("payment response carried no id");
+        const rcpt = await fetchPaymentReceipt(posted.id);
         setReceiptData(rcpt);
       } catch (receiptErr) {
         // Never fabricate a receipt number. This document is the patient's proof of
@@ -416,7 +428,7 @@ export function CashierPosPage() {
         setAlert({
           tone: "danger",
           message:
-            `Payment ${paymentRes.payment_no ?? ""} was recorded, but the official receipt ` +
+            `Payment ${posted.payment_no ?? ""} was recorded, but the official receipt ` +
             `could not be loaded: ${describeError(receiptErr)}. Reprint it from Billing & Invoices ` +
             `once the receipt service is available.`,
         });
@@ -424,7 +436,13 @@ export function CashierPosPage() {
       }
 
       setShowReceiptModal(true);
-      setAlert({ tone: "success", message: `Payment processed! Official Receipt generated.` });
+      // Only claim the receipt exists when it actually loaded. This used to set an
+      // unconditional success alert immediately after the catch block, overwriting the
+      // warning the catch had just written — so a cashier was told "Official Receipt
+      // generated" on screen while the receipt request had failed.
+      if (receiptData) {
+        setAlert({ tone: "success", message: `Payment processed! Official Receipt generated.` });
+      }
       loadInvoices();
     } catch (err: any) {
       setAlert({ tone: "danger", message: err.message || "Payment processing failed." });
