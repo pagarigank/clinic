@@ -55,7 +55,7 @@ export function VerificationQueuePage() {
     setItemResults([]);
     try {
       setLoadingResults(true);
-      const res = await labApi.getItemResults(item.order_id, item.order_item_id);
+      const res = await labApi.getItemResults(item.order_id, item.item_id);
       setItemResults(res);
     } catch (err: any) {
       setError(`Failed to load results: ${err.message}`);
@@ -76,7 +76,7 @@ export function VerificationQueuePage() {
 
       // Refresh results in modal
       if (selectedItem) {
-        const res = await labApi.getItemResults(selectedItem.order_id, selectedItem.order_item_id);
+        const res = await labApi.getItemResults(selectedItem.order_id, selectedItem.item_id);
         setItemResults(res);
       }
       await loadQueue();
@@ -92,13 +92,22 @@ export function VerificationQueuePage() {
     try {
       setVerifying(true);
       setError(null);
-      for (const res of itemResults) {
-        if (res.status === "DRAFT" || res.status === "PRELIMINARY") {
-          await labApi.verifyResult(res.id);
-        }
+      // Only ENTERED is verifiable. The lab_results CHECK constraint permits exactly
+      // ENTERED / VERIFIED / AMENDED, so the previous gate on "DRAFT" || "PRELIMINARY"
+      // never matched anything: the loop body was skipped for every result, and the
+      // handler still reported "All results verified successfully." A verifier could
+      // click it, see a success message, and leave every result unverified — which is
+      // precisely the outcome AC-17 exists to make impossible.
+      const pending = itemResults.filter((r) => r.status === "ENTERED");
+      if (pending.length === 0) {
+        setError("There are no results awaiting verification on this item.");
+        return;
       }
-      setSuccessMsg("All results verified successfully.");
-      const res = await labApi.getItemResults(selectedItem.order_id, selectedItem.order_item_id);
+      for (const res of pending) {
+        await labApi.verifyResult(res.id);
+      }
+      setSuccessMsg(`Verified ${pending.length} result${pending.length === 1 ? "" : "s"}.`);
+      const res = await labApi.getItemResults(selectedItem.order_id, selectedItem.item_id);
       setItemResults(res);
       await loadQueue();
     } catch (err: any) {
@@ -214,7 +223,7 @@ export function VerificationQueuePage() {
                 items.map((item) => {
                   const isStat = item.priority === "STAT";
                   return (
-                    <tr key={item.order_item_id} className={isStat ? "table-danger" : ""}>
+                    <tr key={item.item_id} className={isStat ? "table-danger" : ""}>
                       {/* Priority */}
                       <td>
                         {isStat ? (
@@ -237,7 +246,7 @@ export function VerificationQueuePage() {
                       {/* Patient */}
                       <td>
                         <div className="fw-semibold">
-                          {item.last_name}, {item.first_name}
+                          {item.family_name}, {item.given_name}
                         </div>
                         <div className="small text-muted">MRN: {item.mrn || "Walk-In"}</div>
                       </td>
@@ -292,7 +301,7 @@ export function VerificationQueuePage() {
                 <div className="col-12 col-md-4">
                   <div className="small text-muted">Patient:</div>
                   <div className="fw-bold">
-                    {selectedItem.last_name}, {selectedItem.first_name} (MRN: {selectedItem.mrn || "N/A"})
+                    {selectedItem.family_name}, {selectedItem.given_name} (MRN: {selectedItem.mrn || "N/A"})
                   </div>
                 </div>
                 <div className="col-12 col-md-4">
@@ -396,9 +405,13 @@ export function VerificationQueuePage() {
                             className={`badge ${
                               isAlreadyVerified
                                 ? "bg-success"
-                                : r.status === "DRAFT"
-                                ? "bg-secondary"
-                                : "bg-warning text-dark"
+                                : // ENTERED is the only pre-verification status the
+                                  // lab_results CHECK constraint allows; "DRAFT" here
+                                  // could never match and everything pending fell
+                                  // through to the warning colour.
+                                  r.status === "ENTERED"
+                                ? "bg-warning text-dark"
+                                : "bg-secondary"
                             }`}
                           >
                             {r.status}

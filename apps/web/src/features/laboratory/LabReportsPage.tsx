@@ -1,14 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router";
-import {
-  Alert,
-  AlertBanner,
-  Badge,
-  Button,
-  Modal,
-  StatusPill,
-} from "@clinic/ui";
+import { Alert, Button, Modal } from "@clinic/ui";
 import { labApi, type LabReport } from "./api.js";
+import { apiGetBlob } from "../../shared/api/client.js";
 
 export function LabReportsPage() {
   const [reports, setReports] = useState<LabReport[]>([]);
@@ -17,6 +11,31 @@ export function LabReportsPage() {
 
   // Detail Modal
   const [selectedReport, setSelectedReport] = useState<LabReport | null>(null);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+
+  const handleOpenReportPdf = async () => {
+    if (!selectedReport) return;
+    if (!selectedReport.file_id) return;
+    setIsDownloadingPdf(true);
+    try {
+      const blob = await apiGetBlob(`/lab/reports/${selectedReport.id}/pdf`);
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.download = `LabReport-${selectedReport.order_id.slice(0, 8)}-v${selectedReport.version}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      console.warn("Direct lab report PDF download failed, falling back to window.print():", err);
+      window.print();
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
 
   const loadReports = async () => {
     try {
@@ -166,9 +185,9 @@ export function LabReportsPage() {
                         <span
                           className="font-monospace text-muted small bg-light p-1 rounded border text-truncate d-inline-block"
                           style={{ maxWidth: "220px" }}
-                          title={rep.report_hash}
+                          title={rep.sha256_hash ?? rep.report_hash}
                         >
-                          🔒 {rep.report_hash}
+                          🔒 {rep.sha256_hash ?? rep.report_hash}
                         </span>
                       </td>
 
@@ -227,11 +246,18 @@ export function LabReportsPage() {
                 <div className="col-6">
                   <div className="small text-muted">Patient Name:</div>
                   <div className="fw-bold">
-                    {selectedReport.report_data?.patient?.last_name || "Dela Cruz"},{" "}
-                    {selectedReport.report_data?.patient?.first_name || "Juan"}
+                    {/* No invented fallback. A released laboratory report is a
+                        clinical document: printing "Juan Dela Cruz" on a report that
+                        belongs to someone else is worse than printing nothing, and it
+                        hides a broken payload behind a plausible-looking patient. */}
+                    {selectedReport.report_data?.patient?.family_name ?? "—"}
+                    {selectedReport.report_data?.patient?.given_name
+                      ? `, ${selectedReport.report_data.patient.given_name}`
+                      : ""}
                   </div>
                   <div className="small text-muted">
-                    MRN: {selectedReport.report_data?.patient?.mrn || "WALK-IN"} • {selectedReport.report_data?.patient?.gender || "M"}
+                    MRN: {selectedReport.report_data?.patient?.mrn ?? "—"} •{" "}
+                    {selectedReport.report_data?.patient?.sex ?? "—"}
                   </div>
                 </div>
                 <div className="col-6 text-end">
@@ -289,7 +315,7 @@ export function LabReportsPage() {
                   <div>
                     <div className="small fw-bold text-dark">Cryptographic Document Seal</div>
                     <div className="font-monospace small text-muted text-break">
-                      SHA-256: {selectedReport.report_hash}
+                      SHA-256: {selectedReport.sha256_hash ?? selectedReport.report_hash}
                     </div>
                   </div>
                   <span className="badge bg-primary text-white">✓ Verified Seal</span>
@@ -314,8 +340,20 @@ export function LabReportsPage() {
           <Button variant="secondary" onClick={() => setSelectedReport(null)}>
             Close
           </Button>
-          <Button variant="primary" onClick={() => window.print()}>
-            🖨️ Print Report (via Print Pipeline)
+          <Button variant="outline-primary" onClick={() => window.print()}>
+            🖨️ Print View
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => void handleOpenReportPdf()}
+            disabled={isDownloadingPdf || !selectedReport?.file_id}
+            title={
+              selectedReport?.file_id
+                ? "Open the sealed, SHA-256-verified report PDF"
+                : "The official PDF has not been rendered yet (JOB-43 pending)"
+            }
+          >
+            {isDownloadingPdf ? "Opening…" : "📄 Open Official PDF"}
           </Button>
         </Modal.Footer>
       </Modal>

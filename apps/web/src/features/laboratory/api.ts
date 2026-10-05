@@ -9,6 +9,8 @@ import type {
   ReleaseLabReportRequest,
   CreateLabQcRunRequest,
   CreateLabTestRequest,
+  CreateLabAnalyteRequest,
+  CreateLabReferenceRangeRequest,
   BulkPriceAdjustRequest,
 } from "@clinic/contracts";
 
@@ -49,6 +51,22 @@ export interface LabAnalyte {
   };
 }
 
+export interface LabReferenceRange {
+  id: string;
+  tenant_id: string;
+  analyte_id: string;
+  sex: "ALL" | "MALE" | "FEMALE";
+  age_min_days: number;
+  age_max_days: number;
+  normal_min?: number | null;
+  normal_max?: number | null;
+  critical_low?: number | null;
+  critical_high?: number | null;
+  text_range?: string | null;
+  effective_from?: string;
+  effective_to?: string | null;
+}
+
 export interface LabTest {
   id: string;
   section_id: string;
@@ -87,35 +105,54 @@ export interface LabInstrument {
   branch_name?: string;
 }
 
+/**
+ * GET /lab/worklist row.
+ *
+ * Field names here are the ones the endpoint actually returns. It emits `item_id`
+ * (not `order_item_id`), `given_name`/`family_name` (not `first_name`/`last_name`)
+ * and `sex` (not `gender`). The earlier shape in this file invented names the server
+ * never sent, so `selectedItem.order_item_id` was undefined at every call site:
+ *
+ *   POST /lab/orders/:id/items/undefined/collect   -> 500
+ *
+ * i.e. accessioning a specimen was impossible from the UI. Optional members are
+ * genuinely optional because the worklist is a flat projection across items whose
+ * columns differ by section and status.
+ */
 export interface WorklistItem {
-  order_item_id: string;
+  item_id: string;
   order_id: string;
   order_no: string;
   priority: "ROUTINE" | "URGENT" | "STAT";
-  item_status: "ORDERED" | "COLLECTED" | "RECEIVED" | "IN_PROGRESS" | "RESULTED" | "VERIFIED" | "RELEASED" | "CANCELLED" | "REJECTED";
+  item_status: string;
   test_id: string;
   test_code: string;
   test_name: string;
-  is_panel: boolean;
-  requires_pathologist_review: boolean;
-  tat_minutes: number;
   is_confidential: boolean;
   patient_id: string;
-  mrn?: string;
-  first_name: string;
-  last_name: string;
-  gender: string;
+  mrn?: string | null;
+  given_name: string;
+  family_name: string;
+  sex?: string | null;
   date_of_birth: string;
-  accession_no?: string;
-  specimen_type_id?: string;
-  specimen_condition?: string;
+  accession_no?: string | null;
+  specimen_id?: string | null;
+  specimen_type_id?: string | null;
+  specimen_condition?: string | null;
+  section_id?: string | null;
+  section_name?: string | null;
+  source?: string | null;
+  item_created_at: string;
+  ordered_at?: string | null;
+  is_panel?: boolean;
+  requires_pathologist_review?: boolean;
+  tat_minutes?: number;
   specimen_type_name?: string;
   tube_top_color?: string;
-  ordered_at: string;
-  collected_at?: string;
-  received_at?: string;
-  result_entered_at?: string;
-  result_verified_at?: string;
+  collected_at?: string | null;
+  received_at?: string | null;
+  result_entered_at?: string | null;
+  result_verified_at?: string | null;
 }
 
 export interface LabResultValue {
@@ -132,7 +169,12 @@ export interface LabResultValue {
   value_numeric?: number | null;
   value_text?: string | null;
   flag?: "LL" | "L" | "N" | "H" | "HH" | "A" | null;
-  status: "DRAFT" | "PRELIMINARY" | "VERIFIED" | "AMENDED";
+  // The lab_results CHECK constraint permits exactly these three. The previous union
+  // listed DRAFT and PRELIMINARY — values the database can never hold — and omitted
+  // ENTERED, which is the status every result actually sits in between being keyed in
+  // and being verified. That is why the verification queue's "verify all" loop never
+  // matched a single row.
+  status: "ENTERED" | "VERIFIED" | "AMENDED";
   instrument_id?: string;
   entered_by: string;
   entered_by_name?: string;
@@ -216,6 +258,10 @@ export interface LabReport {
   order_id: string;
   version: number;
   report_hash: string;
+  /** Set once JOB-43 renders and seals the official PDF artifact. */
+  file_id?: string | null;
+  /** SHA-256 of the sealed rendered PDF bytes (distinct from report_hash). */
+  sha256_hash?: string | null;
   issued_at: string;
   issued_by: string;
   issued_by_name?: string;
@@ -239,6 +285,14 @@ export const labApi = {
   createTest: (data: CreateLabTestRequest & { price?: number }) => apiPost<LabTest>("/lab/tests", data),
   updateTest: (id: string, data: Partial<CreateLabTestRequest> & { price?: number }) => apiPatch<LabTest>(`/lab/tests/${id}`, data),
   deleteTest: (id: string) => apiDelete<{ success: boolean }>(`/lab/tests/${id}`),
+  listAnalytes: (testId: string) => apiGet<LabAnalyte[]>(`/lab/tests/${testId}/analytes`),
+  createAnalyte: (testId: string, data: CreateLabAnalyteRequest) =>
+    apiPost<LabAnalyte>(`/lab/tests/${testId}/analytes`, data),
+  deleteAnalyte: (analyteId: string) => apiDelete<{ success: boolean }>(`/lab/analytes/${analyteId}`),
+  listReferenceRanges: (analyteId: string) =>
+    apiGet<LabReferenceRange[]>(`/lab/analytes/${analyteId}/ranges`),
+  createReferenceRange: (analyteId: string, data: CreateLabReferenceRangeRequest) =>
+    apiPost<LabReferenceRange>(`/lab/analytes/${analyteId}/ranges`, data),
   bulkAdjustPricing: (data: BulkPriceAdjustRequest) => apiPost<{ adjustedCount: number; message: string }>("/admin/pricing/bulk-adjust", data),
   listInstruments: (branchId?: string) => {
     const qs = branchId ? `?branchId=${branchId}` : "";

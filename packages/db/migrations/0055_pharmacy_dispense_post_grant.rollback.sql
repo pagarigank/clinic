@@ -1,6 +1,34 @@
 -- 0055_pharmacy_dispense_post_grant.rollback.sql
 -- Undo exactly what 0055 did, in reverse order.
 
+-- SAFETY (must run before any destructive statement in this file)
+--
+-- Deleting a role cascades away user_roles, which silently strips the role from every
+-- user who held it: the grants come back on the next migration run but the
+-- assignments do not, so effective permissions come back empty and every route 403s
+-- with a permission that the role plainly should have. That happened twice during
+-- development (0055 and 0056) and it is invisible unless you go looking.
+--
+-- Refuse to roll back while anyone is still assigned, so this fails loudly and
+-- atomically instead of half-reverting.
+DO $$
+DECLARE
+  assigned integer;
+BEGIN
+  SELECT count(*) INTO assigned
+  FROM user_roles ur
+  WHERE ur.role_id IN (
+    SELECT id FROM roles
+    WHERE tenant_id = '11111111-1111-4111-8111-111111111111'
+      AND code IN ('pharmacist_verifier', 'pharmacist_dispenser')
+  );
+  IF assigned > 0 THEN
+    RAISE EXCEPTION
+      'refusing to roll back: % user(s) still assigned these roles; remove the assignments first',
+      assigned;
+  END IF;
+END $$;
+
 -- 1. tenant_admin dispense.post (only what 0055 could have added: not where the role
 --    already holds rx.verify).
 DELETE FROM role_permissions rp

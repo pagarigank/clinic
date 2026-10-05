@@ -102,7 +102,7 @@ export function LabWorklistPage() {
       const q = searchFilter.toLowerCase();
       const matchNo = item.order_no.toLowerCase().includes(q);
       const matchAcc = item.accession_no?.toLowerCase().includes(q) ?? false;
-      const matchPatient = `${item.first_name} ${item.last_name}`.toLowerCase().includes(q);
+      const matchPatient = `${item.given_name} ${item.family_name}`.toLowerCase().includes(q);
       const matchMrn = item.mrn?.toLowerCase().includes(q) ?? false;
       const matchTest = item.test_name.toLowerCase().includes(q) || item.test_code.toLowerCase().includes(q);
       return matchNo || matchAcc || matchPatient || matchMrn || matchTest;
@@ -147,9 +147,22 @@ export function LabWorklistPage() {
       return;
     }
     try {
+      // Refuse to accession with a made-up specimen type. This used to fall back to
+      // the literal "00000000-0000-0000-0000-000000000001", which is not a valid
+      // UUID for the contract (version nibble must be 1-8), so Zod rejected it and
+      // the request surfaced as an opaque 500. If the test carries no specimen type
+      // the honest outcome is a visible message, not a fabricated identifier.
+      if (!selectedItem.specimen_type_id) {
+        setCollectSubmitting(false);
+        alert(
+          `Cannot accession ${selectedItem.order_no}: ${selectedItem.test_name} has no ` +
+            `specimen type configured. A specimen type must be set on the test before collection.`,
+        );
+        return;
+      }
       setCollectSubmitting(true);
-      await labApi.collectSpecimen(selectedItem.order_id, selectedItem.order_item_id, {
-        specimenTypeId: selectedItem.specimen_type_id || "00000000-0000-0000-0000-000000000001",
+      await labApi.collectSpecimen(selectedItem.order_id, selectedItem.item_id, {
+        specimenTypeId: selectedItem.specimen_type_id,
         collectionSite: collectSite,
         twoIdentifiersVerified: true,
       });
@@ -173,7 +186,7 @@ export function LabWorklistPage() {
     }
     try {
       setReceiveSubmitting(true);
-      await labApi.receiveSpecimen(selectedItem.order_id, selectedItem.order_item_id, {
+      await labApi.receiveSpecimen(selectedItem.order_id, selectedItem.item_id, {
         condition: receiveCondition,
         rejectionReason: receiveCondition !== "OK" ? rejectionReason : undefined,
         storageLocation: receiveCondition === "OK" ? storageLocation : undefined,
@@ -363,7 +376,7 @@ export function LabWorklistPage() {
 
                   return (
                     <tr
-                      key={item.order_item_id}
+                      key={item.item_id}
                       className={isStat ? "table-danger" : isUrgent ? "table-warning" : ""}
                     >
                       {/* Priority */}
@@ -400,10 +413,10 @@ export function LabWorklistPage() {
                       {/* Patient */}
                       <td>
                         <div className="fw-semibold">
-                          {item.last_name}, {item.first_name}
+                          {item.family_name}, {item.given_name}
                         </div>
                         <div className="small text-muted">
-                          MRN: {item.mrn || "Walk-In"} • {item.gender}
+                          MRN: {item.mrn || "Walk-In"} • {item.sex}
                         </div>
                       </td>
 
@@ -506,7 +519,7 @@ export function LabWorklistPage() {
                           <Button
                             size="sm"
                             variant="success"
-                            onClick={() => navigate(`/laboratory/results?orderId=${item.order_id}&itemId=${item.order_item_id}`)}
+                            onClick={() => navigate(`/laboratory/results?orderId=${item.order_id}&itemId=${item.item_id}`)}
                           >
                             📝 Enter Results
                           </Button>
@@ -516,7 +529,7 @@ export function LabWorklistPage() {
                           <Button
                             size="sm"
                             variant="warning"
-                            onClick={() => navigate(`/laboratory/results?orderId=${item.order_id}&itemId=${item.order_item_id}`)}
+                            onClick={() => navigate(`/laboratory/results?orderId=${item.order_id}&itemId=${item.item_id}`)}
                           >
                             ✍️ Complete Results
                           </Button>
@@ -667,7 +680,7 @@ export function LabWorklistPage() {
               <div className="mb-3 p-3 bg-light rounded border">
                 <div className="fw-bold">{selectedItem.test_name}</div>
                 <div className="small text-muted">
-                  Patient: {selectedItem.last_name}, {selectedItem.first_name} (MRN: {selectedItem.mrn || "N/A"})
+                  Patient: {selectedItem.family_name}, {selectedItem.given_name} (MRN: {selectedItem.mrn || "N/A"})
                 </div>
                 <div className="small text-muted">
                   Container Top: {selectedItem.tube_top_color || "Standard"}
@@ -734,7 +747,7 @@ export function LabWorklistPage() {
                   Accession: <strong>{selectedItem.accession_no}</strong>
                 </div>
                 <div className="small text-muted">
-                  Patient: {selectedItem.last_name}, {selectedItem.first_name}
+                  Patient: {selectedItem.family_name}, {selectedItem.given_name}
                 </div>
               </div>
             )}

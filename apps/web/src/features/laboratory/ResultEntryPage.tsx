@@ -308,10 +308,10 @@ export function ResultEntryPage() {
               <div className="col-12 col-md-4 border-end">
                 <div className="small text-muted text-uppercase fw-semibold">Patient Information</div>
                 <div className="h6 fw-bold mb-0">
-                  {order.last_name}, {order.first_name}
+                  {order.family_name}, {order.given_name}
                 </div>
                 <div className="small text-muted">
-                  MRN: <strong>{order.mrn || "Walk-In"}</strong> • {order.gender}
+                  MRN: <strong>{order.mrn || "Walk-In"}</strong> • {order.sex}
                 </div>
               </div>
               <div className="col-12 col-md-4 border-end">

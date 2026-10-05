@@ -599,12 +599,16 @@ export class LabService {
                p.last_name as family_name, p.first_name as given_name, p.gender as sex, p.date_of_birth,
                lt.id as test_id, lt.code as test_code, lt.name as test_name, lt.is_confidential,
                ls.id as section_id, ls.name as section_name,
+               lt.specimen_type_id,
+               st.name as specimen_type_name,
+               st.default_container as tube_top_color,
                s.id as specimen_id, s.accession_no, s.condition as specimen_condition
         FROM lab_order_items loi
         JOIN lab_orders lo ON lo.id = loi.order_id AND lo.tenant_id = loi.tenant_id
         JOIN patients p ON p.id = lo.patient_id AND p.tenant_id = lo.tenant_id
         JOIN lab_tests lt ON lt.id = loi.test_id AND lt.tenant_id = loi.tenant_id
         JOIN lab_sections ls ON ls.id = lt.section_id AND ls.tenant_id = lt.tenant_id
+        LEFT JOIN lab_specimen_types st ON st.id = lt.specimen_type_id AND st.tenant_id = lt.tenant_id
         LEFT JOIN specimens s ON s.order_id = lo.id AND s.specimen_type_id = lt.specimen_type_id AND s.tenant_id = loi.tenant_id
         WHERE loi.tenant_id = $1 AND lo.status != 'CANCELLED'
       `;
