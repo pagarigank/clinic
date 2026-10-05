@@ -744,8 +744,46 @@ export class PharmacyService {
       const rx = rxRes.rows[0];
 
       if (dto.action === 'APPROVE') {
-        // Record approval intervention if notes provided, prescription is approved for dispensing
-        return { success: true, action: 'APPROVE', rxId, message: 'Prescription verified and approved for dispensing' };
+        // This branch used to `return { success: true }` without writing anything, so
+        // the UI reported "verified and cleared for dispensing" while nothing changed
+        // server-side — the approval gate did not exist.
+        //
+        // Approval deliberately does NOT move prescriptions.status. Per
+        // specification §9.3 the Rx status only changes at dispense time
+        // (DISPENSED / PARTIALLY_DISPENSED); verification is a gate that must be
+        // evidenced, not a status. The allowed values are
+        // DRAFT/ISSUED/PARTIALLY_DISPENSED/DISPENSED/EXPIRED/CANCELLED
+        // (specification §5.2 data dictionary) — there is no VERIFIED, and the UI
+        // filter chip that offered it was the thing inventing it.
+        //
+        // So: record the approval in pharmacist_interventions (already the audit
+        // table for PHM-T1), keep the Rx ISSUED, and report that truthfully. The
+        // dispense step is what later flips it to DISPENSED.
+        await tx.query(
+          `INSERT INTO pharmacist_interventions (
+             tenant_id, rx_id, type, description, outcome, pharmacist_id
+           )
+           VALUES ($1, $2, 'OTHER', $3, $4, $5)`,
+          [
+            tenantId,
+            rxId,
+            dto.description ??
+              'Pharmacist clinical review completed; cleared for dispensing',
+            dto.outcome ?? 'APPROVED_WITH_OVERRIDE',
+            userId,
+          ],
+        );
+
+        return {
+          success: true,
+          action: 'APPROVE',
+          rxId,
+          rxNo: rx.rx_no,
+          // The Rx stays ISSUED until it is dispensed (specification §9.3).
+          status: rx.status,
+          verifiedForDispensing: true,
+          message: 'Prescription verified and cleared for dispensing',
+        };
       }
 
       if (dto.action === 'INTERVENE') {
