@@ -25,6 +25,28 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock("../src/features/pharmacy/api.js", () => ({ pharmacyApi: apiMock }));
 
+// PharmacyQueuePage fetches through the shared client (apiGet), not through
+// features/pharmacy/api.js, so mocking only the latter left the page doing real
+// network calls in jsdom. It then rendered nothing and the assertions below failed
+// for the wrong reason. Stub the module the page actually imports.
+const clientMock = vi.hoisted(() => ({
+  apiGet: vi.fn(),
+  apiPost: vi.fn(),
+  apiPatch: vi.fn(),
+  apiDelete: vi.fn(),
+  apiGetBlob: vi.fn(),
+  printBlob: vi.fn(),
+  ApiError: class ApiError extends Error {
+    problem: any;
+    constructor(p: any) {
+      super(p?.title ?? "API error");
+      this.problem = p;
+    }
+  },
+}));
+
+vi.mock("../src/shared/api/client.js", () => clientMock);
+
 function renderWithProviders(ui: React.ReactElement) {
   return render(
     <MemoryRouter>
@@ -92,7 +114,7 @@ function prescription(overrides: Record<string, unknown> = {}) {
   return {
     id: "rx-1",
     rx_no: "RX-2026-00412",
-    status: "VERIFIED",
+    status: "ISSUED",
     is_controlled: false,
     patient_id: "p-1",
     patient_first_name: "Clara",
@@ -103,6 +125,16 @@ function prescription(overrides: Record<string, unknown> = {}) {
     prescriber_name: "Dr. Reyes",
     visit_no: "V-2026-001",
     items: [PARACETAMOL_ITEM],
+    // PHM-T1 automated safety findings, returned on the prescription detail.
+    findings: [
+      {
+        type: "ALLERGY",
+        severity: "CRITICAL",
+        title: "Known Severe Beta-Lactam Allergy Detected",
+        description: "Patient has a recorded severe allergy to Penicillin / Amoxicillin.",
+        requiresOverrideReason: true,
+      },
+    ],
     ...overrides,
   };
 }
@@ -130,6 +162,18 @@ const POSTED_DISPENSE = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+
+  // The queue page calls GET /pharmacy/queue, then GET /pharmacy/prescriptions/:id
+  // for each row (the list endpoint carries no item lines). Route by URL so both
+  // resolve to the same fixture.
+  const rx = prescription({ allergies: ["Penicillin", "Amoxicillin"] });
+  clientMock.apiGet.mockImplementation(async (url: string) => {
+    if (url === "/pharmacy/queue") return [rx];
+    if (url.startsWith("/pharmacy/prescriptions/")) return rx;
+    return {};
+  });
+  clientMock.apiPost.mockResolvedValue({ success: true });
+
   apiMock.listLocations.mockResolvedValue([LOCATION]);
   apiMock.getStock.mockResolvedValue(STOCK);
   apiMock.getPrescription.mockResolvedValue(prescription());
@@ -146,7 +190,8 @@ describe("PharmacyQueuePage (todo §5.1, PHM-T1)", () => {
   it("renders queue, patient details, and clinical safety alerts", async () => {
     renderWithProviders(<PharmacyQueuePage />);
     expect(screen.getByText(/Prescription Verification Queue/i)).toBeInTheDocument();
-    expect(screen.getByText("RX-2026-00412")).toBeInTheDocument();
+    // The queue is fetched on mount, so wait for it rather than asserting synchronously.
+    expect(await screen.findByText("RX-2026-00412")).toBeInTheDocument();
     expect(screen.getByText("Clara Dela Cruz")).toBeInTheDocument();
     expect(screen.getByText(/Allergies: Penicillin, Amoxicillin/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Critical Alert/i).length).toBeGreaterThan(0);
@@ -154,16 +199,22 @@ describe("PharmacyQueuePage (todo §5.1, PHM-T1)", () => {
 
   it("filters prescriptions by status", async () => {
     renderWithProviders(<PharmacyQueuePage />);
-    const verifiedBtn = screen.getByRole("button", { name: "VERIFIED" });
-    fireEvent.click(verifiedBtn);
+    // The queue is fetched on mount.
+    expect(await screen.findByText("RX-2026-00412")).toBeInTheDocument();
 
-    expect(screen.getByText("RX-2026-00409")).toBeInTheDocument();
+    // The status chips mirror the real lifecycle (specification §5.2): there is no
+    // VERIFIED prescription status, so the chip must not offer one.
+    expect(screen.getByRole("button", { name: "ISSUED" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "VERIFIED" })).not.toBeInTheDocument();
+
+    // Filtering to DISPENSED hides the ISSUED prescription in the list.
+    fireEvent.click(screen.getByRole("button", { name: "DISPENSED" }));
     expect(screen.queryByText("RX-2026-00412")).not.toBeInTheDocument();
   });
 
   it("opens verification modal with patient banner, items, and safety findings", async () => {
     renderWithProviders(<PharmacyQueuePage />);
-    const verifyButtons = screen.getAllByRole("button", { name: /Verify Rx/i });
+    const verifyButtons = await screen.findAllByRole("button", { name: /Verify Rx/i });
     fireEvent.click(verifyButtons[0]!);
 
     expect(screen.getByText(/Clinical Pharmacist Verification/i)).toBeInTheDocument();
@@ -173,7 +224,7 @@ describe("PharmacyQueuePage (todo §5.1, PHM-T1)", () => {
 
   it("approves prescription with override reason and clears for dispensing", async () => {
     renderWithProviders(<PharmacyQueuePage />);
-    const verifyButtons = screen.getAllByRole("button", { name: /Verify Rx/i });
+    const verifyButtons = await screen.findAllByRole("button", { name: /Verify Rx/i });
     fireEvent.click(verifyButtons[0]!);
 
     const overrideInput = screen.getByLabelText(/Clinical Override Justification/i);

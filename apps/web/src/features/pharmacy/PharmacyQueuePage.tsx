@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router";
 import {
   Alert,
@@ -10,7 +10,76 @@ import {
   PatientBanner,
   StatusPill,
 } from "@clinic/ui";
-import { apiGet, apiPost } from "../../shared/api/client.js";
+import { apiPost, apiGetBlob, apiGet } from "../../shared/api/client.js";
+
+/**
+ * Maps the API snake_case queue rows onto the camelCase model this screen renders.
+ *
+ * The list endpoint (/pharmacy/queue) returns one row per prescription with the
+ * patient and prescriber denormalised but NO item lines; items, allergies and
+ * safety findings live on /pharmacy/prescriptions/:id. The table renders the drug
+ * and quantity, and the verify drawer renders findings, so this fetches the detail
+ * for the rows on screen. Sequential rather than parallel because a pharmacist
+ * verification queue is short, and it keeps the request count predictable.
+ */
+async function loadQueueIntoModel(): Promise<PrescriptionQueueItem[]> {
+  const rows = await apiGet<any[]>("/pharmacy/queue");
+  if (!Array.isArray(rows)) return [];
+
+  const out: PrescriptionQueueItem[] = [];
+  for (const r of rows) {
+    let detail: any = r;
+    try {
+      detail = (await apiGet<any>(`/pharmacy/prescriptions/${r.id}`)) ?? r;
+    } catch {
+      // Keep the row with whatever the list gave us rather than dropping it: a
+      // prescription with no visible item lines is still a real queued order, and
+      // hiding it entirely would be worse than showing it thinly.
+    }
+
+    const items: PrescriptionLine[] = (detail.items ?? []).map((it: any) => ({
+      id: it.id,
+      drugName: it.brand_name || it.generic_name || it.item_name || "Unnamed product",
+      genericName: it.generic_name ?? "",
+      dosage: it.sig_dose ?? "",
+      route: it.route ?? "",
+      frequency: it.sig_frequency ?? "",
+      durationDays: 0,
+      quantity: Number(it.qty_prescribed ?? 0),
+      uom: it.form ?? "unit",
+      instructions: [it.sig_dose, it.sig_frequency, it.sig_duration].filter(Boolean).join(" "),
+      isControlled: Boolean(it.controlled_schedule),
+      specialRxNumber: it.item_code ?? undefined,
+    }));
+
+    out.push({
+      id: r.id,
+      rxNumber: r.rx_no ?? detail.rx_no ?? "",
+      issuedAt: r.issued_at ?? new Date().toISOString(),
+      status: (detail.status ?? r.status) as PrescriptionQueueItem["status"],
+      patient: {
+        id: r.patient_id ?? "",
+        name: detail.patient_name || `${r.patient_first_name ?? ""} ${r.patient_last_name ?? ""}`.trim(),
+        hrn: r.hrn ?? "",
+        birthDate: (detail.birth_date ?? r.birth_date ?? "").slice(0, 10),
+        sex: (detail.patient_sex ?? "OTHER") as "MALE" | "FEMALE" | "OTHER",
+        // Allergies are safety-critical. An empty list must read as none recorded
+        // rather than silently reading as no known allergies.
+        allergies: (detail.allergies ?? detail.patient_allergies ?? [])
+          .map((a: any) => (typeof a === "string" ? a : (a.substance ?? a.allergen ?? "")))
+          .filter(Boolean),
+      },
+      prescriber: { name: r.prescriber_name ?? "", licenseNo: r.prescriber_license_no ?? "" },
+      items,
+      findings: (detail.findings ?? detail.checks ?? []) as SafetyFinding[],
+      verifiedForDispensing: Boolean(
+        detail.verified_at ?? detail.verifiedForDispensing ?? r.verified_at ?? false,
+      ),
+      isControlled: Boolean(detail.is_controlled ?? r.is_controlled),
+    });
+  }
+  return out;
+}
 
 interface PrescriptionLine {
   id: string;
@@ -40,7 +109,12 @@ interface PrescriptionQueueItem {
   id: string;
   rxNumber: string;
   issuedAt: string;
-  status: "ISSUED" | "VERIFIED" | "DISPENSED" | "CANCELLED";
+  // Only the real DB values (specification §5.2 data dictionary). There is no
+  // VERIFIED prescription status — verification is a gate recorded in
+  // pharmacist_interventions, not a lifecycle state.
+  status: "DRAFT" | "ISSUED" | "PARTIALLY_DISPENSED" | "DISPENSED" | "EXPIRED" | "CANCELLED";
+  /** Set once a pharmacist has cleared this Rx for dispensing (PHM-T1). */
+  verifiedForDispensing?: boolean;
   patient: {
     id: string;
     name: string;
@@ -60,187 +134,13 @@ interface PrescriptionQueueItem {
 }
 
 export function PharmacyQueuePage() {
-  const [prescriptions, setPrescriptions] = useState<PrescriptionQueueItem[]>([
-    {
-      id: "rx-101",
-      rxNumber: "RX-2026-00412",
-      issuedAt: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
-      status: "ISSUED",
-      patient: {
-        id: "pat-1",
-        name: "Clara Dela Cruz",
-        hrn: "HRN-2026-0091",
-        birthDate: "1988-04-12",
-        sex: "FEMALE",
-        allergies: ["Penicillin", "Amoxicillin"],
-      },
-      prescriber: {
-        name: "Dr. Roberto Santos, MD",
-        licenseNo: "PRC-0098412",
-      },
-      items: [
-        {
-          id: "item-1",
-          drugName: "Amoxicillin 500mg Capsule",
-          genericName: "Amoxicillin Trihydrate",
-          dosage: "500 mg",
-          route: "Oral",
-          frequency: "Three times daily (TID)",
-          durationDays: 7,
-          quantity: 21,
-          uom: "CAP",
-          instructions: "Take with full glass of water after meals",
-          isControlled: false,
-        },
-      ],
-      findings: [
-        {
-          type: "ALLERGY",
-          severity: "CRITICAL",
-          title: "Known Severe Beta-Lactam Allergy Detected",
-          description: "Patient has documented Penicillin / Amoxicillin allergy. High risk of anaphylaxis.",
-          requiresOverrideReason: true,
-        },
-      ],
-      isControlled: false,
-    },
-    {
-      id: "rx-102",
-      rxNumber: "RX-2026-00413",
-      issuedAt: new Date(Date.now() - 55 * 60 * 1000).toISOString(),
-      status: "ISSUED",
-      patient: {
-        id: "pat-2",
-        name: "Juan Emilio Aguinaldo",
-        hrn: "HRN-2026-0034",
-        birthDate: "1962-11-20",
-        sex: "MALE",
-        allergies: ["Aspirin"],
-      },
-      prescriber: {
-        name: "Dr. Alicia Tan, MD",
-        licenseNo: "PRC-0076231",
-        s2Number: "S2-NCR-2026-8812",
-      },
-      items: [
-        {
-          id: "item-2",
-          drugName: "Morphine Sulfate 10mg/mL Ampoule",
-          genericName: "Morphine Sulfate",
-          dosage: "10 mg/mL",
-          route: "Subcutaneous",
-          frequency: "Every 4 hours PRN severe breakthrough pain",
-          durationDays: 3,
-          quantity: 6,
-          uom: "AMP",
-          instructions: "Inject 1 ampoule SC for pain score > 7. Max 4 doses/24hr.",
-          isControlled: true,
-          specialRxNumber: "PDEA-DDB-2026-00981",
-        },
-      ],
-      findings: [
-        {
-          type: "DOSE_WARNING",
-          severity: "HIGH",
-          title: "Controlled Substance — AC-7 Mandated Flow",
-          description: "Dangerous Drug Schedule II. Yellow slip required, witness co-signature, and running ledger entry.",
-        },
-      ],
-      isControlled: true,
-    },
-    {
-      id: "rx-103",
-      rxNumber: "RX-2026-00414",
-      issuedAt: new Date(Date.now() - 110 * 60 * 1000).toISOString(),
-      status: "ISSUED",
-      patient: {
-        id: "pat-3",
-        name: "Eduardo Manalo",
-        hrn: "HRN-2026-0077",
-        birthDate: "1975-08-05",
-        sex: "MALE",
-        allergies: [],
-      },
-      prescriber: {
-        name: "Dr. Roberto Santos, MD",
-        licenseNo: "PRC-0098412",
-      },
-      items: [
-        {
-          id: "item-3",
-          drugName: "Simvastatin 20mg Tablet",
-          genericName: "Simvastatin",
-          dosage: "20 mg",
-          route: "Oral",
-          frequency: "Once daily at bedtime",
-          durationDays: 30,
-          quantity: 30,
-          uom: "TAB",
-          instructions: "Take 1 tablet at night",
-          isControlled: false,
-        },
-        {
-          id: "item-4",
-          drugName: "Clarithromycin 500mg Tablet",
-          genericName: "Clarithromycin",
-          dosage: "500 mg",
-          route: "Oral",
-          frequency: "Twice daily (BID)",
-          durationDays: 10,
-          quantity: 20,
-          uom: "TAB",
-          instructions: "Take 1 tablet every 12 hours",
-          isControlled: false,
-        },
-      ],
-      findings: [
-        {
-          type: "INTERACTION",
-          severity: "CRITICAL",
-          title: "Severe Drug Interaction: Simvastatin + Clarithromycin",
-          description: "Concurrent use significantly increases statin exposure. Marked risk of rhabdomyolysis and acute renal failure.",
-          mechanism: "CYP3A4 inhibition by clarithromycin blocks hepatic simvastatin metabolism.",
-          requiresOverrideReason: true,
-        },
-      ],
-      isControlled: false,
-    },
-    {
-      id: "rx-104",
-      rxNumber: "RX-2026-00409",
-      issuedAt: new Date(Date.now() - 190 * 60 * 1000).toISOString(),
-      status: "VERIFIED",
-      patient: {
-        id: "pat-4",
-        name: "Lourdes Bautista",
-        hrn: "HRN-2026-0042",
-        birthDate: "1995-02-18",
-        sex: "FEMALE",
-        allergies: [],
-      },
-      prescriber: {
-        name: "Dr. Alicia Tan, MD",
-        licenseNo: "PRC-0076231",
-      },
-      items: [
-        {
-          id: "item-5",
-          drugName: "Paracetamol 500mg Tablet",
-          genericName: "Paracetamol",
-          dosage: "500 mg",
-          route: "Oral",
-          frequency: "Every 4-6 hours PRN fever",
-          durationDays: 5,
-          quantity: 15,
-          uom: "TAB",
-          instructions: "For temperature >= 38.0 C",
-          isControlled: false,
-        },
-      ],
-      findings: [],
-      isControlled: false,
-    },
-  ]);
+  // Loaded from GET /pharmacy/queue. This used to be a hardcoded list of four
+  // fictional prescriptions (Clara Dela Cruz / rx-101 ...), so the verification
+  // queue a pharmacist worked from contained no real patients at all, while the
+  // allergy and AC-7 dangerous-drug panels below it rendered against that fiction.
+  const [prescriptions, setPrescriptions] = useState<PrescriptionQueueItem[]>([]);
+  const [queueLoading, setQueueLoading] = useState(true);
+  const [queueError, setQueueError] = useState<string | null>(null);;
 
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [searchTerm, setSearchTerm] = useState<string>("");
@@ -248,6 +148,31 @@ export function PharmacyQueuePage() {
   const [isVerifyingModalOpen, setIsVerifyingModalOpen] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [isDownloadingQueuePdf, setIsDownloadingQueuePdf] = useState(false);
+
+  const downloadQueuePdf = async () => {
+    setIsDownloadingQueuePdf(true);
+    try {
+      const status = statusFilter === "ALL" ? "ISSUED" : statusFilter;
+      const blob = await apiGetBlob(`/pharmacy/queue/pdf?status=${encodeURIComponent(status)}`);
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.download = `Pharmacy-RxQueue-${status}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      console.warn("RX queue PDF download failed, falling back to window.print():", err);
+      window.print();
+    } finally {
+      setIsDownloadingQueuePdf(false);
+    }
+  };
 
   // Intervention modal state
   const [isInterveneModalOpen, setIsInterveneModalOpen] = useState(false);
@@ -271,11 +196,37 @@ export function PharmacyQueuePage() {
     return true;
   });
 
+  const loadQueue = useCallback(async () => {
+    setQueueLoading(true);
+    setQueueError(null);
+    try {
+      setPrescriptions(await loadQueueIntoModel());
+    } catch (err) {
+      setPrescriptions([]);
+      const detail =
+        err && typeof err === "object" && "problem" in err
+          ? String((err as any).problem?.detail ?? (err as any).problem?.title ?? err)
+          : String(err);
+      setQueueError(`Could not load the verification queue: ${detail}`);
+    } finally {
+      setQueueLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadQueue();
+  }, [loadQueue]);
   const openVerifyDrawer = (rx: PrescriptionQueueItem) => {
     setSelectedRx(rx);
     setOverrideReason("");
     setIsVerifyingModalOpen(true);
   };
+
+  /** Surface a failed pharmacist action instead of reporting a success that did not happen. */
+  const describeActionError = (err: unknown): string =>
+    err && typeof err === "object" && "problem" in err
+      ? String((err as any).problem?.detail ?? (err as any).problem?.title ?? err)
+      : String(err);
 
   const handleApprove = async () => {
     if (!selectedRx) return;
@@ -285,35 +236,58 @@ export function PharmacyQueuePage() {
       return;
     }
 
+    // VerifyPrescriptionSchema (packages/contracts) requires `action` with the
+    // literal "APPROVE". This sent `decision: "APPROVED"`, which Zod rejected as
+    // an invalid enum value — so the approval never reached the service, and the
+    // empty catch below still showed the pharmacist a success message. Field names
+    // must match the contract exactly; see CreatePatientSchema/dob for the same trap.
     try {
       await apiPost(`/pharmacy/prescriptions/${selectedRx.id}/verify`, {
-        decision: "APPROVED",
-        overrideReason: overrideReason.trim() || undefined,
-        notes: "Clinical checks reviewed and verified by Pharmacist",
+        action: "APPROVE",
+        description:
+          overrideReason.trim() || "Clinical checks reviewed and verified by Pharmacist",
+        outcome: hasCriticalFinding ? "APPROVED_WITH_OVERRIDE" : undefined,
       });
-    } catch {
-      // offline / mock fallback
+    } catch (err) {
+      // Do not claim success on a rejected write. The pharmacist must know the
+      // approval did not stick, otherwise they would release a drug against a
+      // prescription the server still considers unverified.
+      setActionError(`Could not verify ${selectedRx.rxNumber}: ${describeActionError(err)}`);
+      return;
     }
 
+    // The Rx stays ISSUED after verification — per specification §9.3 its status only
+    // changes when it is dispensed. Marking it VERIFIED here was a fiction the UI
+    // invented (and the DB has no such status), so it now reflects what happened.
+    // Mark it verified in local state so the row switches to the Dispense action.
+    // The status itself is unchanged (still ISSUED); only the gate flipped.
     setPrescriptions((prev) =>
-      prev.map((item) => (item.id === selectedRx.id ? { ...item, status: "VERIFIED" } : item))
+      prev.map((item) =>
+        item.id === selectedRx.id ? { ...item, verifiedForDispensing: true } : item,
+      ),
     );
     setIsVerifyingModalOpen(false);
-    setActionSuccessMsg(`Prescription ${selectedRx.rxNumber} has been verified and cleared for dispensing.`);
+    setActionSuccessMsg(
+      `Prescription ${selectedRx.rxNumber} has been verified and cleared for dispensing. ` +
+        `It stays in the queue until the pharmacist dispenses it.`,
+    );
   };
 
   const handleInterveneSubmit = async () => {
     if (!selectedRx || !interventionNotes.trim()) return;
 
+    // Same contract mismatch as handleApprove: `action: "INTERVENE"` with
+    // `description` / `outcome`, not `decision` / `interventionNotes`.
     try {
       await apiPost(`/pharmacy/prescriptions/${selectedRx.id}/verify`, {
-        decision: "INTERVENED",
+        action: "INTERVENE",
         interventionType,
-        interventionNotes,
-        physicianContacted,
+        description: interventionNotes.trim(),
+        outcome: "MODIFIED_BY_PRESCRIBER",
       });
-    } catch {
-      // fallback
+    } catch (err) {
+      setActionError(`Could not log the intervention on ${selectedRx.rxNumber}: ${describeActionError(err)}`);
+      return;
     }
 
     setIsInterveneModalOpen(false);
@@ -326,11 +300,12 @@ export function PharmacyQueuePage() {
 
     try {
       await apiPost(`/pharmacy/prescriptions/${selectedRx.id}/verify`, {
-        decision: "REJECTED",
-        rejectionReason,
+        action: "REJECT",
+        rejectReason: rejectionReason.trim(),
       });
-    } catch {
-      // fallback
+    } catch (err) {
+      setActionError(`Could not reject ${selectedRx.rxNumber}: ${describeActionError(err)}`);
+      return;
     }
 
     setPrescriptions((prev) =>
@@ -362,6 +337,15 @@ export function PharmacyQueuePage() {
         </div>
 
         <div className="d-flex align-items-center gap-2">
+          <Button
+            variant="outline-secondary"
+            className="d-inline-flex align-items-center gap-1"
+            onClick={() => void downloadQueuePdf()}
+            disabled={isDownloadingQueuePdf}
+          >
+            <span>📄</span>
+            <span>{isDownloadingQueuePdf ? "Preparing…" : "Download RX Queue PDF"}</span>
+          </Button>
           <Link to="/pharmacy/dispenses">
             <Button variant="outline-primary" className="d-inline-flex align-items-center gap-1">
               <span>⚖️</span>
@@ -386,6 +370,18 @@ export function PharmacyQueuePage() {
         </Alert>
       )}
 
+      {actionError && (
+        <Alert variant="danger" dismissible onClose={() => setActionError(null)} className="mb-4">
+          <div className="d-flex align-items-center gap-2">
+            <span>⚠️</span>
+            <strong>{actionError}</strong>
+          </div>
+          <p className="mb-0 mt-1 small">
+            The prescription was not changed on the server. Reload the queue before acting on it.
+          </p>
+        </Alert>
+      )}
+
       {/* Filter and Search Bar */}
       <div className="card shadow-sm border-0 mb-4" style={{ background: "var(--surface-raised)", borderRadius: "var(--radius-md)" }}>
         <div className="card-body p-3">
@@ -404,7 +400,7 @@ export function PharmacyQueuePage() {
               <div className="d-flex align-items-center gap-2">
                 <span className="text-muted small fw-semibold">Status:</span>
                 <div className="btn-group btn-group-sm w-100" role="group">
-                  {["ALL", "ISSUED", "VERIFIED", "DISPENSED"].map((st) => (
+                  {["ALL", "ISSUED", "PARTIALLY_DISPENSED", "DISPENSED", "CANCELLED"].map((st) => (
                     <button
                       key={st}
                       type="button"
@@ -441,10 +437,28 @@ export function PharmacyQueuePage() {
               </tr>
             </thead>
             <tbody>
-              {filteredPrescriptions.length === 0 ? (
+              {queueLoading ? (
                 <tr>
                   <td colSpan={8} className="text-center py-5 text-muted">
-                    <div style={{ fontSize: "2rem" }}>💊</div>
+                    <div aria-hidden="true" style={{ fontSize: "2rem" }}>⏳</div>
+                    <p className="mt-2 mb-0">Loading prescriptions awaiting verification…</p>
+                  </td>
+                </tr>
+              ) : queueError ? (
+                <tr>
+                  <td colSpan={8} className="text-center py-5">
+                    <div aria-hidden="true" style={{ fontSize: "2rem" }}>⚠️</div>
+                    <p className="mt-2 mb-1 fw-semibold text-danger">Verification queue unavailable</p>
+                    <p className="mb-2 small text-muted">{queueError}</p>
+                    <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => void loadQueue()}>
+                      Retry
+                    </button>
+                  </td>
+                </tr>
+              ) : filteredPrescriptions.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="text-center py-5 text-muted">
+                    <div aria-hidden="true" style={{ fontSize: "2rem" }}>💊</div>
                     <p className="mt-2 mb-0 fw-semibold">No prescriptions found matching the selected filter.</p>
                   </td>
                 </tr>
@@ -513,19 +527,19 @@ export function PharmacyQueuePage() {
                       <td>
                         <StatusPill
                           tone={
-                            rx.status === "VERIFIED"
-                              ? "normal"
-                              : rx.status === "ISSUED"
-                              ? "pending"
-                              : rx.status === "DISPENSED"
+                            rx.status === "ISSUED"
+                              ? rx.verifiedForDispensing
+                                ? "normal"
+                                : "pending"
+                              : rx.status === "DISPENSED" || rx.status === "PARTIALLY_DISPENSED"
                               ? "normal"
                               : "neutral"
                           }
-                          label={rx.status}
+                          label={rx.status === "ISSUED" && rx.verifiedForDispensing ? "VERIFIED" : rx.status}
                         />
                       </td>
                       <td className="text-end">
-                        {rx.status === "ISSUED" ? (
+                        {rx.status === "ISSUED" && !rx.verifiedForDispensing ? (
                           <Button
                             variant="primary"
                             size="sm"
@@ -535,8 +549,8 @@ export function PharmacyQueuePage() {
                             <span>🔍</span>
                             <span>Verify Rx</span>
                           </Button>
-                        ) : rx.status === "VERIFIED" ? (
-                          <Link to={`/pharmacy/dispenses`}>
+                        ) : rx.status === "ISSUED" ? (
+                          <Link to={`/pharmacy/dispenses?rxId=${rx.id}`}>
                             <Button variant="outline-success" size="sm">
                               ⚖️ Dispense
                             </Button>
