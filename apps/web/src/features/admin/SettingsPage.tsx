@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Link } from "react-router";
 import { AlertBanner, StatusPill } from "@clinic/ui";
 import { ThemeControls } from "../../shared/theme/ThemeControls.js";
+import { apiGet, apiPut, ApiError } from "../../shared/api/client.js";
 
 interface ModuleEntitlement {
   module: string;
@@ -10,6 +11,34 @@ interface ModuleEntitlement {
   status: "ENABLED" | "TRIAL" | "DISABLED" | "DRAINING";
   dependencies: string[];
 }
+
+interface ClinicProfileData {
+  id?: string;
+  name: string;
+  slug?: string;
+  tagline?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  website?: string | null;
+  dohLicenseNo?: string | null;
+  philhealthAccreditationNo?: string | null;
+  tin?: string | null;
+  letterheadFooter?: string | null;
+}
+
+const DEFAULT_PROFILE: ClinicProfileData = {
+  name: "Medical Clinic Center",
+  tagline: "Primary Care, Diagnostic & Ambulatory Center",
+  address: "100 Medical Center Way, Ermita, Manila, Philippines",
+  phone: "(02) 8524-1000 / +63 917 555 0100",
+  email: "care@clinic.ph",
+  website: "https://clinic.ph",
+  dohLicenseNo: "DOH-LTO-01449-NCR",
+  philhealthAccreditationNo: "PHIC-ACC-98765-PCP",
+  tin: "009-876-543-000",
+  letterheadFooter: "Licensed Secondary Clinical Laboratory & PhilHealth Konsulta Accredited Facility",
+};
 
 const MODULES_LIST: ModuleEntitlement[] = [
   { module: "admin", name: "Tenant Administration", description: "Staff, roles, branches, service catalog, and security configuration.", status: "ENABLED", dependencies: [] },
@@ -30,6 +59,94 @@ export function SettingsPage() {
   const [requestNotes, setRequestNotes] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
 
+  // Clinic Profile / Printout Letterhead State
+  const [profile, setProfile] = useState<ClinicProfileData>(DEFAULT_PROFILE);
+  const [savedProfile, setSavedProfile] = useState<ClinicProfileData>(DEFAULT_PROFILE);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileFeedback, setProfileFeedback] = useState<{ message: string; severity: "success" | "danger" } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadProfile() {
+      setIsLoadingProfile(true);
+      try {
+        const data = await apiGet<ClinicProfileData>("/admin/clinic-profile");
+        if (!cancelled && data) {
+          const loaded: ClinicProfileData = {
+            id: data.id,
+            name: data.name || DEFAULT_PROFILE.name,
+            slug: data.slug,
+            tagline: data.tagline ?? DEFAULT_PROFILE.tagline,
+            address: data.address ?? DEFAULT_PROFILE.address,
+            phone: data.phone ?? DEFAULT_PROFILE.phone,
+            email: data.email ?? DEFAULT_PROFILE.email,
+            website: data.website ?? DEFAULT_PROFILE.website,
+            dohLicenseNo: data.dohLicenseNo ?? DEFAULT_PROFILE.dohLicenseNo,
+            philhealthAccreditationNo: data.philhealthAccreditationNo ?? DEFAULT_PROFILE.philhealthAccreditationNo,
+            tin: data.tin ?? DEFAULT_PROFILE.tin,
+            letterheadFooter: data.letterheadFooter ?? DEFAULT_PROFILE.letterheadFooter,
+          };
+          setProfile(loaded);
+          setSavedProfile(loaded);
+        }
+      } catch {
+        // Fall back to defaults
+      } finally {
+        if (!cancelled) setIsLoadingProfile(false);
+      }
+    }
+    loadProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profile.name.trim()) {
+      setProfileFeedback({ message: "Clinic Name is required.", severity: "danger" });
+      return;
+    }
+    setIsSavingProfile(true);
+    setProfileFeedback(null);
+    try {
+      const payload = {
+        name: profile.name.trim(),
+        tagline: profile.tagline?.trim() || null,
+        address: profile.address?.trim() || null,
+        phone: profile.phone?.trim() || null,
+        email: profile.email?.trim() || null,
+        website: profile.website?.trim() || null,
+        dohLicenseNo: profile.dohLicenseNo?.trim() || null,
+        philhealthAccreditationNo: profile.philhealthAccreditationNo?.trim() || null,
+        tin: profile.tin?.trim() || null,
+        letterheadFooter: profile.letterheadFooter?.trim() || null,
+      };
+      const updated = await apiPut<ClinicProfileData>("/admin/clinic-profile", payload);
+      setProfile((prev) => ({ ...prev, ...updated }));
+      setSavedProfile((prev) => ({ ...prev, ...updated }));
+      setProfileFeedback({
+        message: "Clinic profile and letterhead configuration updated successfully! All medical certificates, prescriptions, lab requisitions, and orders will immediately reflect these updated details.",
+        severity: "success",
+      });
+    } catch (err) {
+      setProfileFeedback({
+        message: err instanceof ApiError ? `${err.problem.title}: ${err.problem.detail ?? ""}`.trim() : "Failed to update clinic profile.",
+        severity: "danger",
+      });
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  const handleResetProfile = () => {
+    setProfile(savedProfile);
+    setProfileFeedback(null);
+  };
+
+  const isProfileDirty = JSON.stringify(profile) !== JSON.stringify(savedProfile);
+
   const handleSendRequest = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedReqModule) return;
@@ -42,9 +159,9 @@ export function SettingsPage() {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Tenant Settings & Module Entitlements</h1>
+          <h1 className="page-title">Tenant Settings &amp; Module Entitlements</h1>
           <div className="page-subtitle">
-            Entitled platform modules, PhilHealth Konsulta compliance, and clinic security policies
+            Clinic organization details, official printout letterhead, PhilHealth Konsulta compliance, and module entitlements
           </div>
         </div>
       </div>
@@ -55,8 +172,294 @@ export function SettingsPage() {
         </div>
       )}
 
-      {/* Appearance — client-side presentation preferences only (frontend §5.1).
-          These never affect a server-side value, an entitlement, or a permission. */}
+      {/* ── 1. Clinic & Letterhead Information (Tied to Printouts) ────────── */}
+      <div className="clinic-card mb-4" id="clinic-profile-card">
+        <div className="clinic-card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <div>
+            <span className="fw-bold fs-6">🏥 Clinic Information &amp; Official Letterhead</span>
+            <div className="small text-muted">
+              Primary organization profile directly tied up with official printouts (Prescriptions, Medical Certificates, Lab Requisitions, Clinical Orders)
+            </div>
+          </div>
+          <span className="badge bg-primary-subtle text-primary border border-primary-subtle">
+            🖨️ Tied to Encounter Printouts
+          </span>
+        </div>
+        <div className="p-3">
+          {profileFeedback && (
+            <div className="mb-3">
+              <AlertBanner severity={profileFeedback.severity}>{profileFeedback.message}</AlertBanner>
+            </div>
+          )}
+
+          <div className="alert alert-info py-2 px-3 small d-flex align-items-center gap-2 mb-3">
+            <span>💡</span>
+            <div>
+              <strong>Printout Integration:</strong> The details configured below are dynamically injected into the header and letterhead of official PDFs generated by the clinic. When you save changes here, visits printed in this clinic immediately render these official credentials.
+            </div>
+          </div>
+
+          <form onSubmit={handleSaveProfile}>
+            <div className="row g-3">
+              {/* Left Column: Organization & Contact */}
+              <div className="col-md-6">
+                <div className="mb-3">
+                  <label className="form-label small fw-semibold" htmlFor="setting-clinic-name">
+                    CLINIC / FACILITY NAME <span className="text-danger">*</span>
+                  </label>
+                  <input
+                    id="setting-clinic-name"
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. La Salette Medical Center"
+                    value={profile.name}
+                    disabled={isLoadingProfile}
+                    onChange={(e) => setProfile({ ...profile, name: e.target.value })}
+                    required
+                  />
+                  <div className="form-text small">Official trade name appearing prominently at the top of all letterheads.</div>
+                </div>
+
+                <div className="mb-3">
+                  <label className="form-label small fw-semibold" htmlFor="setting-clinic-tagline">
+                    FACILITY TAGLINE / SUBTITLE
+                  </label>
+                  <input
+                    id="setting-clinic-tagline"
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Primary Care, Diagnostic & Ambulatory Center"
+                    value={profile.tagline || ""}
+                    disabled={isLoadingProfile}
+                    onChange={(e) => setProfile({ ...profile, tagline: e.target.value })}
+                  />
+                  <div className="form-text small">Descriptive subtitle shown beneath the clinic name on official documents.</div>
+                </div>
+
+                <div className="mb-3">
+                  <label className="form-label small fw-semibold" htmlFor="setting-clinic-address">
+                    MAIN PHYSICAL ADDRESS
+                  </label>
+                  <textarea
+                    id="setting-clinic-address"
+                    rows={2}
+                    className="form-control"
+                    placeholder="e.g. 100 Medical Center Way, Ermita, Manila, Philippines"
+                    value={profile.address || ""}
+                    disabled={isLoadingProfile}
+                    onChange={(e) => setProfile({ ...profile, address: e.target.value })}
+                  />
+                  <div className="form-text small">Printed as the primary facility location unless a branch specifies an override.</div>
+                </div>
+
+                <div className="row g-2 mb-3">
+                  <div className="col-md-6">
+                    <label className="form-label small fw-semibold" htmlFor="setting-clinic-phone">
+                      CONTACT PHONE / MOBILE
+                    </label>
+                    <input
+                      id="setting-clinic-phone"
+                      type="text"
+                      className="form-control font-monospace"
+                      placeholder="e.g. (02) 8524-1000"
+                      value={profile.phone || ""}
+                      disabled={isLoadingProfile}
+                      onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
+                    />
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label small fw-semibold" htmlFor="setting-clinic-email">
+                      OFFICIAL EMAIL
+                    </label>
+                    <input
+                      id="setting-clinic-email"
+                      type="email"
+                      className="form-control"
+                      placeholder="e.g. care@lasaletteclinic.ph"
+                      value={profile.email || ""}
+                      disabled={isLoadingProfile}
+                      onChange={(e) => setProfile({ ...profile, email: e.target.value })}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Regulatory & Accreditations */}
+              <div className="col-md-6">
+                <div className="mb-3">
+                  <label className="form-label small fw-semibold" htmlFor="setting-clinic-website">
+                    OFFICIAL WEBSITE
+                  </label>
+                  <input
+                    id="setting-clinic-website"
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. https://lasaletteclinic.ph"
+                    value={profile.website || ""}
+                    disabled={isLoadingProfile}
+                    onChange={(e) => setProfile({ ...profile, website: e.target.value })}
+                  />
+                  <div className="form-text small">Public portal or clinic web address.</div>
+                </div>
+
+                <div className="row g-2 mb-3">
+                  <div className="col-md-6">
+                    <label className="form-label small fw-semibold" htmlFor="setting-clinic-doh">
+                      DOH LICENSE TO OPERATE (LTO) NO.
+                    </label>
+                    <input
+                      id="setting-clinic-doh"
+                      type="text"
+                      className="form-control font-monospace"
+                      placeholder="e.g. DOH-LTO-01449-NCR"
+                      value={profile.dohLicenseNo || ""}
+                      disabled={isLoadingProfile}
+                      onChange={(e) => setProfile({ ...profile, dohLicenseNo: e.target.value })}
+                    />
+                    <div className="form-text small">Department of Health facility licence.</div>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label small fw-semibold" htmlFor="setting-clinic-philhealth">
+                      PHILHEALTH ACCREDITATION NO.
+                    </label>
+                    <input
+                      id="setting-clinic-philhealth"
+                      type="text"
+                      className="form-control font-monospace"
+                      placeholder="e.g. PHIC-ACC-98765-PCP"
+                      value={profile.philhealthAccreditationNo || ""}
+                      disabled={isLoadingProfile}
+                      onChange={(e) => setProfile({ ...profile, philhealthAccreditationNo: e.target.value })}
+                    />
+                    <div className="form-text small">Konsulta / Primary Care Provider code.</div>
+                  </div>
+                </div>
+
+                <div className="mb-3">
+                  <label className="form-label small fw-semibold" htmlFor="setting-clinic-tin">
+                    TAX IDENTIFICATION NUMBER (TIN)
+                  </label>
+                  <input
+                    id="setting-clinic-tin"
+                    type="text"
+                    className="form-control font-monospace"
+                    placeholder="e.g. 009-876-543-000"
+                    value={profile.tin || ""}
+                    disabled={isLoadingProfile}
+                    onChange={(e) => setProfile({ ...profile, tin: e.target.value })}
+                  />
+                  <div className="form-text small">Rendered on official cash receipts, billing invoices, and tax disclosures.</div>
+                </div>
+
+                <div className="mb-3">
+                  <label className="form-label small fw-semibold" htmlFor="setting-clinic-footer">
+                    LETTERHEAD FOOTER / ACCREDITATION NOTE
+                  </label>
+                  <input
+                    id="setting-clinic-footer"
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Licensed Secondary Clinical Laboratory & PhilHealth Konsulta Provider"
+                    value={profile.letterheadFooter || ""}
+                    disabled={isLoadingProfile}
+                    onChange={(e) => setProfile({ ...profile, letterheadFooter: e.target.value })}
+                  />
+                  <div className="form-text small">Subtext rendered at the footer or subtitle of medical certificates and receipts.</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Live Letterhead Preview */}
+            <div className="mt-4 pt-3 border-top">
+              <div className="d-flex justify-content-between align-items-center mb-2">
+                <span className="fw-bold small text-uppercase text-secondary">
+                  👁️ Real-Time Official Letterhead Preview
+                </span>
+                <span className="badge bg-secondary-subtle text-secondary small">
+                  Previewing printout header
+                </span>
+              </div>
+
+              <div
+                className="p-4 border rounded bg-white shadow-sm text-center position-relative"
+                style={{
+                  maxWidth: "760px",
+                  margin: "0 auto",
+                  borderColor: "var(--cerulean-300, #cbd5e1)",
+                  borderStyle: "dashed",
+                }}
+              >
+                <div style={{ fontSize: "1.8rem" }}>⚕️</div>
+                <h4 className="fw-bold text-dark mb-1" style={{ letterSpacing: "0.5px" }}>
+                  {profile.name || "CLINIC FACILITY NAME"}
+                </h4>
+                {profile.tagline ? (
+                  <div className="text-secondary small fw-medium mb-1">{profile.tagline}</div>
+                ) : null}
+                <div className="small text-muted" style={{ fontSize: "0.82rem" }}>
+                  {[profile.address, profile.phone, profile.email].filter(Boolean).join(" · ")}
+                </div>
+                {(profile.dohLicenseNo || profile.philhealthAccreditationNo || profile.tin) && (
+                  <div className="small text-secondary mt-1 font-monospace" style={{ fontSize: "0.78rem" }}>
+                    {[
+                      profile.dohLicenseNo ? `DOH LTO: ${profile.dohLicenseNo}` : null,
+                      profile.philhealthAccreditationNo ? `PhilHealth: ${profile.philhealthAccreditationNo}` : null,
+                      profile.tin ? `TIN: ${profile.tin}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join("  |  ")}
+                  </div>
+                )}
+                <div
+                  style={{
+                    borderTop: "2px double #475569",
+                    marginTop: "12px",
+                    marginBottom: "8px",
+                  }}
+                />
+                <div className="small text-muted fst-italic" style={{ fontSize: "0.72rem" }}>
+                  SAMPLE DOCUMENT HEADER — MEDICAL CERTIFICATE / OFFICIAL PRESCRIPTION (Rx) / LAB REQUISITION
+                </div>
+                {profile.letterheadFooter ? (
+                  <div className="badge bg-light text-secondary border mt-2" style={{ fontSize: "0.72rem" }}>
+                    {profile.letterheadFooter}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            {/* Form Actions */}
+            <div className="mt-4 pt-3 border-top d-flex align-items-center justify-content-between flex-wrap gap-2">
+              <div className="small text-muted">
+                {isProfileDirty ? (
+                  <span className="text-warning-emphasis fw-semibold">● You have unsaved letterhead changes</span>
+                ) : (
+                  <span className="text-success fw-semibold">✓ Current letterhead is synced with server</span>
+                )}
+              </div>
+              <div className="d-flex gap-2">
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-secondary"
+                  disabled={!isProfileDirty || isSavingProfile}
+                  onClick={handleResetProfile}
+                >
+                  Reset
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-sm btn-cerulean px-4 fw-bold"
+                  disabled={isSavingProfile || !isProfileDirty}
+                >
+                  {isSavingProfile ? "Saving Profile…" : "💾 Save Clinic Profile & Letterhead"}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {/* Appearance — client-side presentation preferences only (frontend §5.1). */}
       <div className="clinic-card mb-4">
         <div className="clinic-card-header">
           <span className="fw-bold">Appearance</span>
@@ -94,7 +497,7 @@ export function SettingsPage() {
       {/* Security Policies Card */}
       <div className="clinic-card mb-4">
         <div className="clinic-card-header">
-          <span className="fw-bold">Security & Compliance Policies</span>
+          <span className="fw-bold">Security &amp; Compliance Policies</span>
           <span className="badge bg-success-subtle text-success border border-success-subtle">
             ● Active
           </span>
@@ -119,7 +522,7 @@ export function SettingsPage() {
               <div className="p-3 border rounded bg-light">
                 <div className="fw-bold text-dark small">DATA PRIVACY (RA 10173)</div>
                 <div className="fs-5 fw-semibold text-success">Active PHI Auto-Mask</div>
-                <div className="small text-muted mt-1">PhilHealth PIN & IDs masked until audited reveal.</div>
+                <div className="small text-muted mt-1">PhilHealth PIN &amp; IDs masked until audited reveal.</div>
               </div>
             </div>
           </div>

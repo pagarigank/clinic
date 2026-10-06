@@ -242,4 +242,27 @@ describe.skipIf(!hasDb)('Phase 2 Multi-Tenant Isolation (§49)', () => {
     expect(rlsCheck.unitsCount).toBe(0);
     expect(rlsCheck.holidaysCount).toBe(0);
   });
+
+  it('enforces strict tenant isolation on clinic profile and letterhead', async () => {
+    const profileA = await configService.getClinicProfile(TENANT_A, USER_A);
+    const profileB = await configService.getClinicProfile(TENANT_B, USER_B);
+
+    expect(profileA.id).toBe(TENANT_A);
+    expect(profileB.id).toBe(TENANT_B);
+    expect(profileA.id).not.toBe(profileB.id);
+
+    // Direct RLS query on tenants as Tenant B cannot see Tenant A
+    const appPool = createPool({ role: 'app' });
+    const rls = await withTenantOnPool(
+      appPool,
+      { tenantId: TENANT_B, userId: USER_B },
+      async (tx) => {
+        const resA = await tx.query(`SELECT id FROM tenants WHERE id = $1`, [TENANT_A]);
+        const resB = await tx.query(`SELECT id FROM tenants WHERE id = $1`, [TENANT_B]);
+        return { countA: resA.rowCount, countB: resB.rowCount };
+      },
+    );
+    expect(rls.countA).toBe(0);
+    expect(rls.countB).toBe(1);
+  });
 });

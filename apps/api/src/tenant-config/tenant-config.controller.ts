@@ -34,6 +34,7 @@ import {
   CreateOperatingHoursSchema, type CreateOperatingHoursRequest,
   CreateIcd10Schema, type CreateIcd10Request,
   UpdateIcd10Schema, type UpdateIcd10Request,
+  UpdateClinicProfileSchema, type UpdateClinicProfileRequest,
 } from '@clinic/contracts';
 
 @ApiTags('Tenant Configuration')
@@ -373,4 +374,34 @@ export class TenantConfigController {
       return { success: true, code };
     });
   }
+
+  // ── Clinic Profile & Letterhead ─────────────────────────────────────────────
+
+  @RequirePermission('admin.settings.read')
+  @Get('clinic-profile')
+  @ApiOperation({ summary: 'Get clinic profile and printout letterhead details' })
+  async getClinicProfile(@Req() req: RequestWithAuth) {
+    return this.svc.getClinicProfile(req.tenantId!, req.authContext?.userId ?? undefined);
+  }
+
+  @RequirePermission('admin.settings.update')
+  @Put('clinic-profile')
+  @ApiOperation({ summary: 'Update clinic profile and printout letterhead details' })
+  async updateClinicProfile(
+    @Req() req: RequestWithAuth,
+    @Body(new ZodValidationPipe(UpdateClinicProfileSchema)) dto: UpdateClinicProfileRequest,
+  ) {
+    return this.svc.updateClinicProfile(req.tenantId!, req.authContext!.userId!, dto);
+  }
+
+  @RequirePermission('admin.settings.update')
+  @Patch('clinic-profile')
+  @ApiOperation({ summary: 'Update clinic profile and printout letterhead details (alias)' })
+  async patchClinicProfile(
+    @Req() req: RequestWithAuth,
+    @Body(new ZodValidationPipe(UpdateClinicProfileSchema)) dto: UpdateClinicProfileRequest,
+  ) {
+    return this.svc.updateClinicProfile(req.tenantId!, req.authContext!.userId!, dto);
+  }
 }
+

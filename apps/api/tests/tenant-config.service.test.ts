@@ -173,4 +173,53 @@ describe.skipIf(!hasDb)('TenantConfigService (todo 2.1)', () => {
       await ownerPool.query(`DELETE FROM operating_hours WHERE id = $1`, [op.id]);
     });
   });
+
+  describe('clinic profile & letterhead', () => {
+    it('retrieves and updates tenant clinic profile and letterhead fields', async () => {
+      const current = await service.getClinicProfile(TENANT_A, USER_A);
+      expect(current.id).toBe(TENANT_A);
+      expect(current.name).toBeDefined();
+
+      const updated = await service.updateClinicProfile(TENANT_A, USER_A, {
+        name: 'St. Jude Community Health Center',
+        tagline: 'Primary & Ambulatory Care Clinic',
+        address: '456 Taft Avenue, Malate, Manila',
+        phone: '(02) 8521-9999',
+        email: 'info@stjudehealth.ph',
+        website: 'https://stjudehealth.ph',
+        dohLicenseNo: 'DOH-LTO-2026-NCR-777',
+        philhealthAccreditationNo: 'PHIC-ACC-88888',
+        tin: '123-456-789-000',
+        letterheadFooter: 'DOH Licensed Secondary Facility & PhilHealth Accredited',
+      });
+
+      expect(updated.name).toBe('St. Jude Community Health Center');
+      expect(updated.tagline).toBe('Primary & Ambulatory Care Clinic');
+      expect(updated.address).toBe('456 Taft Avenue, Malate, Manila');
+      expect(updated.phone).toBe('(02) 8521-9999');
+      expect(updated.email).toBe('info@stjudehealth.ph');
+      expect(updated.dohLicenseNo).toBe('DOH-LTO-2026-NCR-777');
+      expect(updated.philhealthAccreditationNo).toBe('PHIC-ACC-88888');
+      expect(updated.tin).toBe('123-456-789-000');
+
+      // Verify read-back matches
+      const fetched = await service.getClinicProfile(TENANT_A, USER_A);
+      expect(fetched.name).toBe('St. Jude Community Health Center');
+      expect(fetched.dohLicenseNo).toBe('DOH-LTO-2026-NCR-777');
+
+      // Restore original name
+      await service.updateClinicProfile(TENANT_A, USER_A, {
+        name: current.name,
+        tagline: current.tagline,
+        address: current.address,
+        phone: current.phone,
+        email: current.email,
+        website: current.website,
+        dohLicenseNo: current.dohLicenseNo,
+        philhealthAccreditationNo: current.philhealthAccreditationNo,
+        tin: current.tin,
+        letterheadFooter: current.letterheadFooter,
+      });
+    });
+  });
 });

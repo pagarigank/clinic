@@ -81,7 +81,7 @@ const DESTINATIONS: NavDestination[] = [
   { label: "Roles & Permissions", path: "/admin/roles", keywords: "roles rbac permissions sod" },
   { label: "Branches & Units", path: "/admin/branches", keywords: "branches service units" },
   { label: "Services & Prices", path: "/admin/service-catalog", keywords: "catalog prices discounts payments" },
-  { label: "Settings", path: "/admin/settings", keywords: "settings modules entitlements policy" },
+  { label: "Clinic Profile & Letterhead", path: "/admin/settings", keywords: "settings clinic letterhead profile doh philhealth accreditation modules entitlements policy" },
   { label: "System Health", path: "/ping", keywords: "health ping metrics" },
   { label: "Platform Console", path: "/platform/tenants", keywords: "platform tenants console superadmin" },
 ];

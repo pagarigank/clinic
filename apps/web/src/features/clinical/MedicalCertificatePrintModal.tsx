@@ -106,6 +106,12 @@ export function MedicalCertificatePrintModal({
         if (!touched.current.has("clinicSubtitle") && (profile?.clinic?.branchName || visit.branchName)) {
           setClinicSubtitle(profile?.clinic?.branchName || visit.branchName || "");
         }
+        if (!touched.current.has("clinicAddress") && profile?.clinic?.address) {
+          setClinicAddress(profile.clinic.address);
+        }
+        if (!touched.current.has("clinicContact") && (profile?.clinic?.phone || profile?.clinic?.email)) {
+          setClinicContact(profile.clinic.phone || profile.clinic.email || "");
+        }
       } catch (err) {
         if (!cancelled) {
           setProfileError(

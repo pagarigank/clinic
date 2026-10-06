@@ -2025,7 +2025,39 @@ export const SaveCashSessionSchema = z.object({
   rowVersion: z.number().int().positive().optional(),
 });
 export type SaveCashSessionRequest = z.input<typeof SaveCashSessionSchema>;
+
+export const ClinicProfileSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1).max(200),
+  slug: z.string().min(1).max(100),
+  tagline: z.string().max(255).nullable().optional(),
+  address: z.string().max(500).nullable().optional(),
+  phone: z.string().max(100).nullable().optional(),
+  email: z.string().max(255).nullable().optional(),
+  website: z.string().max(255).nullable().optional(),
+  dohLicenseNo: z.string().max(100).nullable().optional(),
+  philhealthAccreditationNo: z.string().max(100).nullable().optional(),
+  tin: z.string().max(50).nullable().optional(),
+  letterheadFooter: z.string().max(500).nullable().optional(),
+});
+export type ClinicProfile = z.infer<typeof ClinicProfileSchema>;
+
+export const UpdateClinicProfileSchema = z.object({
+  name: z.string().min(1, 'Clinic name is required').max(200),
+  tagline: z.string().max(255).nullable().optional(),
+  address: z.string().max(500).nullable().optional(),
+  phone: z.string().max(100).nullable().optional(),
+  email: z.string().max(255).nullable().optional(),
+  website: z.string().max(255).nullable().optional(),
+  dohLicenseNo: z.string().max(100).nullable().optional(),
+  philhealthAccreditationNo: z.string().max(100).nullable().optional(),
+  tin: z.string().max(50).nullable().optional(),
+  letterheadFooter: z.string().max(500).nullable().optional(),
+});
+export type UpdateClinicProfileRequest = z.infer<typeof UpdateClinicProfileSchema>;
+
 export * from "./compliance.js";
 export * from "./notifications.js";
 export * from "./reports.js";
 export * from "./platform.js";
+

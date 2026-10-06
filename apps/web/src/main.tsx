@@ -163,6 +163,7 @@ const router = createBrowserRouter([
           { path: "service-catalog", element: <RequirePermission module="admin" codes={["admin.service.read", "admin.price.read"]}><CatalogPage /></RequirePermission> },
           { path: "icd10", element: <RequirePermission module="admin" codes={["admin.settings.read", "reference.read"]}><Icd10ManagementPage /></RequirePermission> },
           { path: "settings", element: <RequirePermission module="admin" codes={["admin.settings.read"]}><SettingsPage /></RequirePermission> },
+          { path: "clinic-profile", element: <RequirePermission module="admin" codes={["admin.settings.read"]}><SettingsPage /></RequirePermission> },
         ],
       },
       { path: "compliance", element: <CompliancePage /> },

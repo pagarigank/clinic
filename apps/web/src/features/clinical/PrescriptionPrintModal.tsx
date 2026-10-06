@@ -183,7 +183,14 @@ export function PrescriptionPrintModal({
     (async () => {
       try {
         const profile = await apiGet<{
-          clinic?: { name?: string | null; branchName?: string | null };
+          clinic?: {
+            name?: string | null;
+            tagline?: string | null;
+            branchName?: string | null;
+            address?: string | null;
+            phone?: string | null;
+            email?: string | null;
+          };
           practitioner?: {
             name?: string | null;
             jobTitle?: string | null;
@@ -204,7 +211,11 @@ export function PrescriptionPrintModal({
         if (!touched.current.has("ptrNo")) setPtrNo(p?.ptrNo || "");
         if (!touched.current.has("s2No")) setS2No(p?.s2LicenseNo || "");
         if (!touched.current.has("clinicTitle")) setClinicTitle(profile?.clinic?.name || visit.clinicName || "");
-        if (!touched.current.has("clinicSubtitle")) setClinicSubtitle(profile?.clinic?.branchName || "");
+        if (!touched.current.has("clinicSubtitle")) setClinicSubtitle(profile?.clinic?.branchName || profile?.clinic?.tagline || "");
+        if (!touched.current.has("clinicAddress") && profile?.clinic?.address) setClinicAddress(profile.clinic.address);
+        if (!touched.current.has("clinicContact") && (profile?.clinic?.phone || profile?.clinic?.email)) {
+          setClinicContact(profile.clinic.phone || profile.clinic.email || "");
+        }
       } catch (err) {
         if (!cancelled) {
           setProfileError(

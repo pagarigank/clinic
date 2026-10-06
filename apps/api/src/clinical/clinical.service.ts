@@ -663,7 +663,18 @@ export class ClinicalService {
                 e.ptr_no AS practitioner_ptr_no,
                 e.s2_license_no AS practitioner_s2_no,
                 t.name AS clinic_name,
-                b.name AS branch_name
+                t.tagline AS clinic_tagline,
+                t.address AS clinic_address,
+                t.phone AS clinic_phone,
+                t.email AS clinic_email,
+                t.doh_license_no AS clinic_doh_license_no,
+                t.philhealth_accreditation_no AS clinic_philhealth_no,
+                t.tin AS clinic_tin,
+                t.letterhead_footer AS clinic_letterhead_footer,
+                b.name AS branch_name,
+                b.address AS branch_address,
+                b.phone AS branch_phone,
+                b.email AS branch_email
          FROM visits v
          JOIN patients p ON p.id = v.patient_id
          LEFT JOIN users u ON u.id = v.practitioner_id
@@ -1325,11 +1336,24 @@ export class ClinicalService {
     return withTenant({ tenantId, userId }, async (tx) => {
       const rxRes = await tx.query(
         `SELECT rx.*, p.first_name || ' ' || p.last_name AS patient_name, p.date_of_birth, p.gender,
-                u.name AS prescriber_name, pp.philhealth_accreditation_no
+                u.name AS prescriber_name, pp.philhealth_accreditation_no,
+                t.name AS clinic_name,
+                t.tagline AS clinic_tagline,
+                t.address AS clinic_address,
+                t.phone AS clinic_phone,
+                t.email AS clinic_email,
+                t.doh_license_no AS clinic_doh_license_no,
+                t.philhealth_accreditation_no AS clinic_philhealth_no,
+                b.name AS branch_name,
+                b.address AS branch_address,
+                b.phone AS branch_phone,
+                b.email AS branch_email
          FROM prescriptions rx
          JOIN patients p ON p.id = rx.patient_id
          JOIN users u ON u.id = rx.prescriber_id
          LEFT JOIN practitioner_profiles pp ON pp.user_id = rx.prescriber_id AND pp.tenant_id = rx.tenant_id
+         LEFT JOIN tenants t ON t.id = rx.tenant_id
+         LEFT JOIN branches b ON b.id = rx.branch_id AND b.tenant_id = rx.tenant_id
          WHERE rx.tenant_id = $1 AND rx.id = $2`,
         [tenantId, rxId],
       );
@@ -1517,8 +1541,10 @@ export class ClinicalService {
     const doc: MedicalCertificate = {
       clinicName: overrides?.clinicName || visit.clinic_name || 'Clinic Medical Center',
       branchName: overrides?.branchName || visit.branch_name || undefined,
-      clinicAddress: overrides?.clinicAddress || visit.branch_address || undefined,
-      clinicPhone: overrides?.clinicPhone || visit.branch_phone || undefined,
+      clinicAddress: overrides?.clinicAddress || visit.branch_address || visit.clinic_address || undefined,
+      clinicPhone: overrides?.clinicPhone || visit.branch_phone || visit.clinic_phone || undefined,
+      clinicEmail: overrides?.clinicEmail || visit.branch_email || visit.clinic_email || undefined,
+      dohAccreditationNo: overrides?.dohLicenseNo || visit.clinic_doh_license_no || undefined,
       certificateNo: cert.doc_no,
       issuedAt: new Date(cert.issued_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' }),
       encounterDate,
@@ -1543,7 +1569,7 @@ export class ClinicalService {
       clinicianLicenseNo: prcNumber,
       ptrNo: ptrNumber,
       s2LicenseNo: s2Number,
-      philhealthAccreditationNo: cert.philhealth_accreditation_no || undefined,
+      philhealthAccreditationNo: overrides?.philhealthNo || cert.philhealth_accreditation_no || visit.clinic_philhealth_no || undefined,
       signedElectronically: true,
       verificationHash: printed.verificationHash,
     };
@@ -1574,11 +1600,15 @@ export class ClinicalService {
       },
       clinic: {
         name: visit.clinic_name ?? null,
+        tagline: visit.clinic_tagline ?? null,
         branchName: visit.branch_name ?? null,
-        // branches carries no address/phone columns today; overrides stay the
-        // single source for those lines until a letterhead table exists.
-        address: null,
-        phone: null,
+        address: visit.branch_address || visit.clinic_address || null,
+        phone: visit.branch_phone || visit.clinic_phone || null,
+        email: visit.branch_email || visit.clinic_email || null,
+        dohLicenseNo: visit.clinic_doh_license_no ?? null,
+        philhealthAccreditationNo: visit.clinic_philhealth_no ?? null,
+        tin: visit.clinic_tin ?? null,
+        letterheadFooter: visit.clinic_letterhead_footer ?? null,
       },
       practitioner,
     };
@@ -1669,10 +1699,10 @@ export class ClinicalService {
     const doc: PrescriptionDocument = {
       clinicName: overrides?.clinicName || visit.clinic_name || 'Clinic Medical Center',
       branchName: overrides?.branchName || visit.branch_name || 'Consultation & Specialty Services',
-      clinicAddress: overrides?.clinicAddress || visit.branch_address || 'Metro Manila, Philippines',
-      clinicPhone: overrides?.clinicPhone || visit.branch_phone || '(02) 8888-0000',
-      clinicEmail: overrides?.clinicEmail || 'clinical@clinic.ph',
-      dohAccreditationNo: 'DOH-LTO-2026-NCR-001',
+      clinicAddress: overrides?.clinicAddress || visit.branch_address || visit.clinic_address || 'Metro Manila, Philippines',
+      clinicPhone: overrides?.clinicPhone || visit.branch_phone || visit.clinic_phone || '(02) 8888-0000',
+      clinicEmail: overrides?.clinicEmail || visit.branch_email || visit.clinic_email || 'clinical@clinic.ph',
+      dohAccreditationNo: overrides?.dohLicenseNo || visit.clinic_doh_license_no || 'DOH-LTO-2026-NCR-001',
       rxNo,
       issuedAt: new Date().toISOString().slice(0, 10),
       patientName: visit.patient_name || 'Patient',
@@ -1749,9 +1779,9 @@ export class ClinicalService {
     const doc: LabRequisitionDocument = {
       clinicName: overrides?.clinicName || visit.clinic_name || 'Clinic Diagnostic Center',
       branchName: overrides?.branchName || visit.branch_name || 'Pathology & Clinical Laboratory',
-      clinicAddress: overrides?.clinicAddress || visit.branch_address || 'Metro Manila, Philippines',
-      clinicPhone: overrides?.clinicPhone || visit.branch_phone || '(02) 8888-0000',
-      dohLtoNo: 'DOH-LTO-LAB-2026-0042',
+      clinicAddress: overrides?.clinicAddress || visit.branch_address || visit.clinic_address || 'Metro Manila, Philippines',
+      clinicPhone: overrides?.clinicPhone || visit.branch_phone || visit.clinic_phone || '(02) 8888-0000',
+      dohLtoNo: overrides?.dohLtoNo || overrides?.dohLicenseNo || visit.clinic_doh_license_no || 'DOH-LTO-LAB-2026-0042',
       orderNo,
       issuedAt: new Date().toISOString().slice(0, 10),
       priority,
@@ -1824,8 +1854,8 @@ export class ClinicalService {
     const doc: EncounterOrdersDocument = {
       clinicName: overrides?.clinicName || visit.clinic_name || 'Clinic Medical Center',
       branchName: overrides?.branchName || visit.branch_name || 'Clinical Care Services',
-      clinicAddress: overrides?.clinicAddress || visit.branch_address || 'Metro Manila, Philippines',
-      clinicPhone: overrides?.clinicPhone || visit.branch_phone || '(02) 8888-0000',
+      clinicAddress: overrides?.clinicAddress || visit.branch_address || visit.clinic_address || 'Metro Manila, Philippines',
+      clinicPhone: overrides?.clinicPhone || visit.branch_phone || visit.clinic_phone || '(02) 8888-0000',
       visitNo: visit.visit_no || visit.id.slice(0, 8),
       issuedAt: new Date().toISOString().slice(0, 10),
       patientName: visit.patient_name || 'Patient',
@@ -1887,12 +1917,12 @@ export class ClinicalService {
     }));
 
     const doc: PrescriptionDocument = {
-      clinicName: overrides?.clinicName || 'Clinic Medical Center',
-      branchName: overrides?.branchName || 'Outpatient Services',
-      clinicAddress: overrides?.clinicAddress || 'Metro Manila, Philippines',
-      clinicPhone: overrides?.clinicPhone || '(02) 8888-0000',
-      clinicEmail: 'clinical@clinic.ph',
-      dohAccreditationNo: 'DOH-LTO-2026-NCR-001',
+      clinicName: overrides?.clinicName || rx.clinic_name || 'Clinic Medical Center',
+      branchName: overrides?.branchName || rx.branch_name || 'Outpatient Services',
+      clinicAddress: overrides?.clinicAddress || rx.branch_address || rx.clinic_address || 'Metro Manila, Philippines',
+      clinicPhone: overrides?.clinicPhone || rx.branch_phone || rx.clinic_phone || '(02) 8888-0000',
+      clinicEmail: overrides?.clinicEmail || rx.branch_email || rx.clinic_email || 'clinical@clinic.ph',
+      dohAccreditationNo: overrides?.dohLicenseNo || rx.clinic_doh_license_no || 'DOH-LTO-2026-NCR-001',
       rxNo: rx.rx_no || `RX-${rxId.slice(0, 8)}`,
       issuedAt: new Date().toISOString().slice(0, 10),
       patientName: rx.patient_name || 'Patient',

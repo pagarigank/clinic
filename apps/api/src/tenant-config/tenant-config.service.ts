@@ -10,6 +10,7 @@ import type {
   CreateHolidayRequest,
   CreateServiceUnitRequest,
   CreateOperatingHoursRequest,
+  UpdateClinicProfileRequest,
 } from '@clinic/contracts';
 
 @Injectable()
@@ -278,4 +279,70 @@ export class TenantConfigService {
       return res.rows[0];
     });
   }
+
+  // ── Clinic Profile & Printout Letterhead ─────────────────────────────────────
+
+  async getClinicProfile(tenantId: string, userId?: string) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const res = await tx.query(
+        `SELECT id, name, slug, tagline, address, phone, email, website,
+                doh_license_no AS "dohLicenseNo",
+                philhealth_accreditation_no AS "philhealthAccreditationNo",
+                tin,
+                letterhead_footer AS "letterheadFooter"
+         FROM tenants
+         WHERE id = $1`,
+        [tenantId],
+      );
+      if ((res.rowCount ?? 0) === 0) {
+        throw new ProblemException('NOT_FOUND', { detail: 'Tenant profile not found' });
+      }
+      return res.rows[0];
+    });
+  }
+
+  async updateClinicProfile(tenantId: string, userId: string, dto: UpdateClinicProfileRequest) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const res = await tx.query(
+        `UPDATE tenants
+         SET name = $1,
+             tagline = $2,
+             address = $3,
+             phone = $4,
+             email = $5,
+             website = $6,
+             doh_license_no = $7,
+             philhealth_accreditation_no = $8,
+             tin = $9,
+             letterhead_footer = $10,
+             updated_at = now(),
+             updated_by = $11
+         WHERE id = $12
+         RETURNING id, name, slug, tagline, address, phone, email, website,
+                   doh_license_no AS "dohLicenseNo",
+                   philhealth_accreditation_no AS "philhealthAccreditationNo",
+                   tin,
+                   letterhead_footer AS "letterheadFooter"`,
+        [
+          dto.name.trim(),
+          dto.tagline?.trim() || null,
+          dto.address?.trim() || null,
+          dto.phone?.trim() || null,
+          dto.email?.trim() || null,
+          dto.website?.trim() || null,
+          dto.dohLicenseNo?.trim() || null,
+          dto.philhealthAccreditationNo?.trim() || null,
+          dto.tin?.trim() || null,
+          dto.letterheadFooter?.trim() || null,
+          userId,
+          tenantId,
+        ],
+      );
+      if ((res.rowCount ?? 0) === 0) {
+        throw new ProblemException('NOT_FOUND', { detail: 'Tenant profile not found' });
+      }
+      return res.rows[0];
+    });
+  }
 }
+

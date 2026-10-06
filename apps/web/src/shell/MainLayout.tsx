@@ -108,7 +108,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/admin/branches", icon: "🏢", label: "Branches & Units" },
       { to: "/admin/service-catalog", icon: "💰", label: "Services & Prices" },
       { to: "/admin/icd10", icon: "🩺", label: "ICD-10 Diagnoses" },
-      { to: "/admin/settings", icon: "⚙️", label: "Settings" },
+      { to: "/admin/settings", icon: "⚙️", label: "Settings & Letterhead" },
     ],
   },
   {
@@ -264,6 +264,7 @@ export function MainLayout() {
     "/admin/branches": ["admin.branch.read"],
     "/admin/service-catalog": ["admin.service.read", "admin.price.read"],
     "/admin/settings": ["admin.settings.read"],
+    "/admin/clinic-profile": ["admin.settings.read"],
   };
 
   const navGroups = useMemo(
