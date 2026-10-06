@@ -7,6 +7,7 @@ import {
   Body,
   UseGuards,
   Req,
+  Inject,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
@@ -31,7 +32,7 @@ import { ProblemException } from '../http/problem.exception.js';
 @UseGuards(AuthGuard)
 @ModuleAllowlist()
 export class ReportsController {
-  constructor(private readonly reportsService: ReportsService) {}
+  constructor(@Inject(ReportsService) private readonly reportsService: ReportsService) {}
 
   @Get('reports/catalog')
   @ApiOperation({ summary: 'Get report catalogue strictly filtered to entitled modules (AC-21)' })

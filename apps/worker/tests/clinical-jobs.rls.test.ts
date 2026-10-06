@@ -10,7 +10,7 @@
  * assertions only.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { probeDb } from '@clinic/db/tests/helpers.js';
+import { probeDb, seedUsers, NO_SEED_USERS } from '@clinic/db/tests/helpers.js';
 import { createPool } from '@clinic/db';
 import {
   runAppointmentReminders,
@@ -23,7 +23,7 @@ const hasDb = await probeDb();
 
 const TENANT = '22222222-2222-4222-8222-222222222222';
 const BRANCH = 'b1000000-0000-4000-8000-000000000001';
-const USER = 'b3000000-0000-4000-8000-000000000002';
+const { DOCTOR_B: USER } = hasDb ? await seedUsers() : NO_SEED_USERS;
 
 const tag = `cln-${Date.now().toString(36)}`;
 const owner = createPool({ role: 'owner' });

@@ -331,7 +331,7 @@ export class ComplianceService {
 
       const res = await tx.query(
         `SELECT d.*, p.first_name, p.last_name,
-                COALESCE((SELECT pi.value FROM patient_identifiers pi WHERE pi.tenant_id = p.tenant_id AND pi.patient_id = p.id LIMIT 1), p.id) AS patient_no,
+                COALESCE((SELECT pi.value FROM patient_identifiers pi WHERE pi.tenant_id = p.tenant_id AND pi.patient_id = p.id LIMIT 1), p.id::text) AS patient_no,
                 u.name AS handled_by_name
          FROM data_subject_requests d
          JOIN patients p ON p.tenant_id = d.tenant_id AND p.id = d.patient_id
@@ -348,7 +348,7 @@ export class ComplianceService {
     return withTenant({ tenantId }, async (tx) => {
       const res = await tx.query(
         `SELECT d.*, p.first_name, p.last_name,
-                COALESCE((SELECT pi.value FROM patient_identifiers pi WHERE pi.tenant_id = p.tenant_id AND pi.patient_id = p.id LIMIT 1), p.id) AS patient_no,
+                COALESCE((SELECT pi.value FROM patient_identifiers pi WHERE pi.tenant_id = p.tenant_id AND pi.patient_id = p.id LIMIT 1), p.id::text) AS patient_no,
                 u.name AS handled_by_name
          FROM data_subject_requests d
          JOIN patients p ON p.tenant_id = d.tenant_id AND p.id = d.patient_id
@@ -817,19 +817,19 @@ export class ComplianceService {
 
   async listLegalHolds(tenantId: string, filters: { scope?: string; patientId?: string } = {}) {
     return withTenant({ tenantId }, async (tx) => {
-      const conditions = ['tenant_id = $1'];
+      const conditions = ['lh.tenant_id = $1'];
       const params: any[] = [tenantId];
       if (filters.scope) {
         params.push(filters.scope);
-        conditions.push(`scope = $${params.length}`);
+        conditions.push(`lh.scope = $${params.length}`);
       }
       if (filters.patientId) {
         params.push(filters.patientId);
-        conditions.push(`patient_id = $${params.length}`);
+        conditions.push(`lh.patient_id = $${params.length}`);
       }
       const res = await tx.query(
         `SELECT lh.*, p.first_name, p.last_name,
-                COALESCE((SELECT pi.value FROM patient_identifiers pi WHERE pi.tenant_id = p.tenant_id AND pi.patient_id = p.id LIMIT 1), p.id) AS patient_no,
+                COALESCE((SELECT pi.value FROM patient_identifiers pi WHERE pi.tenant_id = p.tenant_id AND pi.patient_id = p.id LIMIT 1), p.id::text) AS patient_no,
                 u.name AS placed_by_name
          FROM legal_holds lh
          LEFT JOIN patients p ON p.tenant_id = lh.tenant_id AND p.id = lh.patient_id
@@ -908,7 +908,7 @@ export class ComplianceService {
       }
       const res = await tx.query(
         `SELECT rc.*, p.first_name, p.last_name,
-                COALESCE((SELECT pi.value FROM patient_identifiers pi WHERE pi.tenant_id = p.tenant_id AND pi.patient_id = p.id LIMIT 1), p.id) AS patient_no,
+                COALESCE((SELECT pi.value FROM patient_identifiers pi WHERE pi.tenant_id = p.tenant_id AND pi.patient_id = p.id LIMIT 1), p.id::text) AS patient_no,
                 lh.hold_no
          FROM retention_candidates rc
          LEFT JOIN patients p ON p.tenant_id = rc.tenant_id AND p.id = rc.patient_id
@@ -1084,7 +1084,7 @@ export class ComplianceService {
 
       const res = await tx.query(
         `SELECT c.*, p.first_name, p.last_name, p.date_of_birth, p.gender,
-                COALESCE((SELECT pi.value FROM patient_identifiers pi WHERE pi.tenant_id = p.tenant_id AND pi.patient_id = p.id LIMIT 1), p.id) AS patient_no,
+                COALESCE((SELECT pi.value FROM patient_identifiers pi WHERE pi.tenant_id = p.tenant_id AND pi.patient_id = p.id LIMIT 1), p.id::text) AS patient_no,
                 b.name AS branch_name
          FROM pidsr_cases c
          JOIN patients p ON p.tenant_id = c.tenant_id AND p.id = c.patient_id
@@ -1101,7 +1101,7 @@ export class ComplianceService {
     return withTenant({ tenantId }, async (tx) => {
       const res = await tx.query(
         `SELECT c.*, p.first_name, p.last_name, p.date_of_birth, p.gender,
-                COALESCE((SELECT pi.value FROM patient_identifiers pi WHERE pi.tenant_id = p.tenant_id AND pi.patient_id = p.id LIMIT 1), p.id) AS patient_no,
+                COALESCE((SELECT pi.value FROM patient_identifiers pi WHERE pi.tenant_id = p.tenant_id AND pi.patient_id = p.id LIMIT 1), p.id::text) AS patient_no,
                 b.name AS branch_name
          FROM pidsr_cases c
          JOIN patients p ON p.tenant_id = c.tenant_id AND p.id = c.patient_id

@@ -37,6 +37,14 @@ export {
   renderPrescriptionHtml,
   renderLabRequisitionHtml,
   renderEncounterOrdersHtml,
+  renderRxQueueHtml,
+  renderConsumptionListHtml,
+  renderDispenseLabelHtml,
+  renderDangerousDrugsBookHtml,
+  renderPatientStatementHtml,
+  renderShiftReportHtml,
+  renderReceivablesAgingHtml,
+  renderDailyCloseSummaryHtml,
 } from "./templates.js";
 export type {
   MedicalCertificate,
@@ -48,8 +56,23 @@ export type {
   LabRequisitionDocument,
   LabRequisitionItem,
   EncounterOrdersDocument,
+  RxQueueDocument,
+  ConsumptionListDocument,
+  DispenseLabelDocument,
+  DangerousDrugsBookDocument,
+  DangerousDrugsBookRow,
+  PatientStatementDocument,
+  PatientStatementInvoice,
+  PatientStatementInvoiceLine,
+  PatientStatementPayment,
+  ShiftReportDocument,
+  ReceivablesAgingDocument,
+  ReceivablesAgingRow,
+  DailyCloseSummaryDocument,
+  DailyCloseSummaryRow,
 } from "./templates.js";
 
 
 export { buildReceiptDocument, toThermalReceipt } from "./receipt.js";
 export type { ReceiptFacts } from "./receipt.js";
+

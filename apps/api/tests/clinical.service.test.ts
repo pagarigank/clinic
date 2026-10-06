@@ -14,14 +14,14 @@ import { probeDb } from '@clinic/db/tests/helpers.js';
 import { createPool } from '@clinic/db';
 import { ClinicalService } from '../src/clinical/clinical.service.js';
 import { PatientsService } from '../src/patients/patients.service.js';
-import { ProblemException } from '../src/http/problem.exception.js';
+import { seedUsers, NO_SEED_USERS } from "@clinic/db/tests/helpers.js";
 
 const hasDb = await probeDb();
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
 const BRANCH_A = 'a1000000-0000-4000-8000-000000000001';
-const DOCTOR_A = 'a3000000-0000-4000-8000-000000000002';
-const USER_A = 'a3000000-0000-4000-8000-000000000001';
+const { DOCTOR_A } = hasDb ? await seedUsers() : NO_SEED_USERS;
+const { USER_A } = hasDb ? await seedUsers() : NO_SEED_USERS;
 
 describe.skipIf(!hasDb)('ClinicalService (Phase 3)', () => {
   let clinicalSvc: ClinicalService;
@@ -427,11 +427,63 @@ describe.skipIf(!hasDb)('ClinicalService (Phase 3)', () => {
       expect(print.certificate.doc_no).toBe(cert.doc_no);
       expect(print.verificationHash).toBeDefined();
 
+      const certPdf = await clinicalSvc.renderCertificatePdf(TENANT_A, DOCTOR_A, cert.id);
+      expect(certPdf.mediaType).toBe('application/pdf');
+      expect(certPdf.bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+      expect(certPdf.sha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(certPdf.byteLength).toBeGreaterThan(1000);
+
       const voided = await clinicalSvc.voidCertificate(TENANT_A, DOCTOR_A, cert.id, {
         reason: 'Issued with wrong date range',
       });
       expect(voided.voided_at).not.toBeNull();
       expect(voided.void_reason).toBe('Issued with wrong date range');
+    });
+
+    it('lists the certificates issued for a visit and keeps voided ones auditable', async () => {
+      const patient = await patientsSvc.createPatient(TENANT_A, USER_A, {
+        firstName: 'CertListPatient',
+        lastName: 'Ledger',
+        dateOfBirth: '1985-03-11',
+        gender: 'F',
+      });
+      cleanupPatientIds.push(patient.id);
+
+      const visit = await clinicalSvc.openVisit(TENANT_A, USER_A, {
+        branchId: BRANCH_A,
+        patientId: patient.id,
+        practitionerId: DOCTOR_A,
+        visitType: 'OPD',
+      });
+      cleanupVisitIds.push(visit.id);
+
+      const empty = await clinicalSvc.listCertificates(TENANT_A, DOCTOR_A, visit.id);
+      expect(empty.data).toHaveLength(0);
+      expect(empty.total).toBe(0);
+
+      const cert = await clinicalSvc.issueCertificate(TENANT_A, DOCTOR_A, visit.id, {
+        certType: 'SICK_LEAVE',
+        findings: 'Acute viral tonsillitis',
+        validFrom: '2026-10-02',
+        validTo: '2026-10-06',
+      });
+
+      const listed = await clinicalSvc.listCertificates(TENANT_A, DOCTOR_A, visit.id);
+      expect(listed.total).toBe(1);
+      expect(listed.data).toHaveLength(1);
+      expect(listed.data[0].id).toBe(cert.id);
+      expect(listed.data[0].doc_no).toBe(cert.doc_no);
+      expect(listed.data[0].cert_type).toBe('SICK_LEAVE');
+      expect(listed.data[0].patient_name).toBe('CertListPatient Ledger');
+      expect(listed.data[0].issuer_name).toBeTruthy();
+      expect(listed.data[0].voided_at).toBeNull();
+
+      await clinicalSvc.voidCertificate(TENANT_A, DOCTOR_A, cert.id, { reason: 'Superseded' });
+
+      const afterVoid = await clinicalSvc.listCertificates(TENANT_A, DOCTOR_A, visit.id);
+      expect(afterVoid.data).toHaveLength(1);
+      expect(afterVoid.data[0].voided_at).not.toBeNull();
+      expect(afterVoid.data[0].void_reason).toBe('Superseded');
     });
 
     it('records and voids immunizations', async () => {

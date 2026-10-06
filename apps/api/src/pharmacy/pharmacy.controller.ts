@@ -1,5 +1,8 @@
-import { Inject, Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Inject, Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Req, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import type { FastifyReply } from 'fastify';
+import { renderPdf, renderRxQueueHtml } from '@clinic/print';
+import { sendPdf } from '../http/pdf-response.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
 import { Module } from '../rbac/module.guard.js';
@@ -167,6 +170,19 @@ export class PharmacyController {
   }
 
   @RequirePermission('pharmacy.rx.read')
+  @Get('queue/pdf')
+  @ApiOperation({ summary: 'Render the prescription verification queue as a PDF' })
+  async getQueuePdf(
+    @Req() req: RequestWithAuth,
+    @Query('status') status: string,
+    @Res() reply: FastifyReply,
+  ) {
+    const doc = await this.svc.getVerificationQueueDocument(req.tenantId!, status || 'ISSUED');
+    const rendered = await renderPdf(renderRxQueueHtml(doc), { format: 'A4' });
+    void sendPdf(reply, rendered, `Rx-Queue-${status || 'ISSUED'}.pdf`);
+  }
+
+  @RequirePermission('pharmacy.rx.read')
   @Get('prescriptions/:id')
   @ApiOperation({ summary: 'Get a prescription with patient and prescribed lines' })
   async getPrescription(@Req() req: RequestWithAuth, @Param('id') id: string) {
@@ -295,9 +311,25 @@ export class PharmacyController {
 
   @RequirePermission('pharmacy.dispense.read')
   @Get('dispenses/:id/label')
-  @ApiOperation({ summary: 'Get formatted Rx label data for printing' })
+  @ApiOperation({ summary: 'Get formatted Rx label data for printing (JSON + ZPL payloads)' })
   async getDispenseLabel(@Req() req: RequestWithAuth, @Param('id') id: string) {
     return this.svc.getDispenseLabel(req.tenantId!, id);
+  }
+
+  @RequirePermission('pharmacy.dispense.read')
+  @Get('dispenses/:id/label-pdf')
+  @ApiOperation({ summary: 'Medication container labels as a true vector PDF (shared print pipeline)' })
+  async getDispenseLabelPdf(@Req() req: RequestWithAuth, @Param('id') id: string, @Res() reply: FastifyReply) {
+    const doc = await this.svc.renderDispenseLabelPdf(req.tenantId!, req.authContext!.userId!, id);
+    void sendPdf(reply, doc, `RxLabel-${id.slice(0, 8)}.pdf`);
+  }
+
+  @RequirePermission('pharmacy.sale.read')
+  @Get('sales/:id/receipt-pdf')
+  @ApiOperation({ summary: 'OTC sale receipt as a true vector PDF (shared print pipeline)' })
+  async getOtcSaleReceiptPdf(@Req() req: RequestWithAuth, @Param('id') id: string, @Res() reply: FastifyReply) {
+    const doc = await this.svc.renderOtcSaleReceiptPdf(req.tenantId!, req.authContext!.userId!, id);
+    void sendPdf(reply, doc, `OtcReceipt-${id.slice(0, 8)}.pdf`);
   }
 
   // ── OTC Sales (PHM-T3) ─────────────────────────────────────────────────────

@@ -37,6 +37,26 @@ export const JobReplaySchema = z.object({
 });
 export type JobReplayRequest = z.infer<typeof JobReplaySchema>;
 
+// ── Platform console auth (Phase 9, architecture §10) ───────────────────────
+// Platform staff authenticate separately from tenants: `platform_users` is a
+// global table (no tenant), TOTP is the intended mandatory second factor. The
+// `totp` field stays optional here so a freshly-provisioned superadmin with no
+// enrolled secret can bootstrap; the service requires it once `totp_secret`
+// has been set.
+
+export const PlatformLoginRequestSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+  totp: z.string().min(6).max(32).optional(),
+});
+export type PlatformLoginRequest = z.infer<typeof PlatformLoginRequestSchema>;
+
+export const PlatformStepUpRequestSchema = z.object({
+  password: z.string().min(1).optional(),
+  totp: z.string().min(6).max(32).optional(),
+});
+export type PlatformStepUpRequest = z.infer<typeof PlatformStepUpRequestSchema>;
+
 export const ModuleEntitlementAuditSchema = z.object({
   id: z.string().uuid(),
   tenantId: z.string().uuid(),

@@ -3,6 +3,7 @@ import { withTenant } from "@clinic/db";
 import { probeDb } from "@clinic/db/tests/helpers.js";
 import { RbacService } from "../src/rbac/rbac.service.js";
 import { ProblemException } from "../src/http/problem.exception.js";
+import { seedUsers, NO_SEED_USERS } from "@clinic/db/tests/helpers.js";
 
 const dbUp = await probeDb();
 
@@ -11,7 +12,7 @@ const TENANT_B = "22222222-2222-4222-8222-222222222222";
 const ROLE_A_TENANT_ADMIN = "a2000000-0000-4000-8000-000000000001";
 const ROLE_A_DOCTOR = "a2000000-0000-4000-8000-000000000002";
 const ROLE_A_RECEPTIONIST = "a2000000-0000-4000-8000-000000000003";
-const USER_A_ADMIN = "a3000000-0000-4000-8000-000000000001"; // admin@demo-a.test
+const { USER_A: USER_A_ADMIN } = dbUp ? await seedUsers() : NO_SEED_USERS;
 
 const svc = new RbacService();
 const suffix = Date.now();

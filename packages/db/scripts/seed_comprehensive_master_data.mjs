@@ -1,15 +1,17 @@
 import pg from "pg";
 
-const pool = new pg.Pool({
-  connectionString: "postgres://kpagarigan2:P%40ssw0rd@localhost:5432/clinic",
-});
+const connectionString = process.env.CLINIC_DATABASE_URL || "postgres://kpagarigan2:P%40ssw0rd@localhost:5432/clinic";
+const pool = new pg.Pool({ connectionString });
 
 const TENANT_A = "11111111-1111-4111-8111-111111111111";
 const BRANCH_A = "a1000000-0000-4000-8000-000000000001";
 const ADMIN_A = "a3000000-0000-4000-8000-000000000001";
 
-export async function seedComprehensiveMasterData(client) {
-  console.log("Seeding comprehensive master data for Demo Clinic A...");
+export async function seedComprehensiveMasterData(client, targetTenantId = tenantId, targetBranchId = branchId, options = {}) {
+  const tenantId = targetTenantId;
+  const branchId = targetBranchId;
+  const zeroStock = options.zeroStock === true;
+  console.log(`Seeding comprehensive master data for tenant ${tenantId}...`);
 
   // ── 1. UOMs ─────────────────────────────────────────────────────────────
   console.log("  1. Seeding UOMs...");
@@ -32,7 +34,7 @@ export async function seedComprehensiveMasterData(client) {
        VALUES ($1, $2, $3, true)
        ON CONFLICT (tenant_id, code) DO UPDATE SET name = EXCLUDED.name, is_active = true
        RETURNING id, code`,
-      [TENANT_A, u.code, u.name]
+      [tenantId, u.code, u.name]
     );
     uomMap.set(u.code, res.rows[0].id);
   }
@@ -56,7 +58,7 @@ export async function seedComprehensiveMasterData(client) {
        VALUES ($1, $2, $3, $4, $5, true)
        ON CONFLICT (tenant_id, branch_id, code) DO UPDATE SET name = EXCLUDED.name, type = EXCLUDED.type, is_active = true
        RETURNING id, code`,
-      [TENANT_A, BRANCH_A, loc.code, loc.name, loc.type]
+      [tenantId, branchId, loc.code, loc.name, loc.type]
     );
     locationMap.set(loc.code, res.rows[0].id);
   }
@@ -104,34 +106,36 @@ export async function seedComprehensiveMasterData(client) {
        VALUES ($1, $2, $3, 'SUPPLY', $4, true, true, $5, 180, true)
        ON CONFLICT (tenant_id, code) DO UPDATE SET name = EXCLUDED.name, standard_cost = EXCLUDED.standard_cost, is_active = true
        RETURNING id, code`,
-      [TENANT_A, item.code, item.name, uomId, item.cost]
+      [tenantId, item.code, item.name, uomId, item.cost]
     );
     supplyItemMap.set(item.code, res.rows[0].id);
 
-    // Seed stock batch and balance in Central Supply Depot
-    const batchRes = await client.query(
-      `INSERT INTO stock_batches (tenant_id, item_id, lot_no, expiry_date, unit_cost, status, received_at)
-       VALUES ($1, $2, $3, '2028-12-31', $4, 'AVAILABLE', now())
-       RETURNING id`,
-      [TENANT_A, res.rows[0].id, `LOT-2026-${item.code}`, item.cost]
-    );
+    if (!zeroStock) {
+      // Seed stock batch and balance in Central Supply Depot
+      const batchRes = await client.query(
+        `INSERT INTO stock_batches (tenant_id, item_id, lot_no, expiry_date, unit_cost, status, received_at)
+         VALUES ($1, $2, $3, '2028-12-31', $4, 'AVAILABLE', now())
+         RETURNING id`,
+        [tenantId, res.rows[0].id, `LOT-2026-${item.code}`, item.cost]
+      );
 
-    const depotLocId = locationMap.get("LOC-MAIN-STORE");
-    await client.query(
-      `INSERT INTO stock_balances (tenant_id, location_id, batch_id, qty_on_hand, qty_reserved, last_movement_at)
-       VALUES ($1, $2, $3, 200, 0, now())
-       ON CONFLICT (tenant_id, location_id, batch_id) DO UPDATE SET qty_on_hand = 200, qty_reserved = 0`,
-      [TENANT_A, depotLocId, batchRes.rows[0].id]
-    );
+      const depotLocId = locationMap.get("LOC-MAIN-STORE");
+      await client.query(
+        `INSERT INTO stock_balances (tenant_id, location_id, batch_id, qty_on_hand, qty_reserved, last_movement_at)
+         VALUES ($1, $2, $3, 200, 0, now())
+         ON CONFLICT (tenant_id, location_id, batch_id) DO UPDATE SET qty_on_hand = 200, qty_reserved = 0`,
+        [tenantId, depotLocId, batchRes.rows[0].id]
+      );
 
-    // Also seed a working stock batch in Consultation Room 1 for clinic use
-    const room1LocId = locationMap.get("LOC-ROOM-1");
-    await client.query(
-      `INSERT INTO stock_balances (tenant_id, location_id, batch_id, qty_on_hand, qty_reserved, last_movement_at)
-       VALUES ($1, $2, $3, 25, 0, now())
-       ON CONFLICT (tenant_id, location_id, batch_id) DO UPDATE SET qty_on_hand = 25, qty_reserved = 0`,
-      [TENANT_A, room1LocId, batchRes.rows[0].id]
-    );
+      // Also seed a working stock batch in Consultation Room 1 for clinic use
+      const room1LocId = locationMap.get("LOC-ROOM-1");
+      await client.query(
+        `INSERT INTO stock_balances (tenant_id, location_id, batch_id, qty_on_hand, qty_reserved, last_movement_at)
+         VALUES ($1, $2, $3, 25, 0, now())
+         ON CONFLICT (tenant_id, location_id, batch_id) DO UPDATE SET qty_on_hand = 25, qty_reserved = 0`,
+        [tenantId, room1LocId, batchRes.rows[0].id]
+      );
+    }
   }
 
   // ── 4. Laboratory Master Data ───────────────────────────────────────────
@@ -152,7 +156,7 @@ export async function seedComprehensiveMasterData(client) {
        VALUES ($1, $2, $3, $4, true)
        ON CONFLICT (tenant_id, code) DO UPDATE SET name = EXCLUDED.name, display_order = EXCLUDED.display_order, is_active = true
        RETURNING id, code`,
-      [TENANT_A, s.code, s.name, s.displayOrder]
+      [tenantId, s.code, s.name, s.displayOrder]
     );
     sectionMap.set(s.code, res.rows[0].id);
   }
@@ -174,7 +178,7 @@ export async function seedComprehensiveMasterData(client) {
        VALUES ($1, $2, $3, $4, $5, $6, true)
        ON CONFLICT (tenant_id, code) DO UPDATE SET name = EXCLUDED.name, default_container = EXCLUDED.default_container, tube_top_color = EXCLUDED.tube_top_color, stability_hours = EXCLUDED.stability_hours, is_active = true
        RETURNING id, code`,
-      [TENANT_A, sp.code, sp.name, sp.container, sp.color, sp.stability]
+      [tenantId, sp.code, sp.name, sp.container, sp.color, sp.stability]
     );
     specimenMap.set(sp.code, res.rows[0].id);
   }
@@ -191,7 +195,7 @@ export async function seedComprehensiveMasterData(client) {
       `INSERT INTO lab_instruments (tenant_id, branch_id, section_id, code, name, model, serial_no, calibration_due_at, last_calibrated_at, is_active)
        VALUES ($1, $2, $3, $4, $5, $6, $7, now() + interval '90 days', now(), true)
        ON CONFLICT DO NOTHING`,
-      [TENANT_A, BRANCH_A, sectionMap.get(inst.section), inst.code, inst.name, inst.model, inst.serial]
+      [tenantId, branchId, sectionMap.get(inst.section), inst.code, inst.name, inst.model, inst.serial]
     );
   }
 
@@ -440,7 +444,7 @@ export async function seedComprehensiveMasterData(client) {
          fasting_required = EXCLUDED.fasting_required, fasting_hours = EXCLUDED.fasting_hours,
          is_panel = EXCLUDED.is_panel, is_active = true
        RETURNING id, code`,
-      [TENANT_A, sectionId, specimenId, t.code, t.name, t.tat, t.statAllowed, t.fasting, t.fastingHours || 0, t.isPanel]
+      [tenantId, sectionId, specimenId, t.code, t.name, t.tat, t.statAllowed, t.fasting, t.fastingHours || 0, t.isPanel]
     );
 
     const testId = testRes.rows[0].id;
@@ -452,7 +456,7 @@ export async function seedComprehensiveMasterData(client) {
          VALUES ($1, $2, $3, $4, $5, 2, false, $6, true)
          ON CONFLICT (tenant_id, test_id, code) DO UPDATE SET name = EXCLUDED.name, default_unit = EXCLUDED.default_unit, sort_order = EXCLUDED.sort_order, is_active = true
          RETURNING id`,
-        [TENANT_A, testId, an.code, an.name, an.unit, sortOrder++]
+        [tenantId, testId, an.code, an.name, an.unit, sortOrder++]
       );
       const analyteId = anRes.rows[0].id;
 
@@ -461,7 +465,7 @@ export async function seedComprehensiveMasterData(client) {
         `INSERT INTO lab_reference_ranges (tenant_id, analyte_id, sex, age_min_days, age_max_days, normal_min, normal_max, critical_low, critical_high, text_range, effective_from)
          VALUES ($1, $2, 'ALL', 0, 36500, $3, $4, $5, $6, $7, '2026-01-01T00:00:00Z')
          ON CONFLICT DO NOTHING`,
-        [TENANT_A, analyteId, an.min ?? null, an.max ?? null, an.critLow ?? null, an.critHigh ?? null, an.textRange ?? null]
+        [tenantId, analyteId, an.min ?? null, an.max ?? null, an.critLow ?? null, an.critHigh ?? null, an.textRange ?? null]
       );
     }
   }
@@ -510,7 +514,7 @@ export async function seedComprehensiveMasterData(client) {
        VALUES ($1, $2, $3)
        ON CONFLICT (tenant_id, name) DO UPDATE SET atc_code = EXCLUDED.atc_code
        RETURNING id, name`,
-      [TENANT_A, g.name, g.atc]
+      [tenantId, g.name, g.atc]
     );
     genericMap.set(g.name, res.rows[0].id);
   }
@@ -570,7 +574,7 @@ export async function seedComprehensiveMasterData(client) {
        VALUES ($1, $2, $3, 'MEDICINE', $4, true, true, $5, 180, true)
        ON CONFLICT (tenant_id, code) DO UPDATE SET name = EXCLUDED.name, standard_cost = EXCLUDED.standard_cost, is_active = true
        RETURNING id, code`,
-      [TENANT_A, m.code, m.name, pcsUomId, m.cost]
+      [tenantId, m.code, m.name, pcsUomId, m.cost]
     );
     const itemId = itemRes.rows[0].id;
 
@@ -583,26 +587,28 @@ export async function seedComprehensiveMasterData(client) {
          brand_name = EXCLUDED.brand_name, strength = EXCLUDED.strength, dosage_form = EXCLUDED.dosage_form,
          route = EXCLUDED.route, rx_required = EXCLUDED.rx_required, controlled_schedule = EXCLUDED.controlled_schedule`,
       [
-        TENANT_A, itemId, genericId, m.brand, m.strength, m.form, m.route,
+        tenantId, itemId, genericId, m.brand, m.strength, m.form, m.route,
         `DR-XY${Math.floor(100000 + Math.random() * 900000)}`,
         m.rxReq, m.sched, m.rxReq === "CONTROLLED"
       ]
     );
 
-    // Seed stock batch and balance in Main Clinic Pharmacy
-    const batchRes = await client.query(
-      `INSERT INTO stock_batches (tenant_id, item_id, lot_no, expiry_date, unit_cost, status, received_at)
-       VALUES ($1, $2, $3, '2028-06-30', $4, 'AVAILABLE', now())
-       RETURNING id`,
-      [TENANT_A, itemId, `LOT-2026-${m.code}`, m.cost]
-    );
+    if (!zeroStock) {
+      // Seed stock batch and balance in Main Clinic Pharmacy
+      const batchRes = await client.query(
+        `INSERT INTO stock_batches (tenant_id, item_id, lot_no, expiry_date, unit_cost, status, received_at)
+         VALUES ($1, $2, $3, '2028-06-30', $4, 'AVAILABLE', now())
+         RETURNING id`,
+        [tenantId, itemId, `LOT-2026-${m.code}`, m.cost]
+      );
 
-    await client.query(
-      `INSERT INTO stock_balances (tenant_id, location_id, batch_id, qty_on_hand, qty_reserved, last_movement_at)
-       VALUES ($1, $2, $3, 300, 0, now())
-       ON CONFLICT (tenant_id, location_id, batch_id) DO UPDATE SET qty_on_hand = 300, qty_reserved = 0`,
-      [TENANT_A, pharmacyLocId, batchRes.rows[0].id]
-    );
+      await client.query(
+        `INSERT INTO stock_balances (tenant_id, location_id, batch_id, qty_on_hand, qty_reserved, last_movement_at)
+         VALUES ($1, $2, $3, 300, 0, now())
+         ON CONFLICT (tenant_id, location_id, batch_id) DO UPDATE SET qty_on_hand = 300, qty_reserved = 0`,
+        [tenantId, pharmacyLocId, batchRes.rows[0].id]
+      );
+    }
   }
 
   // ── 6. Other Master Data: Services, Payment Methods, Discount Types ───────
@@ -628,7 +634,7 @@ export async function seedComprehensiveMasterData(client) {
       `INSERT INTO service_catalog (tenant_id, branch_id, code, name, category, default_price, is_active)
        VALUES ($1, $2, $3, $4, $5, $6, true)
        ON CONFLICT DO NOTHING`,
-      [TENANT_A, BRANCH_A, s.code, s.name, s.cat, s.price]
+      [tenantId, branchId, s.code, s.name, s.cat, s.price]
     );
   }
 
@@ -647,7 +653,7 @@ export async function seedComprehensiveMasterData(client) {
       `INSERT INTO payment_methods (tenant_id, code, name, is_active)
        VALUES ($1, $2, $3, true)
        ON CONFLICT DO NOTHING`,
-      [TENANT_A, pm.code, pm.name]
+      [tenantId, pm.code, pm.name]
     );
   }
 
@@ -664,7 +670,7 @@ export async function seedComprehensiveMasterData(client) {
       `INSERT INTO discount_types (tenant_id, code, name, percentage, requires_id, legal_basis, is_active)
        VALUES ($1, $2, $3, $4, $5, $6, true)
        ON CONFLICT DO NOTHING`,
-      [TENANT_A, dt.code, dt.name, dt.pct, dt.reqId, dt.legal]
+      [tenantId, dt.code, dt.name, dt.pct, dt.reqId, dt.legal]
     );
   }
 

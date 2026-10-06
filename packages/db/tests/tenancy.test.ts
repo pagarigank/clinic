@@ -1,10 +1,9 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { closeAllPools, createPool, withTenantOnPool } from "../src/index.js";
 import { probeDb } from "./helpers.js";
 
 const TENANT_A = "11111111-1111-4111-8111-111111111111";
 const TENANT_B = "22222222-2222-4222-8222-222222222222";
-const USER_A = "a3000000-0000-4000-8000-000000000001";
 const BRANCH_A = "a1000000-0000-4000-8000-000000000001";
 const BRANCH_B = "b1000000-0000-4000-8000-000000000001";
 
@@ -18,6 +17,24 @@ afterAll(async () => {
 const dbUp = await probeDb();
 
 describe.runIf(dbUp)("tenancy tables (Phase 1.1)", () => {
+  // The seed pins branch IDs but generates user IDs per run, so the demo-a admin is
+  // resolved by email rather than by a UUID that only ever existed in one database.
+  let USER_A = "";
+
+  beforeAll(async () => {
+    const found = await withTenantOnPool(
+      pool,
+      { tenantId: TENANT_A, requestId: crypto.randomUUID() },
+      (tx) =>
+        tx.query<{ id: string }>(
+          "SELECT id::text AS id FROM users WHERE tenant_id = $1 AND email = $2",
+          [TENANT_A, "admin@demo-a.test"],
+        ),
+    );
+    USER_A = found.rows[0]?.id ?? "";
+    expect(USER_A, "seeded admin@demo-a.test not found — run: pnpm --filter @clinic/db seed:demo").not.toBe("");
+  });
+
   it("user rows are invisible to the other tenant (AC-1) but visible in platform scope", async () => {
     const email = `iso-${crypto.randomUUID()}@tenant-a.test`;
     await withTenantOnPool(pool, { tenantId: TENANT_A, requestId: crypto.randomUUID() }, (tx) =>

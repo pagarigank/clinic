@@ -1,6 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { withTenant, type QueryResultRow } from '@clinic/db';
-import { renderRxLabel } from '@clinic/print';
+import {
+  renderRxLabel,
+  buildReceiptDocument,
+  renderPdf,
+  renderReceiptHtml,
+  renderDispenseLabelHtml,
+  type RxQueueDocument,
+  type RenderedDocument,
+  type DangerousDrugsBookDocument,
+  type DangerousDrugsBookRow,
+} from '@clinic/print';
 import { ProblemException } from '../http/problem.exception.js';
 import { SupplyService } from '../supply/supply.service.js';
 import type {
@@ -24,9 +34,20 @@ import type {
 
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0];
 
+function formatDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function formatDateTime(d: Date): string {
+  return d.toISOString().slice(0, 16).replace('T', ' ');
+}
+
 @Injectable()
 export class PharmacyService {
-  constructor(private readonly supplyService: SupplyService) {}
+  // Explicit @Inject: tsx/esbuild does not emit design:paramtypes, so a constructor
+  // parameter without it binds undefined and every call that uses it throws
+  // "Cannot read properties of undefined" at runtime — never at build time.
+  constructor(@Inject(SupplyService) private readonly supplyService: SupplyService) {}
 
   // ── Generics (PHM-T1) ──────────────────────────────────────────────────────
 
@@ -567,6 +588,55 @@ export class PharmacyService {
     });
   }
 
+  /**
+   * Map the verification queue to a printable document.
+   *
+   * Kept in the service (rather than the controller) so the row -> document
+   * mapping is unit-testable without going through HTTP.
+   */
+  async getVerificationQueueDocument(
+    tenantId: string,
+    status = 'ISSUED',
+    meta: { clinicName?: string; branchName?: string; clinicAddress?: string; generatedBy?: string } = {},
+  ): Promise<RxQueueDocument> {
+    const rows = (await this.getVerificationQueue(tenantId, status)) as Array<{
+      rx_no: string;
+      status: string;
+      is_controlled: boolean;
+      valid_until: string | null;
+      issued_at: string | null;
+      patient_first_name: string;
+      patient_last_name: string;
+      hrn: string | null;
+      birth_date: string | null;
+      prescriber_name: string;
+      visit_no: string;
+      item_count: number | string;
+    }>;
+
+    return {
+      clinicName: meta.clinicName ?? 'Clinic Medical Center',
+      branchName: meta.branchName,
+      clinicAddress: meta.clinicAddress,
+      status,
+      generatedAt: formatDateTime(new Date()),
+      generatedBy: meta.generatedBy,
+      rows: rows.map((r) => ({
+        rxNo: r.rx_no,
+        patientName: `${r.patient_last_name}, ${r.patient_first_name}`,
+        patientHrn: r.hrn,
+        patientDob: r.birth_date ? formatDate(new Date(r.birth_date)) : null,
+        prescriberName: r.prescriber_name,
+        visitNo: r.visit_no,
+        itemCount: Number(r.item_count) || 0,
+        isControlled: Boolean(r.is_controlled),
+        issuedAt: r.issued_at ? formatDateTime(new Date(r.issued_at)) : null,
+        validUntil: r.valid_until ? formatDate(new Date(r.valid_until)) : null,
+        status: r.status,
+      })),
+    };
+  }
+
   async runPrescriptionChecks(tenantId: string, rxId: string) {
     return withTenant({ tenantId }, async (tx) => {
       const rxRes = await tx.query(
@@ -742,6 +812,14 @@ export class PharmacyService {
         throw new ProblemException('NOT_FOUND', { detail: 'Prescription not found' });
       }
       const rx = rxRes.rows[0];
+
+      // Guard against re-verification: approving an already-cancelled or already
+      // dispensed prescription must not silently succeed.
+      if (rx.status !== 'ISSUED') {
+        throw new ProblemException('CONFLICT', {
+          detail: `Prescription ${rx.rx_no} is ${rx.status} and cannot be verified`,
+        });
+      }
 
       if (dto.action === 'APPROVE') {
         // This branch used to `return { success: true }` without writing anything, so
@@ -2039,6 +2117,8 @@ export class PharmacyService {
       const params: any[] = [tenantId];
       let sql = `SELECT cr.*,
                         i.name as drug_name,
+                        br.name as branch_name,
+                        t.name as clinic_name,
                         b.lot_no as batch_no, b.expiry_date,
                         pt.first_name as patient_first_name, pt.last_name as patient_last_name,
                         (SELECT value FROM patient_identifiers WHERE tenant_id = pt.tenant_id AND patient_id = pt.id AND type = 'HRN' LIMIT 1) as hrn,
@@ -2048,6 +2128,8 @@ export class PharmacyService {
                  FROM controlled_register cr
                  JOIN items i ON i.tenant_id = cr.tenant_id AND i.id = cr.drug_item_id
                  JOIN stock_batches b ON b.tenant_id = cr.tenant_id AND b.id = cr.batch_id
+                 JOIN branches br ON br.tenant_id = cr.tenant_id AND br.id = cr.branch_id
+                 JOIN tenants t ON t.id = cr.tenant_id
                  LEFT JOIN patients pt ON pt.tenant_id = cr.tenant_id AND pt.id = cr.patient_id
                  JOIN users pharm ON pharm.tenant_id = cr.tenant_id AND pharm.id = cr.pharmacist_id
                  JOIN users wit ON wit.tenant_id = cr.tenant_id AND wit.id = cr.witness_id
@@ -2113,6 +2195,67 @@ export class PharmacyService {
         isReconciled: Math.abs(variance) < 0.001,
       };
     });
+  }
+
+  /**
+   * Assemble the Dangerous Drugs Book from the append-only controlled register.
+   *
+   * The register is the source of truth and is never edited, so the book is
+   * regenerated from it rather than maintained separately. When no period or drug
+   * filter is supplied the book covers the whole register, which is what a
+   * regulatory inspection asks for.
+   */
+  async getDangerousDrugsBookDocument(
+    tenantId: string,
+    query: { drugItemId?: string; branchId?: string; from?: string; to?: string } = {},
+    meta: { generatedBy?: string } = {},
+  ): Promise<DangerousDrugsBookDocument> {
+    const newestFirst = (await this.getControlledRegister(tenantId, query)) as Array<Record<string, any>>;
+
+    // The register is queried newest-first for the operational screen, but a
+    // Dangerous Drugs Book is a chronological record, so the book reverses it.
+    const rows = [...newestFirst].reverse();
+
+    // The closing balance is the balance carried by the most recent entry of each
+    // drug, which is the first row seen while walking the newest-first result.
+    const closing = new Map<string, number>();
+    for (const r of newestFirst) {
+      const name = String(r.drug_name ?? 'Controlled drug');
+      if (!closing.has(name)) closing.set(name, Number(r.running_balance ?? 0));
+    }
+
+    return {
+      clinicName: String(rows[0]?.clinic_name ?? 'Clinic Medical Center'),
+      branchName: query.branchId ? String(rows[0]?.branch_name ?? '') || undefined : undefined,
+      drugFilter: query.drugItemId ? String(rows[0]?.drug_name ?? 'Selected drug') : undefined,
+      fromDate: query.from,
+      toDate: query.to,
+      generatedAt: formatDateTime(new Date()),
+      generatedBy: meta.generatedBy,
+      closingBalances: [...closing.entries()].map(([drugName, runningBalance]) => ({ drugName, runningBalance })),
+      rows: rows.map((r) => ({
+        occurredAt: formatDateTime(new Date(r.occurred_at)),
+        entryType: String(r.entry_type) as DangerousDrugsBookRow['entryType'],
+        drugName: String(r.drug_name ?? 'Controlled drug'),
+        batchNo: r.batch_no ?? null,
+        expiryDate: r.expiry_date ? formatDate(new Date(r.expiry_date)) : null,
+        qtyIn: Number(r.qty_in ?? 0),
+        qtyOut: Number(r.qty_out ?? 0),
+        runningBalance: Number(r.running_balance ?? 0),
+        patientName:
+          r.patient_first_name || r.patient_last_name
+            ? `${r.patient_last_name ?? ''}, ${r.patient_first_name ?? ''}`.replace(/^,\s*/, '')
+            : null,
+        patientHrn: r.hrn ?? null,
+        rxNo: r.rx_no ?? null,
+        specialRxSerial: r.special_rx_serial ?? null,
+        prescriberS2No: r.prescriber_s2_no ?? null,
+        pharmacistName: String(r.pharmacist_name ?? 'Not recorded'),
+        witnessName: String(r.witness_name ?? 'Not recorded'),
+        witnessSignature: r.witness_signature ?? null,
+        notes: r.notes ?? null,
+      })),
+    };
   }
 
   // ── Stock View & Rx Label Print ────────────────────────────────────────────
@@ -2254,4 +2397,93 @@ export class PharmacyService {
       };
     });
   }
+  // ── Official printouts (true vector PDFs via @clinic/print) ───────────────
+
+  /**
+   * OTC sale receipt as an official PDF (PHM-T3). The sale *is* a payment:
+   * the dispense carries the collected total, so the receipt document is built
+   * from the dispense row itself — no client-side money math, and the bytes
+   * come from the shared deterministic print pipeline with the SHA-256 header
+   * for tamper-evidence.
+   */
+  async renderOtcSaleReceiptPdf(tenantId: string, userId: string, dispenseId: string): Promise<RenderedDocument> {
+    const facts = await withTenant({ tenantId, userId }, async (tx) => {
+      const dRes = await tx.query(
+        `SELECT d.dispense_no, d.total_amount, d.dispensed_at, d.notes,
+                b.name AS clinic_name,
+                u.name AS pharmacist_name,
+                pt.first_name AS patient_first, pt.last_name AS patient_last,
+                (SELECT json_agg(json_build_object(
+                            'description', i.name,
+                            'qty', di.qty,
+                            'unitPrice', di.unit_price,
+                            'total', di.total_price) ORDER BY di.id)
+                   FROM dispense_items di
+                   JOIN items i ON i.tenant_id = di.tenant_id AND i.id = di.item_id
+                  WHERE di.tenant_id = $1 AND di.dispense_id = d.id) AS lines
+           FROM dispenses d
+           JOIN branches b ON b.tenant_id = d.tenant_id AND b.id = d.branch_id
+           LEFT JOIN users u ON u.tenant_id = d.tenant_id AND u.id = d.pharmacist_id
+           LEFT JOIN patients pt ON pt.tenant_id = d.tenant_id AND pt.id = d.patient_id
+          WHERE d.tenant_id = $1 AND d.id = $2`,
+        [tenantId, dispenseId],
+      );
+      if (!dRes.rows[0]) {
+        throw new ProblemException('NOT_FOUND', { detail: 'Sale not found.' });
+      }
+      const d = dRes.rows[0];
+      return {
+        clinicName: d.clinic_name,
+        receiptNo: d.dispense_no,
+        issuedAt: new Date(d.dispensed_at).toISOString(),
+        cashierName: d.pharmacist_name || 'Pharmacy',
+        patientName: d.patient_first && d.patient_last ? `${d.patient_last}, ${d.patient_first}` : undefined,
+        lines: (d.lines ?? []).map((l: { description: string; qty: unknown; unitPrice: unknown; total: unknown }) => ({
+          description: l.description,
+          qty: Number(l.qty),
+          unitPrice: Number(l.unitPrice),
+          total: Number(l.total),
+        })),
+        amount: Number(d.total_amount),
+        amountTendered: Number(d.total_amount),
+        changeGiven: 0,
+      };
+    });
+    const doc = buildReceiptDocument(facts);
+    return renderPdf(renderReceiptHtml(doc), { format: 'A4' });
+  }
+
+  /**
+   * Medication container labels as a printable PDF sheet (PHM-T3). Reuses
+   * `getDispenseLabel`, whose rows already carry the ZPL payload for thermal
+   * printers — this renders the same content through the shared print pipeline
+   * so ordinary A4/A5 printers produce official labels instead of a browser
+   * print of the workbench screen.
+   */
+  async renderDispenseLabelPdf(tenantId: string, userId: string, dispenseId: string): Promise<RenderedDocument> {
+    const label = await this.getDispenseLabel(tenantId, dispenseId);
+    const doc = {
+      clinicName: label.branchName || 'Clinic Pharmacy',
+      branchName: label.branchName || undefined,
+      dispenseNo: label.dispenseNo,
+      dispensedAt: label.dispensedAt ? new Date(label.dispensedAt).toLocaleString('en-PH') : '',
+      patientName: label.patient.fullName,
+      patientHrn: label.patient.hrn || undefined,
+      patientDob: label.patient.birthDate ? String(label.patient.birthDate).slice(0, 10) : undefined,
+      pharmacistName: label.pharmacistName || undefined,
+      specialRxSerial: label.labels[0]?.specialRxSerial || undefined,
+      items: label.labels.map((l: { brandName: string; genericName?: string; strength?: string; dosageForm?: string; directionsForUse: string; quantity: number | string; batchNo?: string; expiryDate?: string }) => ({
+        drugName: l.brandName,
+        genericName: l.genericName || undefined,
+        strength: l.strength || undefined,
+        dosageForm: l.dosageForm || undefined,
+        directionsForUse: l.directionsForUse,
+        quantity: l.quantity,
+        batchNo: l.batchNo || undefined,
+        expiryDate: l.expiryDate ? String(l.expiryDate).slice(0, 10) : undefined,
+      })),
+    };
+    return renderPdf(renderDispenseLabelHtml(doc), { format: 'A4' });
+  }
 }
+

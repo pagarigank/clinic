@@ -9,11 +9,12 @@ import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { TemplatesService } from '../src/templates/templates.service.js';
 import { probeDb } from '@clinic/db/tests/helpers.js';
 import { createPool } from '@clinic/db';
+import { seedUsers, NO_SEED_USERS } from "@clinic/db/tests/helpers.js";
 
 const hasDb = await probeDb();
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
-const USER_A = 'a3000000-0000-4000-8000-000000000001';
+const { USER_A } = hasDb ? await seedUsers() : NO_SEED_USERS;
 
 describe.skipIf(!hasDb)('TemplatesService (todo 2.1)', () => {
   let service: TemplatesService;

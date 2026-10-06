@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { Link } from "react-router";
-import { AlertBanner, StatusPill, Button, Modal, Form } from "@clinic/ui";
+import { AlertBanner, StatusPill, Modal, Form } from "@clinic/ui";
 import {
   labApi,
   type LabTest,
@@ -8,6 +7,7 @@ import {
   type LabSpecimenType,
 } from "./api.js";
 import { usePermissions } from "../../shared/auth/PermissionsContext.js";
+import { LaboratoryAnalytesModal } from "./LaboratoryAnalytesModal.js";
 import type { BulkPriceAdjustRequest } from "@clinic/contracts";
 
 export function LabCatalogPage() {
@@ -56,6 +56,9 @@ export function LabCatalogPage() {
   const [editTat, setEditTat] = useState("60");
   const [editInstructions, setEditInstructions] = useState("");
   const [editIsActive, setEditIsActive] = useState(true);
+
+  // Analytes & Reference Ranges Modal
+  const [analyteTarget, setAnalyteTarget] = useState<LabTest | null>(null);
 
   // Bulk Price Adjustment Modal
   const [showBulkPrice, setShowBulkPrice] = useState(false);
@@ -480,6 +483,14 @@ export function LabCatalogPage() {
                   </td>
                   <td className="text-end">
                     <div className="d-flex gap-1 justify-content-end">
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-secondary"
+                        onClick={() => setAnalyteTarget(t)}
+                        aria-label={`Analytes for ${t.name}`}
+                      >
+                        Analytes
+                      </button>
                       {canUpdate && (
                         <button
                           type="button"
@@ -922,6 +933,15 @@ export function LabCatalogPage() {
           </Modal.Footer>
         </form>
       </Modal>
+
+      {/* ── Analytes & Reference Ranges Modal ─────────────────────────────── */}
+      <LaboratoryAnalytesModal
+        show={analyteTarget !== null}
+        test={analyteTarget}
+        canCreate={canCreate}
+        canUpdate={canUpdate}
+        onClose={() => setAnalyteTarget(null)}
+      />
     </div>
   );
 }

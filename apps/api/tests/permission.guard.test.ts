@@ -62,6 +62,9 @@ describe("PermissionGuard", () => {
     @RequirePermission("admin.role.read")
     open() {}
 
+    @RequirePermission("platform.tenant.read")
+    platformOnly() {}
+
     bare() {}
   }
 
@@ -174,5 +177,31 @@ describe("PermissionGuard", () => {
     const guard = new PermissionGuard(new Reflector(), stub);
     await expect(guard.canActivate(ctxFor(request, proto.read!, ctl))).resolves.toBe(true);
     expect(stub.calls).toHaveLength(0);
+  });
+
+  it("admits a platform console caller to a platform.* route without a tenant role lookup", async () => {
+    const request = {
+      authContext: auth({
+        kind: "platform",
+        tenantId: null,
+        userId: null,
+        platformUserId: "00000000-0000-4000-8000-0000000000f1",
+      }),
+    } as RequestWithAuth;
+    const stub = svcStub([]);
+    const guard = new PermissionGuard(new Reflector(), stub);
+    await expect(guard.canActivate(ctxFor(request, proto.platformOnly!, ctl))).resolves.toBe(true);
+    expect(stub.calls).toHaveLength(0);
+  });
+
+  it("refuses a tenant user on a platform.* route (no platform role is ever assigned)", async () => {
+    // Platform permission codes exist in the catalogue but no tenant role
+    // template references them, so a tenant caller can never hold one.
+    const request = { authContext: auth() } as RequestWithAuth;
+    const stub = svcStub([]);
+    const guard = new PermissionGuard(new Reflector(), stub);
+    await expect(guard.canActivate(ctxFor(request, proto.platformOnly!, ctl))).rejects.toBeInstanceOf(
+      HttpException,
+    );
   });
 });

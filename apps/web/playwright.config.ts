@@ -18,6 +18,11 @@ export default defineConfig({
       },
   projects: [
     { name: "smoke", testMatch: /smoke\.spec\.ts/ },
-    { name: "billing", testMatch: /billing\.spec\.ts/ }
+    { name: "billing", testMatch: /billing\.spec\.ts/ },
+    // Real-backend journey: needs a running API on :3000, so it is opt-in via
+    // E2E_REAL=1 rather than part of the default mocked run.
+    ...(process.env.E2E_REAL
+      ? [{ name: "chain", testMatch: /clinical-chain\.spec\.ts/ }]
+      : []),
   ],
 });

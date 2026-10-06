@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
+import { apiGet, apiGetBlob, ApiError } from "../../shared/api/client.js";
 
 export interface PrescriptionPrintItem {
   id?: string;
@@ -124,41 +126,92 @@ export function PrescriptionPrintModal({
   const [activeTab, setActiveTab] = useState<"RX" | "LAB" | "ALL">(defaultTab);
   const [showConfig, setShowConfig] = useState(false);
 
-  // Editable Doctor & Clinic Header fields (pre-populated with realistic standards)
-  const [doctorName, setDoctorName] = useState(
-    practitionerName || "Dr. Maria Elena Reyes, MD, FPCP"
-  );
-  const [doctorSpecialty, setDoctorSpecialty] = useState(
-    "Internal Medicine / Adult & Family Health"
-  );
-  const [prcNo, setPrcNo] = useState("0108942");
-  const [ptrNo, setPtrNo] = useState("PTR-8492019 / Manila");
-  const [s2No, setS2No] = useState("S2-2026-9812A");
-  const [clinicTitle, setClinicTitle] = useState(
-    visit.clinicName || "METRO HEALTH CLINIC & DIAGNOSTIC CENTER"
-  );
-  const [clinicSubtitle, setClinicSubtitle] = useState(
-    "Primary Care, Multi-Specialty & Laboratory Services"
-  );
-  const [clinicAddress, setClinicAddress] = useState(
-    "Unit 402 Medical Arts Bldg., Ermita, Manila, Philippines"
-  );
-  const [clinicContact, setClinicContact] = useState(
-    "Tel: (02) 8524-1000 · Mobile: 0917-555-4321 · info@metrohealth.ph"
-  );
-  const [rxNotesAdvice, setRxNotesAdvice] = useState(
-    "Take medications strictly as instructed. Drink plenty of water and complete the full prescribed antibiotic course."
-  );
+  // ── Doctor & clinic header ────────────────────────────────────────────────
+  // Hydrated from GET /clinical/visits/:id/print-profile (users.name × the
+  // employees record: PRC / PTR / S2, specialization) — never from fabricated
+  // placeholder licence numbers. Fields the user edits in the settings drawer
+  // are tracked and become the ONLY overrides sent to the PDF endpoint, so an
+  // untouched blank licence prints as "N/A" instead of a made-up number.
+  const [doctorName, setDoctorName] = useState(practitionerName || "");
+  const [doctorTitle, setDoctorTitle] = useState("");
+  const [doctorSpecialty, setDoctorSpecialty] = useState("");
+  const [prcNo, setPrcNo] = useState("");
+  const [ptrNo, setPtrNo] = useState("");
+  const [s2No, setS2No] = useState("");
+  const [clinicTitle, setClinicTitle] = useState(visit.clinicName || "");
+  const [clinicSubtitle, setClinicSubtitle] = useState("");
+  const [clinicAddress, setClinicAddress] = useState("");
+  const [clinicContact, setClinicContact] = useState("");
+  const [rxNotesAdvice, setRxNotesAdvice] = useState("");
+  const touched = useRef<Set<string>>(new Set());
+  const markTouched = (key: string) => touched.current.add(key);
+  const [profileError, setProfileError] = useState<string | null>(null);
 
   useEffect(() => {
     setActiveTab(defaultTab);
   }, [defaultTab]);
 
+  // Hydrate the print profile once per open: recorded doctor credentials and
+  // clinic identity from the server. Fail-soft — the PDF endpoint still renders
+  // from the same recorded profile, the drawer just stays blank.
   useEffect(() => {
-    if (practitionerName) {
+    if (!isOpen) return;
+    let cancelled = false;
+    setProfileError(null);
+    (async () => {
+      try {
+        const profile = await apiGet<{
+          clinic?: { name?: string | null; branchName?: string | null };
+          practitioner?: {
+            name?: string | null;
+            jobTitle?: string | null;
+            specialization?: string | null;
+            prcLicenseNo?: string | null;
+            ptrNo?: string | null;
+            s2LicenseNo?: string | null;
+          } | null;
+        }>(`/clinical/visits/${visit.id}/print-profile`);
+        if (cancelled) return;
+        const p = profile?.practitioner;
+        if (!touched.current.has("doctorName")) {
+          setDoctorName(p?.name ? (p.name.startsWith("Dr.") ? p.name : `Dr. ${p.name}`) : practitionerName || "");
+        }
+        if (!touched.current.has("doctorTitle")) setDoctorTitle(p?.jobTitle || "");
+        if (!touched.current.has("doctorSpecialty")) setDoctorSpecialty(p?.specialization || "");
+        if (!touched.current.has("prcNo")) setPrcNo(p?.prcLicenseNo || "");
+        if (!touched.current.has("ptrNo")) setPtrNo(p?.ptrNo || "");
+        if (!touched.current.has("s2No")) setS2No(p?.s2LicenseNo || "");
+        if (!touched.current.has("clinicTitle")) setClinicTitle(profile?.clinic?.name || visit.clinicName || "");
+        if (!touched.current.has("clinicSubtitle")) setClinicSubtitle(profile?.clinic?.branchName || "");
+      } catch (err) {
+        if (!cancelled) {
+          setProfileError(
+            err instanceof ApiError ? `${err.problem.title}: ${err.problem.detail ?? ""}`.trim() : "Could not load the recorded doctor profile.",
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      touched.current = new Set();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, visit.id]);
+
+  useEffect(() => {
+    if (practitionerName && !touched.current.has("doctorName")) {
       setDoctorName(practitionerName.startsWith("Dr.") ? practitionerName : `Dr. ${practitionerName}, MD`);
     }
   }, [practitionerName]);
+
+  useEffect(() => {
+    if (isOpen) {
+      document.body.classList.add("print-modal-open");
+    } else {
+      document.body.classList.remove("print-modal-open");
+    }
+    return () => document.body.classList.remove("print-modal-open");
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -176,58 +229,105 @@ export function PrescriptionPrintModal({
   const latestVitals = vitals.length > 0 ? vitals[0] : null;
   const latestNote = notes.length > 0 ? notes[0] : null;
 
-  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const iframeRef = React.useRef<HTMLIFrameElement>(null);
 
-  const getPdfEndpoint = () => {
-    const params = new URLSearchParams({
-      doctorName,
-      doctorTitle: doctorSpecialty,
-      prcNumber: prcNo,
-      ptrNumber: ptrNo,
-      s2Number: s2No,
-      clinicName: clinicTitle,
-      clinicAddress,
-      clinicPhone: clinicContact,
-      advice: rxNotesAdvice,
-    });
-    if (activeTab === "RX") return `/api/v1/clinical/visits/${visit.id}/prescription-pdf?${params.toString()}`;
-    if (activeTab === "LAB") return `/api/v1/clinical/visits/${visit.id}/lab-request-pdf?${params.toString()}`;
-    return `/api/v1/clinical/visits/${visit.id}/orders-pdf?${params.toString()}`;
-  };
 
-  const handleDownloadPdf = async () => {
-    setIsDownloadingPdf(true);
+
+
+  const fetchPdfPreview = async () => {
+
+    setPdfLoading(true);
+    setPdfError(null);
     try {
-      const url = getPdfEndpoint();
-      const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
+      // Only fields actually edited in the settings drawer are sent as
+      // overrides — everything else is rendered server-side from the recorded
+      // practitioner profile (employees) and branch/tenant identity.
+      const override: Record<string, string> = {};
+      if (touched.current.has("doctorName") && doctorName.trim()) override.doctorName = doctorName.trim();
+    if (touched.current.has("doctorTitle") && doctorTitle.trim()) override.doctorTitle = doctorTitle.trim();
+      if (touched.current.has("doctorSpecialty") && doctorSpecialty.trim()) override.specialty = doctorSpecialty.trim();
+      if (touched.current.has("prcNo") && prcNo.trim()) override.prcNumber = prcNo.trim();
+      if (touched.current.has("ptrNo") && ptrNo.trim()) override.ptrNumber = ptrNo.trim();
+      if (touched.current.has("s2No") && s2No.trim()) override.s2Number = s2No.trim();
+      if (touched.current.has("clinicTitle") && clinicTitle.trim()) override.clinicName = clinicTitle.trim();
+      if (touched.current.has("clinicAddress") && clinicAddress.trim()) override.clinicAddress = clinicAddress.trim();
+      if (touched.current.has("clinicContact") && clinicContact.trim()) override.clinicPhone = clinicContact.trim();
+      if (touched.current.has("rxNotesAdvice") && rxNotesAdvice.trim()) override.advice = rxNotesAdvice.trim();
+      const params = new URLSearchParams(override);
+      // apiGetBlob prepends /api/v1 and attaches the Bearer token automatically
+      let path: string;
+      if (activeTab === "RX") path = `/clinical/visits/${visit.id}/prescription-pdf?${params.toString()}`;
+      else if (activeTab === "LAB") path = `/clinical/visits/${visit.id}/lab-request-pdf?${params.toString()}`;
+      else path = `/clinical/visits/${visit.id}/orders-pdf?${params.toString()}`;
+
+      const blob = await apiGetBlob(path);
       const blobUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      const prefix = activeTab === "RX" ? "Prescription-Rx" : activeTab === "LAB" ? "Lab-Requisition" : "Clinical-Orders";
-      a.download = `${prefix}-${visit.visitNo || visit.id.slice(0, 8)}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(blobUrl);
+      setPdfBlobUrl(old => {
+        if (old) window.URL.revokeObjectURL(old);
+        return blobUrl;
+      });
     } catch (err) {
-      console.warn("Direct PDF download fallback to window.print():", err);
-      window.print();
+      const msg = err instanceof ApiError
+        ? `${err.problem.title}${err.problem.detail ? ": " + err.problem.detail : ""}`
+        : String(err);
+      console.error("Failed to load PDF preview:", err);
+      setPdfError(msg);
     } finally {
-      setIsDownloadingPdf(false);
+      setPdfLoading(false);
     }
   };
 
+  useEffect(() => {
+    void fetchPdfPreview();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Every override the PDF is rendered from must retrigger the fetch — editing a
+// licence or the professional title has to re-request the document, otherwise
+// the preview silently keeps showing the previous override set.
+}, [
+    activeTab,
+    visit.id,
+    doctorName,
+    doctorTitle,
+    doctorSpecialty,
+    prcNo,
+    ptrNo,
+    s2No,
+    clinicTitle,
+    clinicAddress,
+    clinicContact,
+    rxNotesAdvice,
+  ]);
+
+
+
+  const handleDownloadPdf = () => {
+    if (!pdfBlobUrl) return;
+    const a = document.createElement("a");
+    a.href = pdfBlobUrl;
+    const prefix = activeTab === "RX" ? "Prescription-Rx" : activeTab === "LAB" ? "Lab-Requisition" : "Clinical-Orders";
+    a.download = `${prefix}-${visit.visitNo || visit.id.slice(0, 8)}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
   const handleOpenPdf = () => {
-    window.open(getPdfEndpoint(), "_blank");
+    if (!pdfBlobUrl) return;
+    window.open(pdfBlobUrl, "_blank");
   };
 
   const handlePrint = () => {
-    window.print();
+    if (iframeRef.current?.contentWindow) {
+      iframeRef.current.contentWindow.print();
+    } else {
+      window.print();
+    }
   };
 
-  return (
+  const modalContent = (
     <div
       className="modal show d-block clinic-rx-print-modal-backdrop"
       tabIndex={-1}
@@ -266,10 +366,10 @@ export function PrescriptionPrintModal({
                 type="button"
                 className="btn btn-sm btn-info text-dark fw-bold px-3 d-flex align-items-center gap-1"
                 onClick={handleDownloadPdf}
-                disabled={isDownloadingPdf}
+                disabled={pdfLoading || !pdfBlobUrl}
                 title="Download true vector PDF rendered via server print pipeline"
               >
-                {isDownloadingPdf ? (
+                {pdfLoading ? (
                   <>
                     <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
                     <span>Rendering PDF...</span>
@@ -306,77 +406,130 @@ export function PrescriptionPrintModal({
           {/* Configuration drawer (Screen-only) */}
           {showConfig && (
             <div className="clinic-no-print p-3 bg-light border-bottom">
+              {profileError ? (
+                <div className="alert alert-warning py-2 small mb-2">{profileError}</div>
+              ) : (
+                <div className="text-muted small mb-2">
+                  Pre-filled from the staff directory&rsquo;s recorded licensure (PRC / PTR / S2). Edit a field to override it on the printed document only — edits never change the recorded profile.
+                </div>
+              )}
               <div className="row g-2 small">
                 <div className="col-md-3">
-                  <label className="form-label mb-0 fw-semibold">Doctor Name &amp; Title</label>
+                  <label className="form-label mb-0 fw-semibold" htmlFor="pp-doctor-name">Doctor Name &amp; Title</label>
                   <input
                     type="text"
                     className="form-control form-control-sm"
+                    id="pp-doctor-name"
                     value={doctorName}
-                    onChange={(e) => setDoctorName(e.target.value)}
+                    onChange={(e) => {
+                      markTouched("doctorName");
+                      setDoctorName(e.target.value);
+                    }}
                   />
                 </div>
                 <div className="col-md-3">
-                  <label className="form-label mb-0 fw-semibold">Specialization</label>
+                  <label className="form-label mb-0 fw-semibold" htmlFor="pp-doctor-title">Professional Title</label>
                   <input
                     type="text"
                     className="form-control form-control-sm"
+                    placeholder="e.g. Consultant, Internal Medicine"
+                    id="pp-doctor-title"
+                    value={doctorTitle}
+                    onChange={(e) => {
+                      markTouched("doctorTitle");
+                      setDoctorTitle(e.target.value);
+                    }}
+                  />
+                </div>
+                <div className="col-md-3">
+                  <label className="form-label mb-0 fw-semibold" htmlFor="pp-specialty">Specialization</label>
+                  <input
+                    type="text"
+                    className="form-control form-control-sm"
+                    id="pp-specialty"
                     value={doctorSpecialty}
-                    onChange={(e) => setDoctorSpecialty(e.target.value)}
+                    onChange={(e) => {
+                      markTouched("doctorSpecialty");
+                      setDoctorSpecialty(e.target.value);
+                    }}
                   />
                 </div>
                 <div className="col-md-2">
-                  <label className="form-label mb-0 fw-semibold">PRC License No.</label>
+                  <label className="form-label mb-0 fw-semibold" htmlFor="pp-prc">PRC License No.</label>
                   <input
                     type="text"
                     className="form-control form-control-sm"
+                    id="pp-prc"
                     value={prcNo}
-                    onChange={(e) => setPrcNo(e.target.value)}
+                    onChange={(e) => {
+                      markTouched("prcNo");
+                      setPrcNo(e.target.value);
+                    }}
                   />
                 </div>
                 <div className="col-md-2">
-                  <label className="form-label mb-0 fw-semibold">PTR No.</label>
+                  <label className="form-label mb-0 fw-semibold" htmlFor="pp-ptr">PTR No.</label>
                   <input
                     type="text"
                     className="form-control form-control-sm"
+                    id="pp-ptr"
                     value={ptrNo}
-                    onChange={(e) => setPtrNo(e.target.value)}
+                    onChange={(e) => {
+                      markTouched("ptrNo");
+                      setPtrNo(e.target.value);
+                    }}
                   />
                 </div>
                 <div className="col-md-2">
-                  <label className="form-label mb-0 fw-semibold">S2 License No.</label>
+                  <label className="form-label mb-0 fw-semibold" htmlFor="pp-s2">S2 License No.</label>
                   <input
                     type="text"
                     className="form-control form-control-sm"
+                    id="pp-s2"
                     value={s2No}
-                    onChange={(e) => setS2No(e.target.value)}
+                    onChange={(e) => {
+                      markTouched("s2No");
+                      setS2No(e.target.value);
+                    }}
                   />
                 </div>
                 <div className="col-md-4">
-                  <label className="form-label mb-0 fw-semibold">Clinic Name</label>
+                  <label className="form-label mb-0 fw-semibold" htmlFor="pp-clinic-name">Clinic Name</label>
                   <input
                     type="text"
                     className="form-control form-control-sm"
+                    id="pp-clinic-name"
                     value={clinicTitle}
-                    onChange={(e) => setClinicTitle(e.target.value)}
+                    onChange={(e) => {
+                      markTouched("clinicTitle");
+                      setClinicTitle(e.target.value);
+                    }}
                   />
                 </div>
                 <div className="col-md-4">
-                  <label className="form-label mb-0 fw-semibold">Clinic Address</label>
+                  <label className="form-label mb-0 fw-semibold" htmlFor="pp-clinic-address">Clinic Address</label>
                   <input
                     type="text"
                     className="form-control form-control-sm"
+                    id="pp-clinic-address"
                     value={clinicAddress}
-                    onChange={(e) => setClinicAddress(e.target.value)}
+                    onChange={(e) => {
+                      markTouched("clinicAddress");
+                      setClinicAddress(e.target.value);
+                    }}
                   />
                 </div>
                 <div className="col-md-4">
-                  <label className="form-label mb-0 fw-semibold">Contact Details</label>
+                  <label className="form-label mb-0 fw-semibold" htmlFor="pp-clinic-contact">Contact Details</label>
                   <input
                     type="text"
                     className="form-control form-control-sm"
+                    id="pp-clinic-contact"
                     value={clinicContact}
-                    onChange={(e) => setClinicContact(e.target.value)}
+                    onChange={(e) => {
+                      markTouched("clinicContact");
+                      setClinicContact(e.target.value);
+                    }}
                   />
                 </div>
               </div>
@@ -421,464 +574,38 @@ export function PrescriptionPrintModal({
           </div>
 
           {/* Document Preview & Printable Area */}
-          <div className="modal-body p-4 bg-secondary bg-opacity-10 d-flex justify-content-center">
-            {/* The printable document container */}
-            <div
-              className="clinic-printable-surface shadow-sm bg-white p-4 p-md-5"
-              style={{
-                width: "100%",
-                maxWidth: "820px",
-                minHeight: "1000px",
-                color: "#111827",
-                fontFamily: "'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif",
-                position: "relative",
-              }}
-            >
-              {/* Header Letterhead */}
-              <div className="border-bottom pb-3 mb-3" style={{ borderColor: "#0284c7", borderWidth: "2px" }}>
-                <div className="d-flex align-items-center justify-content-between flex-wrap gap-2">
-                  <div className="d-flex align-items-center gap-3">
-                    <div
-                      style={{
-                        width: "50px",
-                        height: "50px",
-                        borderRadius: "10px",
-                        background: "linear-gradient(135deg, #0f2942 0%, #0284c7 100%)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        color: "#fff",
-                        boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-                        flexShrink: 0,
-                      }}
-                    >
-                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M12 2v20M2 12h20" />
-                        <circle cx="12" cy="12" r="9" stroke="rgba(255,255,255,0.4)" strokeWidth="1.2" />
-                      </svg>
-                    </div>
-                    <div>
-                      <div
-                        className="fw-bold tracking-wide"
-                        style={{ fontSize: "1.3rem", letterSpacing: "0.3px", color: "#0f2942", lineHeight: "1.2" }}
-                      >
-                        {clinicTitle}
-                      </div>
-                      <div className="small fw-semibold text-primary text-uppercase" style={{ letterSpacing: "0.5px" }}>
-                        {clinicSubtitle}
-                      </div>
-                      <div className="small text-secondary" style={{ fontSize: "0.82rem" }}>
-                        {clinicAddress} · {clinicContact}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-md-end d-none d-sm-block">
-                    <span className="badge bg-dark text-white px-3 py-1 text-uppercase fw-bold" style={{ letterSpacing: "0.5px" }}>
-                      {activeTab === "RX" ? "Medical Prescription (Rx)" : activeTab === "LAB" ? "Laboratory Requisition" : "Clinical Orders Summary"}
-                    </span>
-                    <div className="clinic-mono fw-bold text-dark mt-1 small">
-                      {activeTab === "RX" ? (prescriptions[0]?.rxNo || `RX-${visit.visitNo}`) : activeTab === "LAB" ? (labOrders[0]?.orderNo || `LAB-${visit.visitNo}`) : `VISIT-${visit.visitNo}`}
-                    </div>
-                  </div>
-                </div>
+          <div className="modal-body p-0 bg-secondary d-flex flex-column align-items-center justify-content-center" style={{ minHeight: "600px" }}>
+            {pdfLoading ? (
+              <div className="text-white d-flex flex-column align-items-center gap-2 py-5">
+                <span className="spinner-border" style={{ width: "2.5rem", height: "2.5rem" }} />
+                <span className="mt-2">Generating secure PDF via server print pipeline…</span>
+                <small className="text-white-50">This may take a few seconds on first load</small>
               </div>
-
-
-              {/* Physician Details Banner */}
-              <div className="d-flex justify-content-between align-items-start border-bottom pb-2 mb-3 flex-wrap">
-                <div>
-                  <h4 className="fw-bold mb-0 text-dark" style={{ fontSize: "1.15rem" }}>
-                    {doctorName}
-                  </h4>
-                  <div className="text-muted small">{doctorSpecialty}</div>
-                </div>
-                <div className="text-end small clinic-mono" style={{ fontSize: "0.8rem", lineHeight: "1.4" }}>
-                  <div>
-                    <strong>PRC Lic. No:</strong> {prcNo}
+            ) : pdfBlobUrl ? (
+              <iframe
+                ref={iframeRef}
+                src={pdfBlobUrl}
+                style={{ width: "100%", height: "100%", minHeight: "75vh", border: "none" }}
+                title="PDF Preview"
+              />
+            ) : (
+              <div className="d-flex flex-column align-items-center gap-3 py-5 text-white">
+                <span style={{ fontSize: "2.5rem" }}>📄</span>
+                <div className="fw-semibold">PDF Preview Unavailable</div>
+                {pdfError && (
+                  <div className="alert alert-warning text-dark text-start" style={{ maxWidth: "480px", fontSize: "0.85rem" }}>
+                    {pdfError}
                   </div>
-                  <div>
-                    <strong>PTR No:</strong> {ptrNo}
-                  </div>
-                  {s2No && (
-                    <div className="text-danger fw-semibold">
-                      <strong>S2 Lic. No:</strong> {s2No}
-                    </div>
-                  )}
-                </div>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-outline-light btn-sm"
+                  onClick={() => void fetchPdfPreview()}
+                >
+                  🔄 Retry
+                </button>
               </div>
-
-              {/* Patient Demographics Box */}
-              <div
-                className="p-2 mb-3 rounded"
-                style={{
-                  backgroundColor: "#f8fafc",
-                  border: "1px solid #cbd5e1",
-                  fontSize: "0.85rem",
-                }}
-              >
-                <div className="row g-1">
-                  <div className="col-7 col-md-5">
-                    <span className="text-muted">Patient Name: </span>
-                    <strong className="text-dark">{visit.patientName}</strong>
-                  </div>
-                  <div className="col-5 col-md-3">
-                    <span className="text-muted">Age / Sex: </span>
-                    <strong>
-                      {patientAge !== null ? `${patientAge} yrs` : "Adult"} / {visit.sex === "F" ? "Female" : visit.sex === "M" ? "Male" : visit.sex || "—"}
-                    </strong>
-                  </div>
-                  <div className="col-6 col-md-4 text-md-end">
-                    <span className="text-muted">Date: </span>
-                    <strong>{new Date().toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}</strong>
-                  </div>
-
-                  <div className="col-7 col-md-5">
-                    <span className="text-muted">Encounter / Visit: </span>
-                    <span className="clinic-mono fw-semibold">{visit.visitNo}</span>
-                  </div>
-                  <div className="col-5 col-md-3">
-                    <span className="text-muted">DOB: </span>
-                    <span>{visit.dateOfBirth ? visit.dateOfBirth.split("T")[0] : "—"}</span>
-                  </div>
-                  <div className="col-6 col-md-4 text-md-end">
-                    {latestVitals && (
-                      <span className="clinic-mono text-muted" style={{ fontSize: "0.8rem" }}>
-                        BP: {latestVitals.bpSys && latestVitals.bpDia ? `${latestVitals.bpSys}/${latestVitals.bpDia} mmHg` : "—"}
-                        {latestVitals.temperatureC ? ` · T: ${latestVitals.temperatureC}°C` : ""}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Allergy Banner / Warning */}
-                  <div className="col-12 mt-1 pt-1 border-top">
-                    <span className="text-muted">Allergies: </span>
-                    {allergies.length > 0 ? (
-                      <span className="badge bg-danger-subtle text-danger border border-danger-subtle fw-semibold px-2">
-                        ⚠️ ALLERGIC TO: {allergies.map((a) => `${a.substance}${a.severity ? ` (${a.severity})` : ""}`).join(", ")}
-                      </span>
-                    ) : (
-                      <span className="text-success fw-medium">No Known Drug Allergies (NKDA)</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* ───────────────────────────────────────────────────────────── */}
-              {/* TAB 1: PRESCRIPTION SLIP (Rx)                                 */}
-              {/* ───────────────────────────────────────────────────────────── */}
-              {(activeTab === "RX" || activeTab === "ALL") && (
-                <div className="mb-4">
-                  {/* Section Title & Rx Insignia */}
-                  <div className="d-flex align-items-baseline gap-2 mb-2">
-                    <span
-                      style={{
-                        fontFamily: "Georgia, 'Times New Roman', serif",
-                        fontSize: "2.4rem",
-                        fontWeight: "bold",
-                        lineHeight: "1",
-                        color: "#0f172a",
-                      }}
-                    >
-                      ℞
-                    </span>
-                    <span
-                      className="fw-bold text-uppercase tracking-wider small text-muted"
-                      style={{ letterSpacing: "1px" }}
-                    >
-                      Medical Prescription / Reseta
-                    </span>
-                  </div>
-
-                  {/* Prescribed Items List */}
-                  {prescriptions.length === 0 ? (
-                    <div className="p-3 text-center text-muted border border-dashed rounded my-3">
-                      No prescriptions recorded for this encounter yet. Add medications in the visit chart prescribe section.
-                    </div>
-                  ) : (
-                    <div className="ps-3 ps-md-4">
-                      {prescriptions.map((rx, rxIndex) => (
-                        <div key={rx.id || rxIndex} className="mb-4">
-                          {rx.isControlled && (
-                            <div className="alert alert-warning py-1 px-2 mb-2 small d-flex justify-content-between align-items-center">
-                              <span>
-                                <strong>⚠️ DOH/PDEA S2 CONTROLLED SUBSTANCE PRESCRIPTION</strong> — "NO REFILL" ENFORCED
-                              </span>
-                              {rx.specialRxNo && (
-                                <span className="clinic-mono fw-bold">Serial No: {rx.specialRxNo}</span>
-                              )}
-                            </div>
-                          )}
-
-                          {rx.items && rx.items.length > 0 ? (
-                            rx.items.map((item, itemIdx) => {
-                              const genName = item.generic_name || item.genericName || "Medication";
-                              const brandName = item.brand_name || item.brandName;
-                              const dose = item.sig_dose || item.sigDose;
-                              const freq = item.sig_frequency || item.sigFrequency;
-                              const dur = item.sig_duration || item.sigDuration;
-                              const qty = item.qty_prescribed ?? item.qtyPrescribed;
-                              const strength = item.strength;
-                              const form = item.form;
-
-                              return (
-                                <div key={item.id || itemIdx} className="mb-3 pb-2 border-bottom">
-                                  <div className="d-flex justify-content-between align-items-baseline flex-wrap">
-                                    <div className="d-flex align-items-baseline gap-2">
-                                      <span className="fw-bold text-dark fs-6">
-                                        {rxIndex + 1}.{itemIdx + 1} {genName.toUpperCase()}
-                                      </span>
-                                      {strength && <span className="fw-semibold text-secondary">{strength}</span>}
-                                      {form && <span className="text-muted small">({form})</span>}
-                                      {brandName && <span className="text-muted small fst-italic">[{brandName}]</span>}
-                                    </div>
-                                    <div className="clinic-mono fw-bold text-primary">
-                                      Dispense: # {qty || "—"}{" "}
-                                      {rx.qtyWords ? `(${rx.qtyWords})` : form ? `${form}s` : "units"}
-                                    </div>
-                                  </div>
-
-                                  {/* Sig / Directions */}
-                                  <div className="mt-1 ps-3" style={{ fontSize: "0.92rem" }}>
-                                    <span className="fw-semibold text-dark">Sig. </span>
-                                    <span>
-                                      {dose ? `${dose}` : ""} {freq ? `, ${freq}` : ""} {dur ? ` for ${dur}` : ""}
-                                    </span>
-                                  </div>
-                                </div>
-                              );
-                            })
-                          ) : (
-                            <div className="text-muted small fst-italic">Prescription #{rx.rxNo} issued (details recorded).</div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Doctor's Prescription Advice */}
-                  {rxNotesAdvice && (
-                    <div
-                      className="p-2 rounded mt-2 mb-3"
-                      style={{
-                        backgroundColor: "#f1f5f9",
-                        borderLeft: "4px solid #0284c7",
-                        fontSize: "0.82rem",
-                      }}
-                    >
-                      <strong>Doctor's Advice / Reminders: </strong>
-                      <span>{rxNotesAdvice}</span>
-                    </div>
-                  )}
-
-                  {/* Philippine Generics Act Notice */}
-                  <div
-                    className="text-muted text-center pt-2 border-top"
-                    style={{ fontSize: "0.72rem" }}
-                  >
-                    In compliance with Republic Act No. 6675 (Generics Act of 1988) and DOH Administrative Order No. 62.
-                    Generic substitution is permitted unless marked "Dispense As Written" (DAW).
-                  </div>
-                </div>
-              )}
-
-              {/* ───────────────────────────────────────────────────────────── */}
-              {/* TAB 2: LABORATORY EXAMINATION REQUEST SLIP                     */}
-              {/* ───────────────────────────────────────────────────────────── */}
-              {(activeTab === "LAB" || activeTab === "ALL") && (
-                <div className="mb-4 pt-2">
-                  {activeTab === "ALL" && <hr className="my-4" style={{ borderTop: "2px dashed #94a3b8" }} />}
-
-                  <div className="d-flex justify-content-between align-items-center mb-2">
-                    <div className="d-flex align-items-center gap-2">
-                      <span style={{ fontSize: "1.4rem" }}>🔬</span>
-                      <h5 className="fw-bold text-uppercase mb-0 tracking-wide text-dark" style={{ fontSize: "1.05rem" }}>
-                        Laboratory &amp; Diagnostic Requisition Slip
-                      </h5>
-                    </div>
-                    <span className="badge bg-secondary-subtle text-secondary border">
-                      DOH CLINICAL LAB LTO # 13-0948-26-CL
-                    </span>
-                  </div>
-
-                  {/* Clinical Impression & Priority */}
-                  <div
-                    className="p-2 mb-3 rounded"
-                    style={{
-                      backgroundColor: "#f8fafc",
-                      border: "1px solid #cbd5e1",
-                      fontSize: "0.82rem",
-                    }}
-                  >
-                    <div className="row g-2">
-                      <div className="col-md-7">
-                        <span className="text-muted">Clinical Impression / Diagnoses: </span>
-                        {diagnoses.length > 0 ? (
-                          <div className="d-inline-flex flex-wrap gap-1 align-items-center">
-                            {diagnoses.map((d, i) => (
-                              <span key={i} className="badge bg-primary-subtle text-primary border border-primary-subtle">
-                                {d.icd10Code} ({d.dxType || "PRIMARY"})
-                              </span>
-                            ))}
-                          </div>
-                        ) : (
-                          <strong>Routine Check / Triage Evaluation</strong>
-                        )}
-                      </div>
-                      <div className="col-md-5 text-md-end">
-                        <span className="text-muted">Requisition Priority: </span>
-                        {labOrders.some((o) => o.priority === "STAT") ? (
-                          <span className="badge bg-danger text-white fw-bold">⚡ STAT / EMERGENCY</span>
-                        ) : labOrders.some((o) => o.priority === "URGENT") ? (
-                          <span className="badge bg-warning text-dark fw-bold">URGENT</span>
-                        ) : (
-                          <span className="badge bg-light text-dark border">ROUTINE</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Laboratory Orders Table */}
-                  {labOrders.length === 0 ? (
-                    <div className="p-3 text-center text-muted border border-dashed rounded my-3">
-                      No laboratory tests requested for this encounter yet. Add lab orders in the visit chart laboratory section.
-                    </div>
-                  ) : (
-                    <div className="table-responsive mb-3">
-                      <table className="table table-sm table-bordered mb-0" style={{ fontSize: "0.84rem" }}>
-                        <thead className="table-light">
-                          <tr>
-                            <th style={{ width: "5%" }}>#</th>
-                            <th style={{ width: "35%" }}>Requested Test / Panel</th>
-                            <th style={{ width: "15%" }}>Code</th>
-                            <th style={{ width: "25%" }}>Specimen Required</th>
-                            <th style={{ width: "20%" }}>Preparation / Fasting</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {labOrders.flatMap((order, orderIdx) =>
-                            (order.items && order.items.length > 0 ? order.items : [{ test_name: "Laboratory Examination", test_code: "LAB" }]).map(
-                              (item: any, itemIdx: number) => {
-                                const testName = item.test_name || item.testName || "Laboratory Test";
-                                const testCode = item.test_code || item.testCode || "LAB";
-                                const specimen = item.specimen_type || item.specimenType || "Whole Blood / Serum";
-                                const isFasting = item.fasting_required || item.fastingRequired;
-                                const fastingHours = item.fasting_hours || item.fastingHours || 10;
-                                const prep = isFasting
-                                  ? `Fasting ${fastingHours} hrs (Water only)`
-                                  : item.instructions || "Standard collection";
-
-                                return (
-                                  <tr key={`${order.id}-${item.id || itemIdx}`}>
-                                    <td className="text-center">{orderIdx + 1}.{itemIdx + 1}</td>
-                                    <td>
-                                      <strong>{testName}</strong>
-                                      {order.clinicalInfo && (
-                                        <div className="small text-muted fst-italic">Note: {order.clinicalInfo}</div>
-                                      )}
-                                    </td>
-                                    <td className="clinic-mono">{testCode}</td>
-                                    <td>{specimen}</td>
-                                    <td>
-                                      {isFasting ? (
-                                        <span className="badge bg-warning-subtle text-dark border border-warning-subtle">
-                                          ⚠️ {prep}
-                                        </span>
-                                      ) : (
-                                        <span className="text-muted">{prep}</span>
-                                      )}
-                                    </td>
-                                  </tr>
-                                );
-                              }
-                            )
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-
-                  {/* Specimen Collection Checklist Box (For Phlebotomist / Lab Staff) */}
-                  <div
-                    className="p-2 border rounded mb-2 bg-light text-muted small"
-                    style={{ fontSize: "0.75rem", lineHeight: "1.5" }}
-                  >
-                    <div className="row g-2">
-                      <div className="col-4">
-                        [ &nbsp; ] Specimen Collected: ____ / ____ / 2026 __:__
-                      </div>
-                      <div className="col-4">
-                        [ &nbsp; ] Phlebotomist: ______________________
-                      </div>
-                      <div className="col-4">
-                        [ &nbsp; ] Accession Barcode: _________________
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ───────────────────────────────────────────────────────────── */}
-              {/* TAB 3 EXTRA: CLINICAL PLAN & HOME CARE (Shown in ALL mode)     */}
-              {/* ───────────────────────────────────────────────────────────── */}
-              {activeTab === "ALL" && latestNote && latestNote.plan && (
-                <div className="mb-4 pt-2">
-                  <hr className="my-3" style={{ borderTop: "2px dashed #94a3b8" }} />
-                  <div className="d-flex align-items-center gap-2 mb-2">
-                    <span style={{ fontSize: "1.2rem" }}>📝</span>
-                    <h6 className="fw-bold text-uppercase mb-0 tracking-wide text-dark" style={{ fontSize: "0.95rem" }}>
-                      Physician's Clinical Management &amp; Follow-Up Plan
-                    </h6>
-                  </div>
-                  <div
-                    className="p-3 rounded mb-2"
-                    style={{
-                      backgroundColor: "#f8fafc",
-                      border: "1px solid #cbd5e1",
-                      fontSize: "0.86rem",
-                      whiteSpace: "pre-line",
-                    }}
-                  >
-                    {latestNote.plan}
-                  </div>
-                </div>
-              )}
-
-              {/* Physician Signature Block */}
-              <div className="row mt-4 pt-3 border-top align-items-end">
-                <div className="col-6 col-md-7">
-                  <div className="small text-muted" style={{ fontSize: "0.74rem", lineHeight: "1.4" }}>
-                    <div>
-                      <strong>Document Reference:</strong> {visit.visitNo} · Generated: {new Date().toLocaleString("en-PH")}
-                    </div>
-                    <div>
-                      Valid for 30 days from date of issuance. Not valid if altered or erased.
-                    </div>
-                    <div>
-                      Verify official electronic record at: <span className="clinic-mono text-primary">/clinical/visits/{visit.id}</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="col-6 col-md-5 text-end">
-                  <div
-                    className="d-inline-block text-center"
-                    style={{ minWidth: "220px" }}
-                  >
-                    <div
-                      className="border-bottom pb-1 mb-1 fw-bold text-dark"
-                      style={{ fontSize: "0.95rem", minHeight: "40px", display: "flex", alignItems: "flex-end", justifyContent: "center" }}
-                    >
-                      {doctorName}
-                    </div>
-                    <div className="text-muted" style={{ fontSize: "0.78rem" }}>
-                      Attending Physician
-                    </div>
-                    <div className="clinic-mono fw-medium" style={{ fontSize: "0.75rem" }}>
-                      PRC: {prcNo} · PTR: {ptrNo}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            )}
           </div>
 
           {/* Modal Footer (Screen-only) */}
@@ -898,9 +625,9 @@ export function PrescriptionPrintModal({
                 type="button"
                 className="btn btn-info text-dark btn-sm fw-bold px-3 d-flex align-items-center gap-1"
                 onClick={handleDownloadPdf}
-                disabled={isDownloadingPdf}
+                disabled={pdfLoading || !pdfBlobUrl}
               >
-                {isDownloadingPdf ? (
+                {pdfLoading ? (
                   <>
                     <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
                     <span>Rendering PDF...</span>
@@ -922,4 +649,6 @@ export function PrescriptionPrintModal({
       </div>
     </div>
   );
+
+  return createPortal(modalContent, document.body);
 }

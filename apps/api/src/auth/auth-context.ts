@@ -6,7 +6,7 @@ import { SetMetadata } from "@nestjs/common";
  * module guard (1.6) and services building the withTenant() context.
  */
 export interface AuthContext {
-  kind: "user" | "apikey" | "breakglass";
+  kind: "user" | "apikey" | "breakglass" | "platform";
   userId: string | null;
   tenantId: string | null;
   sessionId: string | null;

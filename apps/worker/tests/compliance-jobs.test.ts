@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { withTenant } from '@clinic/db';
+import { seedUsers } from '@clinic/db/tests/helpers.js';
 import {
   handleRetentionEnforce,
   handleDsrDeadlineRemind,
@@ -7,6 +8,7 @@ import {
 } from '../src/handlers/compliance-jobs.handler.js';
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
+const { USER_A, DOCTOR_A } = await seedUsers();
 
 describe('Compliance Background Jobs (JOB-15, JOB-16, JOB-17)', () => {
 
@@ -35,11 +37,11 @@ describe('Compliance Background Jobs (JOB-15, JOB-16, JOB-17)', () => {
       );
       patientId = pRes.rows[0].id;
 
-      const vRes = await tx.query(
+const vRes = await tx.query(
         `INSERT INTO visits (tenant_id, patient_id, branch_id, practitioner_id, visit_no, status, closed_at, created_by)
-         VALUES ($1, $2, 'a1000000-0000-4000-8000-000000000001', 'a3000000-0000-4000-8000-000000000002', $3, 'CLOSED', now() - interval '11 years', 'a3000000-0000-4000-8000-000000000001')
+         VALUES ($1, $2, 'a1000000-0000-4000-8000-000000000001', $4::uuid, $3, 'CLOSED', now() - interval '11 years', $5::uuid)
          RETURNING id`,
-        [TENANT_A, patientId, `V-RET-${runSuffix}`],
+        [TENANT_A, patientId, `V-RET-${runSuffix}`, DOCTOR_A, USER_A],
       );
       visitId = vRes.rows[0].id;
 

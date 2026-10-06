@@ -15,9 +15,10 @@ import { TemplatesController } from '../src/templates/templates.controller.js';
 import { FilesController } from '../src/files/files.controller.js';
 import { ReferenceController } from '../src/reference/reference.controller.js';
 import type { RequestWithAuth } from '../src/auth/auth-context.js';
+import { seedUsers, NO_SEED_USERS } from "@clinic/db/tests/helpers.js";
 
 const TENANT_ID = '11111111-1111-4111-8111-111111111111';
-const USER_ID = 'a3000000-0000-4000-8000-000000000001';
+const { USER_A: USER_ID } = await seedUsers();
 
 const mockReq = {
   tenantId: TENANT_ID,

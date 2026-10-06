@@ -14,7 +14,7 @@
  * vacuous on an empty table.
  */
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
-import { probeDb } from '@clinic/db/tests/helpers.js';
+import { probeDb, seedUsers, NO_SEED_USERS } from '@clinic/db/tests/helpers.js';
 import { createPool, withTenantOnPool } from '@clinic/db';
 import { sha256Of, verifyDocument } from '@clinic/print';
 import { runLabReportRender } from '../src/handlers/lab-jobs.handler.js';
@@ -24,7 +24,7 @@ const hasDb = await probeDb();
 const TENANT = '22222222-2222-4222-8222-222222222222';
 const OTHER_TENANT = '11111111-1111-4111-8111-111111111111';
 const BRANCH = 'b1000000-0000-4000-8000-000000000001';
-const USER = 'b3000000-0000-4000-8000-000000000002';
+const { DOCTOR_B: USER } = hasDb ? await seedUsers() : NO_SEED_USERS;
 
 const createdOrders: string[] = [];
 const createdReports: string[] = [];

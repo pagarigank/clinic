@@ -24,6 +24,7 @@
     "db:rollback": "node packages/db/scripts/migrate.mjs down",
     "db:seed": "node packages/db/scripts/migrate.mjs seed",
     "db:seed:permissions": "node packages/db/scripts/seed-permissions.mjs",
+    "db:purge:demo": "node packages/db/scripts/purge-and-seed.mjs",
     "test:boundaries": "node tooling/boundary-fixtures/boundary.test.mjs",
     "assert:pinned": "node tooling/scripts/assert-pinned-versions.mjs"
   },

@@ -29,6 +29,13 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const DEMO_SESSION_KEY = "clinic_demo_session";
 
+/**
+ * Identity for the offline demo fallback below. The seed generates user IDs per run, so
+ * a pinned UUID would name a user that does not exist; this session is synthetic and is
+ * never sent as an authenticated principal.
+ */
+const DEMO_FALLBACK_USER_ID = crypto.randomUUID();
+
 function getSafeStorage(): Storage | null {
   try {
     if (typeof window !== "undefined" && window.localStorage && typeof window.localStorage.getItem === "function") {
@@ -138,7 +145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch {
         // Fallback session state if session endpoint isn't fully mocked
         const fallback: UserSession = {
-          userId: "a3000000-0000-4000-8000-000000000001",
+          userId: DEMO_FALLBACK_USER_ID,
           name: email.split("@")[0] || "Clinic User",
           email,
           role: "TENANT_ADMIN",

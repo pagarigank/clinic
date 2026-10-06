@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { escapeZpl, renderBarcodeLabel, renderRxLabel } from "../src/zpl.js";
 import { renderReceipt as renderThermalReceipt } from "../src/escpos.js";
+import {
+  renderDispenseLabelHtml,
+  type DispenseLabelDocument,
+} from "../src/templates.js";
 
 /**
  * ZPL and ESC/POS are pure text/byte builders, so these tests need no printer
@@ -303,5 +307,159 @@ describe("renderThermalReceipt", () => {
     expect(printed.replace(/[^Z]/g, "")).toHaveLength(90);
     expect(printed).toContain("Patient:");
     expect(printed.split("\n").length).toBeGreaterThan(2);
+  });
+});
+
+/**
+ * The A4/A5 counterpart to the thermal dispense label (PHM-T3). The failure mode
+ * that matters here is a mis-dispense: a box printed without the patient name,
+ * without the sig, or split across two sheets. Each box therefore has to carry
+ * its own patient identity and be kept whole by the print layout.
+ */
+describe("renderDispenseLabelHtml", () => {
+  const base: DispenseLabelDocument = {
+    clinicName: "Metro Health Clinic",
+    branchName: "Main",
+    dispenseNo: "DSP-2026-00311",
+    dispensedAt: "2026-10-04 10:20",
+    patientName: "Dela Cruz, Clara",
+    patientHrn: "HRN-2026-0091",
+    patientDob: "1988-04-12",
+    pharmacistName: "RPh. M. Aquino",
+    items: [
+      {
+        drugName: "Amoxicillin",
+        genericName: "Amoxicillin trihydrate",
+        strength: "500mg",
+        dosageForm: "Capsule",
+        directionsForUse: "1 cap PO TID x 7 days, after meals",
+        quantity: 21,
+        batchNo: "AMX-24517",
+        expiryDate: "2027-04-30",
+      },
+      {
+        drugName: "Paracetamol",
+        strength: "500mg",
+        dosageForm: "Tablet",
+        directionsForUse: "1 tab PO PRN for fever, max 8 tabs/day",
+        quantity: 10,
+      },
+    ],
+  };
+
+  it("prints the clinic, dispense number, and dispensing stamp", () => {
+    const html = renderDispenseLabelHtml(base);
+
+    expect(html).toContain("Metro Health Clinic");
+    expect(html).toContain("DSP-2026-00311");
+    expect(html).toContain("2026-10-04 10:20");
+  });
+
+  it("emits one self-contained label box per dispensed item", () => {
+    const html = renderDispenseLabelHtml(base);
+
+    expect(html.match(/class="rx-label-box"/g)?.length ?? 0).toBe(2);
+    // Each box repeats the patient identity, so one box cut from a sheet is
+    // still attributable to the right person.
+    expect(html.match(/class="rx-label-patient"/g)?.length ?? 0).toBe(2);
+    expect(html.match(/class="rx-label-sig"/g)?.length ?? 0).toBe(2);
+    expect(html.match(/class="rx-label-footer"/g)?.length ?? 0).toBe(2);
+  });
+
+  it("keeps a label box whole instead of letting it split across sheets", () => {
+    const html = renderDispenseLabelHtml(base);
+
+    expect(html).toContain("break-inside: avoid");
+  });
+
+  it("prints the drug, strength, dosage form, sig, quantity, lot and expiry", () => {
+    const html = renderDispenseLabelHtml(base);
+
+    expect(html).toContain("Amoxicillin");
+    expect(html).toContain("Amoxicillin trihydrate");
+    expect(html).toContain("500mg");
+    expect(html).toContain("Capsule");
+    expect(html).toContain("1 cap PO TID x 7 days, after meals");
+    expect(html).toContain("21");
+    expect(html).toContain("AMX-24517");
+    expect(html).toContain("2027-04-30");
+  });
+
+  it("prints the second item's own sig rather than repeating the first", () => {
+    const html = renderDispenseLabelHtml(base);
+
+    expect(html).toContain("1 tab PO PRN for fever, max 8 tabs/day");
+    // Each sig appears in exactly one box: a sig duplicated across boxes would
+    // mean one drug's directions were applied to the other bottle, and a sig
+    // appearing twice in the sheet header would be just as dangerous.
+    expect(html.match(/1 cap PO TID x 7 days, after meals/g)?.length ?? 0).toBe(1);
+    expect(html.match(/1 tab PO PRN for fever, max 8 tabs\/day/g)?.length ?? 0).toBe(1);
+  });
+
+  it("omits optional fields cleanly when the record supplies none", () => {
+    const html = renderDispenseLabelHtml({
+      clinicName: "Metro Health Clinic",
+      dispenseNo: "DSP-2026-00399",
+      dispensedAt: "2026-10-04 11:00",
+      patientName: "Solo, Patient",
+      items: [
+        {
+          drugName: "Cetirizine",
+          directionsForUse: "1 tab PO once daily at night",
+          quantity: 5,
+        },
+      ],
+    });
+
+    expect(html).toContain("Cetirizine");
+    // No branch, HRN, DOB, pharmacist, lot, or expiry was supplied.
+    expect(html).not.toContain("HRN");
+    expect(html).not.toContain("Lot:");
+    expect(html).not.toContain("Exp:");
+    expect(html).not.toContain("RPh:");
+    expect(html).not.toContain("Dispensed by");
+    // Not a controlled item, so no S2 marker anywhere.
+    expect(html).not.toContain("S2");
+  });
+
+  it("marks a dangerous-drug dispense with its S2 serial and the RA 9165 note", () => {
+    const html = renderDispenseLabelHtml({
+      ...base,
+      specialRxSerial: "S2-2026-0007",
+    });
+
+    expect(html).toContain("S2-2026-0007");
+    expect(html).toContain("RA 9165");
+    // One marker per box, so a controlled item is flagged on every label.
+    expect(html.match(/class="rx-label-s2"/g)?.length ?? 0).toBe(2);
+  });
+
+  it("escapes hostile text in every interpolated field", () => {
+    const html = renderDispenseLabelHtml({
+      clinicName: "<b>Clinic</b>",
+      dispenseNo: "\"><script>",
+      dispensedAt: "<script>alert(1)</script>",
+      patientName: "<img src=x onerror=alert(2)>",
+      patientHrn: "</div><script>alert(3)</script>",
+      pharmacistName: "<script>alert(4)</script>",
+      specialRxSerial: "<script>alert(5)</script>",
+      items: [
+        {
+          drugName: "<script>alert(6)</script>",
+          genericName: "<b>generic</b>",
+          strength: "\"><script>",
+          dosageForm: "<script>",
+          directionsForUse: "<img src=x onerror=alert(7)>",
+          quantity: "<script>1</script>",
+          batchNo: "</div><script>alert(8)</script>",
+          expiryDate: "<script>",
+        },
+      ],
+    });
+
+    expect(html).not.toMatch(/<script/i);
+    expect(html).not.toMatch(/<img/i);
+    expect(html).not.toMatch(/<b>/i);
+    expect(html).toContain("&lt;script&gt;");
   });
 });

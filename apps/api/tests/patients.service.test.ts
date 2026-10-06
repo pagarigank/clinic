@@ -13,13 +13,14 @@ import { PatientsService } from '../src/patients/patients.service.js';
 import { ProblemException } from '../src/http/problem.exception.js';
 import { probeDb } from '@clinic/db/tests/helpers.js';
 import { withTenant } from '@clinic/db';
+import { seedUsers, NO_SEED_USERS } from "@clinic/db/tests/helpers.js";
 
 const hasDb = await probeDb();
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
-const USER_A = 'a3000000-0000-4000-8000-000000000001';
+const { USER_A } = hasDb ? await seedUsers() : NO_SEED_USERS;
 const TENANT_B = '22222222-2222-4222-8222-222222222222';
-const USER_B = 'b3000000-0000-4000-8000-000000000001';
+const { USER_B } = hasDb ? await seedUsers() : NO_SEED_USERS;
 
 describe.skipIf(!hasDb)('PatientsService (todo 2.2)', () => {
   let service: PatientsService;

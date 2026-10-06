@@ -3,11 +3,12 @@ import { withTenant, getAppPool, createPool } from '@clinic/db';
 import { SupplyService } from '../src/supply/supply.service.js';
 import { runStockBalanceReconcile } from '../../worker/src/handlers/supply-jobs.handler.js';
 import { ProblemException } from '../src/http/problem.exception.js';
+import { seedUsers, NO_SEED_USERS } from "@clinic/db/tests/helpers.js";
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
 const BRANCH_A = 'a1000000-0000-4000-8000-000000000001';
-const USER_1 = 'a3000000-0000-4000-8000-000000000001';
-const USER_2 = 'a3000000-0000-4000-8000-000000000002';
+const { USER_A: USER_1 } = await seedUsers();
+const { DOCTOR_A: USER_2 } = await seedUsers();
 
 describe('SupplyService (Phase 4 — Supply & Inventory Core)', () => {
   const svc = new SupplyService();
@@ -706,5 +707,80 @@ LOC-CSV-${rand},INVALID_ITEM,10,50,20,15
     await ownerPool.query(`DELETE FROM patients WHERE id = $1`, [patientId]);
     await ownerPool.query(`UPDATE items SET service_id = NULL WHERE tenant_id = $1 AND id = $2`, [tenantId, itemId]);
     await ownerPool.query(`DELETE FROM service_catalog WHERE id = $1`, [serviceId]);
+  });
+
+  it('SUP-PRINT: lists consumption for a period and maps a printable document', async () => {
+    // Arrange — a stocked batch to consume from.
+    const supplier = await svc.createSupplier(tenantId, { code: `SUP-PRNT-${Date.now()}`, name: 'Print Test Co' });
+    const grn = await svc.createGrn(tenantId, user1Id, {
+      branchId,
+      locationId: centralStoreId,
+      supplierId: supplier.id,
+      lines: [{
+        itemId,
+        lotNo: `LOT-PRNT-${Date.now()}`,
+        expiryDate: new Date(Date.now() + 180 * 86400000).toISOString().slice(0, 10),
+        qtyReceived: 5,
+        uomId: uomPcsId,
+        unitCost: 2,
+      }],
+    });
+    const posted = await svc.postGrn(tenantId, user1Id, `req-grn-prnt-${Date.now()}`, grn.id);
+    const batchId = posted.lines[0].batch_id;
+
+    // Act — post a house-use consumption with a note.
+    const cons = await svc.postConsumption(tenantId, user1Id, `req-cons-prnt-${Date.now()}`, {
+      locationId: centralStoreId,
+      itemId,
+      batchId,
+      qty: 2,
+      uomId: uomPcsId,
+      refType: 'HOUSE_USE',
+      notes: 'Ward stock',
+    });
+    expect(cons.status).toBe('POSTED');
+
+    const logRes = await ownerPool.query<{ id: string }>(
+      `SELECT id FROM consumption_logs
+        WHERE tenant_id = $1 AND ref_type = 'HOUSE_USE' AND notes = 'Ward stock'
+        ORDER BY logged_at DESC LIMIT 1`,
+      [tenantId],
+    );
+    const consId = logRes.rows[0]?.id;
+    expect(consId).toBeTruthy();
+
+    const rows = await svc.listConsumption(tenantId, { locationId: centralStoreId });
+    const mine = rows.find((r: { id: string }) => r.id === consId) as Record<string, unknown> | undefined;
+    expect(mine).toBeTruthy();
+    expect(mine!.item_code).toBeDefined();
+    expect(mine!.item_name).toBe('Amoxicillin 500mg');
+    expect(Number(mine!.qty)).toBe(2);
+    expect(mine!.uom_code).toBe('PCS');
+    expect(mine!.location_name).toBeTruthy();
+    expect(mine!.ref_type).toBe('HOUSE_USE');
+    expect(mine!.notes).toBe('Ward stock');
+
+    // The period filter includes today and the document carries the row.
+    const today = new Date(mine!.logged_at as string | Date).toLocaleDateString('en-CA');
+    const doc = await svc.getConsumptionListDocument(
+      tenantId,
+      { locationId: centralStoreId, from: today, to: today },
+      { clinicName: 'Test Clinic', generatedBy: 'Tester' },
+    );
+    expect(doc.clinicName).toBe('Test Clinic');
+    expect(doc.locationName).toBeTruthy();
+    expect(doc.fromDate).toBe(today);
+    expect(doc.generatedBy).toBe('Tester');
+    const docRow = doc.rows.find((r) => r.itemName === 'Amoxicillin 500mg' && Number(r.qty) === 2);
+    expect(docRow).toBeTruthy();
+    expect(docRow!.refType).toBe('HOUSE_USE');
+    expect(docRow!.notes).toBe('Ward stock');
+
+    // A period in the past excludes it.
+    const past = await svc.listConsumption(tenantId, { from: '2000-01-01', to: '2000-01-02' });
+    expect(past.find((r: { id: string }) => r.id === consId)).toBeUndefined();
+
+    // Cleanup — consumption_logs is append-only for the app role; owner may prune.
+    await ownerPool.query(`DELETE FROM consumption_logs WHERE tenant_id = $1 AND id = $2`, [tenantId, consId]);
   });
 });

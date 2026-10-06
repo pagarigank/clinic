@@ -20,12 +20,17 @@ import {
   UserPasswordResetSchema,
   UserRoleAssignSchema,
   UserUpdateSchema,
+  EmployeeUpsertSchema,
   zodUuid,
   type EffectivePermissions,
   type PermissionDto,
   type RoleDto,
   type UserList,
+  type Employee,
+  type EmployeeUpsert,
+  type EmployeeWithUser,
 } from "@clinic/contracts";
+import { withTenant } from "@clinic/db";
 import { ZodValidationPipe } from "../http/zod-validation.pipe.js";
 import { ProblemException } from "../http/problem.exception.js";
 import { RequireStepUp, type RequestWithAuth } from "../auth/auth-context.js";
@@ -60,8 +65,9 @@ export class RbacController {
 
   @RequirePermission("admin.role.read")
   @Get("admin/permissions")
-  permissionMatrix(): Array<{ module: string; permissions: PermissionDto[] }> {
-    return this.rbac.permissionMatrix();
+  async permissionMatrix(@Req() request: AuthedRequest): Promise<Array<{ module: string; permissions: PermissionDto[] }>> {
+    const { tenantId, userId } = caller(request);
+    return withTenant({ tenantId, userId }, async () => this.rbac.permissionMatrix());
   }
 
   // ---- roles -----------------------------------------------------------------
@@ -197,6 +203,46 @@ export class RbacController {
     const found = all.find((u) => u.id === id);
     if (!found) throw new ProblemException("NOT_FOUND", { detail: "user not found" });
     return found;
+  }
+
+  // ---- employee information tied to user profile -------------------------
+
+  @RequirePermission("admin.user.read")
+  @Get("admin/employees")
+  listEmployees(@Req() request: AuthedRequest): Promise<EmployeeWithUser[]> {
+    const { tenantId, userId } = caller(request);
+    return this.users.listEmployees(tenantId, userId);
+  }
+
+  @RequirePermission("admin.user.read")
+  @Get("admin/users/:id/employee")
+  getEmployee(
+    @Req() request: AuthedRequest,
+    @Param("id", new ZodValidationPipe(zodUuid)) id: string,
+  ): Promise<Employee | null> {
+    const { tenantId, userId } = caller(request);
+    return this.users.getEmployee(tenantId, userId, id);
+  }
+
+  @RequirePermission("admin.user.update")
+  @Put("admin/users/:id/employee")
+  upsertEmployee(
+    @Req() request: AuthedRequest,
+    @Param("id", new ZodValidationPipe(zodUuid)) id: string,
+    @Body(new ZodValidationPipe(EmployeeUpsertSchema)) dto: EmployeeUpsert,
+  ): Promise<Employee> {
+    const { tenantId, userId } = caller(request);
+    return this.users.upsertEmployee(tenantId, userId, id, dto);
+  }
+
+  @RequirePermission("admin.user.update")
+  @Delete("admin/users/:id/employee")
+  deleteEmployee(
+    @Req() request: AuthedRequest,
+    @Param("id", new ZodValidationPipe(zodUuid)) id: string,
+  ): Promise<{ deleted: true }> {
+    const { tenantId, userId } = caller(request);
+    return this.users.deleteEmployee(tenantId, userId, id);
   }
 
   @RequirePermission("admin.user.update")

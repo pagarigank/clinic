@@ -1,5 +1,8 @@
-import { Inject, Controller, Get, Post, Patch, Put, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Inject, Controller, Get, Post, Patch, Put, Body, Param, Query, UseGuards, Req, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import type { FastifyReply } from 'fastify';
+import { renderPdf, renderConsumptionListHtml } from '@clinic/print';
+import { sendPdf } from '../http/pdf-response.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
 import { Module } from '../rbac/module.guard.js';
@@ -279,6 +282,21 @@ export class SupplyController {
     const parsed = PostConsumptionSchema.parse(body);
     const requestId = getRequestId(req);
     return this.svc.postConsumption(req.tenantId!, req.authContext!.userId!, requestId, parsed);
+  }
+
+  @RequirePermission('supply.stock.read')
+  @Get('consumption/pdf')
+  @ApiOperation({ summary: 'Render the consumption / issuance list as a PDF' })
+  async getConsumptionPdf(
+    @Req() req: RequestWithAuth,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('locationId') locationId: string,
+    @Res() reply: FastifyReply,
+  ) {
+    const doc = await this.svc.getConsumptionListDocument(req.tenantId!, { from, to, locationId });
+    const rendered = await renderPdf(renderConsumptionListHtml(doc), { format: 'A4' });
+    void sendPdf(reply, rendered, 'Consumption-List.pdf');
   }
 
   // ── Goods Receipts (GRN) & Receiving (SUP-T2, AC-8) ─────────────────────────

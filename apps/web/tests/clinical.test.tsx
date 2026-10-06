@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router";
 import { AuthProvider } from "../src/shared/auth/AuthContext.js";
@@ -7,6 +7,169 @@ import { SchedulingPage } from "../src/features/clinical/SchedulingPage.js";
 import { QueueBoardPage } from "../src/features/clinical/QueueBoardPage.js";
 import { VisitsPage } from "../src/features/clinical/VisitsPage.js";
 import { VisitChartPage } from "../src/features/clinical/VisitChartPage.js";
+import { useStubHandler, type StubHandler } from "./setup.js";
+
+const baseHandler: StubHandler = (req, res) => {
+  const url = req.url ?? "";
+  const method = req.method ?? "GET";
+  res.writeHead(200, { "content-type": "application/json" });
+
+  if (url.includes("/clinical/appointments")) {
+    res.end(
+      JSON.stringify({
+        data: [
+          {
+            id: "a1",
+            patientName: "Santos, Maria Elena",
+            practitionerName: "Dr. Reyes",
+            startsAt: "2026-10-02T09:00:00Z",
+            endsAt: "2026-10-02T09:30:00Z",
+            status: "CONFIRMED",
+          },
+        ],
+      }),
+    );
+    return;
+  }
+
+  if (url.includes("/clinical/availability")) {
+    res.end(
+      JSON.stringify({
+        slots: [{ startsAt: "09:00", endsAt: "09:30", available: true }],
+      }),
+    );
+    return;
+  }
+
+  if (url.includes("/clinical/queue")) {
+    res.end(
+      JSON.stringify({
+        data: [
+          {
+            id: "q1",
+            ticketNo: "Q20261002-001",
+            patientName: "Santos, Maria Elena",
+            priority: 0,
+            status: "SERVING",
+            issuedAt: "08:02",
+          },
+        ],
+      }),
+    );
+    return;
+  }
+
+  if (url.includes("/clinical/visits") && !url.includes("/certificates") && method === "GET") {
+    const match = url.match(/\/clinical\/visits\/([^/?]+)/);
+    if (match && match[1] && match[1] !== "visits") {
+      const visitId = match[1];
+      res.end(
+        JSON.stringify({
+          id: visitId,
+          visit_no: "V-20261002-00001",
+          patient_id: "a4000000-0000-4000-8000-000000000001",
+          patient_name: "Maria Elena Santos",
+          date_of_birth: "1988-04-12",
+          gender: "F",
+          status: "IN_PROGRESS",
+          branch_id: "a1000000-0000-4000-8000-000000000001",
+          branch_name: "Main Branch",
+          clinic_name: "Metro Health Clinic & Diagnostic Center",
+          chief_complaint: "Fever x 3 days, dry cough, body malaise",
+          practitioner_name: "Dr. Maria Elena Reyes, MD",
+          allergies: [{ substance: "Penicillin", severity: "high" }],
+          vitals: [
+            {
+              id: "vit-1",
+              bpSys: 120,
+              bpDia: 80,
+              hr: 78,
+              temp: 38.8,
+              rr: 18,
+              spo2: 98,
+              recordedAt: "08:35",
+              flags: ["FEVER"],
+            },
+          ],
+          notes: [],
+          diagnoses: [],
+          prescriptions: [
+            {
+              id: "rx-1",
+              rx_no: "RX-20261002-00001",
+              status: "ISSUED",
+              is_controlled: false,
+              prescriber_name: "Dr. Maria Elena Reyes, MD",
+              items: [
+                {
+                  generic_name: "Paracetamol",
+                  brand_name: "Biogesic",
+                  sig_dose: "500 mg",
+                  sig_frequency: "Every 4-6 hours as needed",
+                  sig_duration: "5 days",
+                  dispense_qty: "20 tablets",
+                  instructions: "Take after meals",
+                },
+              ],
+            },
+          ],
+          labOrders: [],
+          supplies: [],
+        }),
+      );
+      return;
+    }
+
+    res.end(
+      JSON.stringify({
+        data: [
+          {
+            id: "v1",
+            visit_no: "V-20261002-00001",
+            patient_name: "Santos, Maria Elena",
+            visit_type: "OPD",
+            status: "IN_PROGRESS",
+            chief_complaint: "Fever x 3 days, cough",
+            opened_at: "2026-10-02 08:30",
+          },
+          {
+            id: "v3",
+            visit_no: "V-20261001-00012",
+            patient_name: "Lim, Roberto",
+            visit_type: "FOLLOW_UP",
+            status: "CLOSED",
+            chief_complaint: "Post-op wound check — clean",
+            opened_at: "2026-10-01 14:00",
+          },
+        ],
+      }),
+    );
+    return;
+  }
+
+  if (url.includes("/certificates")) {
+    res.end(JSON.stringify({ data: [], total: 0 }));
+    return;
+  }
+
+  if (url.includes("/patients")) {
+    res.end(
+      JSON.stringify({
+        data: [
+          {
+            id: "a4000000-0000-4000-8000-000000000001",
+            last_name: "Santos",
+            first_name: "Maria Elena",
+            patientNo: "P-001",
+          },
+        ],
+      }),
+    );
+    return;
+  }
+
+  res.end(JSON.stringify({ message: "ok" }));
+};
 
 /**
  * Phase 3 clinical screens (frontend §14.4): scheduling day view + booking,
@@ -30,6 +193,10 @@ function renderAt(path: string, ui: React.ReactElement) {
 }
 
 describe("SchedulingPage (todo §3.1, CLN-T1)", () => {
+  beforeEach(() => {
+    useStubHandler(baseHandler);
+  });
+
   it("renders the day view with appointments and availability panel", async () => {
     renderAt("*", <SchedulingPage />);
     expect(screen.getByText(/Appointments & Scheduling/i)).toBeInTheDocument();
@@ -171,6 +338,72 @@ describe("VisitChartPage (CLN-T4/T5)", () => {
     expect(await screen.findByText(/Doctor's Prescription & Clinical Order Print Center/i)).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Download Official PDF/i }).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /View PDF/i })).toBeInTheDocument();
+  });
+
+  it("renders the medical certificates panel with the numbered issue form (CLN-T8)", async () => {
+    renderAt("/clinical/visits/v-demo", <VisitChartPage />);
+    expect(screen.getByText(/Medical Certificates/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Issue Certificate/i })).toBeInTheDocument();
+    expect(await screen.findByText(/No certificates issued for this visit/i)).toBeInTheDocument();
+  });
+
+  it("issues a numbered certificate and prints it from the server-rendered PDF", async () => {
+    const calls: string[] = [];
+    useStubHandler((req, res) => {
+      const url = req.url ?? "";
+      const method = req.method ?? "GET";
+      calls.push(`${method} ${url}`);
+      if (url.includes("/pdf")) {
+        res.writeHead(200, { "content-type": "application/pdf" });
+        res.end(Buffer.from("%PDF-1.7 certificate"));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      if (method === "POST" && /\/certificates$/.test(url)) {
+        res.end(JSON.stringify({ id: "cert-1", doc_no: "MC-2026-00001" }));
+        return;
+      }
+      if (method === "GET" && /\/certificates$/.test(url)) {
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                id: "cert-1",
+                doc_no: "MC-2026-00001",
+                cert_type: "FIT_TO_WORK",
+                findings: "Physically fit for employment",
+                valid_from: "2026-10-02",
+                valid_to: null,
+                issued_at: "2026-10-02T08:00:00Z",
+                voided_at: null,
+                void_reason: null,
+                patient_name: "Santos, Maria Elena",
+                issuer_name: "Dr. Maria Elena Reyes, MD",
+              },
+            ],
+            total: 1,
+          }),
+        );
+        return;
+      }
+      res.end(JSON.stringify([]));
+    });
+
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    renderAt("/clinical/visits/v-123", <VisitChartPage />);
+
+    fireEvent.change(await screen.findByLabelText(/certificate type/i), { target: { value: "FIT_TO_WORK" } });
+    fireEvent.change(screen.getByLabelText(/findings/i), { target: { value: "Physically fit for employment" } });
+    fireEvent.click(screen.getByRole("button", { name: /Issue Certificate/i }));
+
+    expect(await screen.findByText(/MC-2026-00001/)).toBeInTheDocument();
+    expect(calls.some((c) => c.startsWith("POST /api/v1/clinical/visits/v-123/certificates"))).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: /Print.*PDF/i }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.startsWith("GET /api/v1/clinical/certificates/cert-1/pdf"))).toBe(true),
+    );
+    printSpy.mockRestore();
   });
 });
 

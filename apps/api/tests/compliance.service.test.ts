@@ -2,10 +2,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { withTenant, getAppPool } from '@clinic/db';
 import { ComplianceService } from '../src/compliance/compliance.service.js';
 import { ProblemException } from '../src/http/problem.exception.js';
+import { seedUsers } from "@clinic/db/tests/helpers.js";
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
 const TENANT_B = '22222222-2222-4222-8222-222222222222';
-const USER_A = 'a3000000-0000-4000-8000-000000000001';
+const { USER_A } = await seedUsers();
 
 describe('ComplianceService (Phase 8)', () => {
   const svc = new ComplianceService();
@@ -223,9 +224,9 @@ describe('ComplianceService (Phase 8)', () => {
 
         const cRes = await tx.query(
           `INSERT INTO retention_candidates (tenant_id, policy_id, record_class, entity_id, entity_ref, patient_id, eligible_at, status)
-           VALUES ($1, $2, 'CLINICAL_VISITS', 'a5000000-0000-4000-8000-000000000001', 'Visit V-2026-0001', $3, now(), 'PENDING')
+           VALUES ($1, $2, 'CLINICAL_VISITS', $4::uuid, 'Visit V-2026-0001', $3, now(), 'PENDING')
            RETURNING id`,
-          [TENANT_A, policyId, patientId],
+          [TENANT_A, policyId, patientId, crypto.randomUUID()],
         );
         candidateId = cRes.rows[0].id;
       });

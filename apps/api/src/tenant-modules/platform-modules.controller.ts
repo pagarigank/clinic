@@ -2,6 +2,7 @@ import { Inject, Controller, Post, Patch, Body, Param, Get, UseGuards, Req } fro
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
 import { Module, ModuleGuard, type ModuleName, MODULES } from '../rbac/module.guard.js';
+import { RequirePermission } from '../rbac/require-permission.decorator.js';
 import { TenantModulesService } from './tenant-modules.service.js';
 import type { RequestWithAuth } from '../auth/auth-context.js';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -28,6 +29,7 @@ type UpdateModuleStatusDtoType = z.infer<typeof UpdateModuleStatusDto>;
 @Controller('platform/tenants/:tenantId/modules')
 @UseGuards(AuthGuard, TenantContextGuard, ModuleGuard)
 @Module('admin')
+@RequirePermission('platform.module.read')
 export class PlatformModulesController {
   constructor(
     @Inject(TenantModulesService) private readonly modulesService: TenantModulesService,

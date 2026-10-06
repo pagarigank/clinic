@@ -33,7 +33,11 @@ export class StepUpGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest<FastifyRequest & RequestWithAuth>();
     const auth = request.authContext;
-    if (!auth?.userId || !auth.sessionId) {
+    // Platform console sessions carry no `userId`; their identity is
+    // `platformUserId` with the platform session id. Both kinds must present a
+    // step-up token bound to the SAME identity and session.
+    const identity = auth?.platformUserId ?? auth?.userId;
+    if (!auth || !identity || !auth.sessionId) {
       throw new ProblemException("STEP_UP_REQUIRED", { detail: "step-up requires an interactive session" });
     }
     const header = request.headers["x-step-up-token"];
@@ -41,7 +45,7 @@ export class StepUpGuard implements CanActivate {
     if (!raw) throw new ProblemException("STEP_UP_REQUIRED");
 
     const claims = await this.tokens.verify<StepUpClaims>(raw, "step-up");
-    if (!claims || claims.sub !== auth.userId || claims.sid !== auth.sessionId) {
+    if (!claims || claims.sub !== identity || claims.sid !== auth.sessionId) {
       throw new ProblemException("STEP_UP_REQUIRED", { detail: "step-up token invalid for this session" });
     }
     return true;

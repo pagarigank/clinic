@@ -5,7 +5,7 @@ import { apiGet, apiPost, apiPatch, apiPut, ApiError } from "../../shared/api/cl
 import { useAuth } from "../../shared/auth/AuthContext.js";
 import { usePermissions } from "../../shared/auth/PermissionsContext.js";
 import { useStepUpOptional, isStepUpRequired } from "../../shared/auth/StepUpContext.js";
-import type { RoleDto, UserList } from "@clinic/contracts";
+import type { RoleDto, UserList, EmployeeUpsert } from "@clinic/contracts";
 
 /**
  * Staff & User Directory (specification §18.2 lines 1029–1035, frontend §14.2).
@@ -81,6 +81,96 @@ export function UsersPage() {
   const [newPassword, setNewPassword] = useState("");
   const [pwBusy, setPwBusy] = useState(false);
 
+  // employee profile modal
+  const [empTarget, setEmpTarget] = useState<UserList | null>(null);
+  const [empNo, setEmpNo] = useState("");
+  const [empTitle, setEmpTitle] = useState("");
+  const [empDept, setEmpDept] = useState("Clinical Care");
+  const [empType, setEmpType] = useState<EmployeeUpsert["employmentType"]>("FULL_TIME");
+  const [empStatus, setEmpStatus] = useState<EmployeeUpsert["status"]>("ACTIVE");
+  const [empSpec, setEmpSpec] = useState("");
+  const [empPrc, setEmpPrc] = useState("");
+  const [empPtr, setEmpPtr] = useState("");
+  const [empS2, setEmpS2] = useState("");
+  const [empPhone, setEmpPhone] = useState("");
+  const [empHireDate, setEmpHireDate] = useState("");
+  const [empEmergencyName, setEmpEmergencyName] = useState("");
+  const [empEmergencyPhone, setEmpEmergencyPhone] = useState("");
+  const [empEmergencyRel, setEmpEmergencyRel] = useState("");
+  const [empBusy, setEmpBusy] = useState(false);
+
+  const openEmployeeModal = (u: UserList) => {
+    setEmpTarget(u);
+    if (u.employee) {
+      setEmpNo(u.employee.employeeNo);
+      setEmpTitle(u.employee.jobTitle);
+      setEmpDept(u.employee.department);
+      setEmpType(u.employee.employmentType);
+      setEmpStatus(u.employee.status);
+      setEmpSpec(u.employee.specialization || "");
+      setEmpPrc(u.employee.prcLicenseNo || "");
+      setEmpPtr(u.employee.ptrNo || "");
+      setEmpS2(u.employee.s2LicenseNo || "");
+      setEmpPhone(u.employee.phone || "");
+      setEmpHireDate(u.employee.hireDate || "");
+      setEmpEmergencyName(u.employee.emergencyContactName || "");
+      setEmpEmergencyPhone(u.employee.emergencyContactPhone || "");
+      setEmpEmergencyRel(u.employee.emergencyContactRelationship || "");
+    } else {
+      setEmpNo(`EMP-${Math.floor(1000 + Math.random() * 9000)}`);
+      setEmpTitle("Staff Member");
+      setEmpDept("Clinical Care");
+      setEmpType("FULL_TIME");
+      setEmpStatus("ACTIVE");
+      setEmpSpec("");
+      setEmpPrc("");
+      setEmpPtr("");
+      setEmpS2("");
+      setEmpPhone("");
+      setEmpHireDate("");
+      setEmpEmergencyName("");
+      setEmpEmergencyPhone("");
+      setEmpEmergencyRel("");
+    }
+  };
+
+  const saveEmployee = async () => {
+    if (!empTarget) return;
+    if (!empNo.trim() || !empTitle.trim()) {
+      setError("Employee number and job title are required.");
+      return;
+    }
+    setEmpBusy(true);
+    setError(null);
+    try {
+      const payload: EmployeeUpsert = {
+        employeeNo: empNo.trim(),
+        jobTitle: empTitle.trim(),
+        department: empDept.trim(),
+        employmentType: empType,
+        status: empStatus,
+        specialization: empSpec.trim() || undefined,
+        prcLicenseNo: empPrc.trim() || undefined,
+        ptrNo: empPtr.trim() || undefined,
+        s2LicenseNo: empS2.trim() || undefined,
+        phone: empPhone.trim() || undefined,
+        hireDate: empHireDate || undefined,
+        emergencyContactName: empEmergencyName.trim() || undefined,
+        emergencyContactPhone: empEmergencyPhone.trim() || undefined,
+        emergencyContactRelationship: empEmergencyRel.trim() || undefined,
+        rowVersion: empTarget.employee?.rowVersion,
+      };
+      await apiPut(`/admin/users/${empTarget.id}/employee`, payload);
+      setInfo(`Employee profile updated for ${empTarget.name} (${empNo.trim()}).`);
+      setEmpTarget(null);
+      await load();
+    } catch (err) {
+      setError(problemText(err, "Failed to save employee profile."));
+    } finally {
+      setEmpBusy(false);
+    }
+  };
+
   const load = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -93,11 +183,18 @@ export function UsersPage() {
           setRolesUnavailable(true);
           return [] as RoleDto[];
         }),
-        apiGet<{ id: string; name: string }[]>("/admin/branches").catch(() => []),
+        apiGet<Array<{ id: string; name: string }> | { branches: Array<{ id: string; name: string }> }>(
+          "/admin/branches",
+        ).catch(() => []),
       ]);
+      const branchList = Array.isArray(branchRows)
+        ? branchRows
+        : Array.isArray((branchRows as { branches?: Array<{ id: string; name: string }> })?.branches)
+        ? (branchRows as { branches: Array<{ id: string; name: string }> }).branches
+        : [];
       setUsers(userRows);
       setRoles(roleRows);
-      setBranches(branchRows);
+      setBranches(branchList);
     } catch (err) {
       setError(problemText(err, "Could not load the staff directory."));
     } finally {
@@ -314,9 +411,17 @@ export function UsersPage() {
           <Link to="/admin/approvals" className="btn btn-outline-secondary">
             Pending Approvals
           </Link>
+          <Link
+            to="/admin/users/new"
+            className={`btn btn-cerulean ${canCreate ? "" : "disabled"}`}
+            aria-disabled={!canCreate}
+            title={canCreate ? undefined : "Requires admin.user.create"}
+          >
+            + Create Staff User
+          </Link>
           <button
             type="button"
-            className="btn btn-cerulean"
+            className="btn btn-outline-primary"
             disabled={!canCreate}
             title={canCreate ? undefined : "Requires admin.user.create"}
             onClick={() => setShowCreate(true)}
@@ -373,6 +478,16 @@ export function UsersPage() {
                   <td>
                     <div className="fw-semibold text-dark">{u.name}</div>
                     <div className="small text-muted">{u.email}</div>
+                    {u.employee ? (
+                      <div className="mt-1 d-flex align-items-center gap-1">
+                        <span className="badge bg-light text-dark border font-monospace" style={{ fontSize: "0.7rem" }}>
+                          {u.employee.employeeNo}
+                        </span>
+                        <span className="small text-muted" style={{ fontSize: "0.75rem" }}>
+                          {u.employee.jobTitle}
+                        </span>
+                      </div>
+                    ) : null}
                   </td>
                   <td>
                     {u.roles.length === 0 ? (
@@ -421,6 +536,16 @@ export function UsersPage() {
                       {canUpdate ? (
                         <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => openEdit(u)}>
                           Edit
+                        </button>
+                      ) : null}
+                      {canUpdate ? (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-info"
+                          onClick={() => openEmployeeModal(u)}
+                          title="View / Edit Tied Employee Profile"
+                        >
+                          🪪 HR Profile
                         </button>
                       ) : null}
                       {roleEditorEditable ? (
@@ -592,12 +717,12 @@ export function UsersPage() {
             <Form.Text muted>Work email cannot be changed once created for tenant isolation.</Form.Text>
           </Form.Group>
 
-          {branches.length > 0 && (
+          {Array.isArray(branches) && branches.length > 0 && (
             <Form.Group controlId="edit-user-branch" className="mb-3">
               <Form.Label>Primary Branch Assignment</Form.Label>
               <Form.Select value={editBranchId} onChange={(e) => setEditBranchId(e.target.value)}>
                 <option value="">— No branch assigned —</option>
-                {branches.map((b) => (
+                {(Array.isArray(branches) ? branches : []).map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.name}
                   </option>
@@ -717,6 +842,185 @@ export function UsersPage() {
           </button>
         </Modal.Footer>
       </Modal>
+
+      {/* Employee Profile Modal */}
+      {empTarget ? (
+        <Modal show animation={false} onHide={() => setEmpTarget(null)} size="lg">
+          <Modal.Header closeButton>
+            <Modal.Title>
+              {empTarget.employee ? `Employee Profile: ${empTarget.name}` : `Link Employee Profile: ${empTarget.name}`}
+            </Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <p className="small text-muted mb-3">
+              Official HR details, professional licensure, and emergency contacts tied directly to user account <strong>{empTarget.email}</strong>.
+            </p>
+            <div className="row g-3">
+              <div className="col-md-6">
+                <Form.Group controlId="modal-emp-no">
+                  <Form.Label className="fw-semibold small">Employee ID *</Form.Label>
+                  <Form.Control
+                    value={empNo}
+                    onChange={(e) => setEmpNo(e.target.value)}
+                    placeholder="e.g. EMP-1002"
+                  />
+                </Form.Group>
+              </div>
+              <div className="col-md-6">
+                <Form.Group controlId="modal-emp-title">
+                  <Form.Label className="fw-semibold small">Job Title / Designation *</Form.Label>
+                  <Form.Control
+                    value={empTitle}
+                    onChange={(e) => setEmpTitle(e.target.value)}
+                    placeholder="e.g. Attending Physician"
+                  />
+                </Form.Group>
+              </div>
+              <div className="col-md-4">
+                <Form.Group controlId="modal-emp-dept">
+                  <Form.Label className="fw-semibold small">Department</Form.Label>
+                  <Form.Select value={empDept} onChange={(e) => setEmpDept(e.target.value)}>
+                    <option value="Clinical Care">Clinical Care</option>
+                    <option value="Nursing">Nursing</option>
+                    <option value="Pharmacy">Pharmacy</option>
+                    <option value="Laboratory">Laboratory</option>
+                    <option value="Billing & Cashiering">Billing & Cashiering</option>
+                    <option value="Administration & HR">Administration & HR</option>
+                  </Form.Select>
+                </Form.Group>
+              </div>
+              <div className="col-md-4">
+                <Form.Group controlId="modal-emp-type">
+                  <Form.Label className="fw-semibold small">Employment Type</Form.Label>
+                  <Form.Select value={empType} onChange={(e) => setEmpType(e.target.value as any)}>
+                    <option value="FULL_TIME">Full Time</option>
+                    <option value="PART_TIME">Part Time</option>
+                    <option value="CONTRACT">Contract</option>
+                    <option value="CONSULTANT">Consultant</option>
+                    <option value="INTERN">Intern</option>
+                  </Form.Select>
+                </Form.Group>
+              </div>
+              <div className="col-md-4">
+                <Form.Group controlId="modal-emp-status">
+                  <Form.Label className="fw-semibold small">HR Status</Form.Label>
+                  <Form.Select value={empStatus} onChange={(e) => setEmpStatus(e.target.value as any)}>
+                    <option value="ACTIVE">Active</option>
+                    <option value="ON_LEAVE">On Leave</option>
+                    <option value="PROBATION">Probation</option>
+                    <option value="RESIGNED">Resigned</option>
+                    <option value="TERMINATED">Terminated</option>
+                  </Form.Select>
+                </Form.Group>
+              </div>
+              <div className="col-md-6">
+                <Form.Group controlId="modal-emp-spec">
+                  <Form.Label className="fw-semibold small">Specialization</Form.Label>
+                  <Form.Control
+                    value={empSpec}
+                    onChange={(e) => setEmpSpec(e.target.value)}
+                    placeholder="e.g. Internal Medicine"
+                  />
+                </Form.Group>
+              </div>
+              <div className="col-md-6">
+                <Form.Group controlId="modal-emp-prc">
+                  <Form.Label className="fw-semibold small">PRC License Number</Form.Label>
+                  <Form.Control
+                    value={empPrc}
+                    onChange={(e) => setEmpPrc(e.target.value)}
+                    placeholder="e.g. PRC-0123456"
+                  />
+                </Form.Group>
+              </div>
+              <div className="col-md-6">
+                <Form.Group controlId="modal-emp-ptr">
+                  <Form.Label className="fw-semibold small">PTR Number</Form.Label>
+                  <Form.Control
+                    value={empPtr}
+                    onChange={(e) => setEmpPtr(e.target.value)}
+                    placeholder="e.g. PTR-789012"
+                  />
+                </Form.Group>
+              </div>
+              <div className="col-md-6">
+                <Form.Group controlId="modal-emp-s2">
+                  <Form.Label className="fw-semibold small">S2 Narcotics License</Form.Label>
+                  <Form.Control
+                    value={empS2}
+                    onChange={(e) => setEmpS2(e.target.value)}
+                    placeholder="e.g. S2-345678"
+                  />
+                </Form.Group>
+              </div>
+              <div className="col-md-6">
+                <Form.Group controlId="modal-emp-phone">
+                  <Form.Label className="fw-semibold small">Contact Phone Number</Form.Label>
+                  <Form.Control
+                    value={empPhone}
+                    onChange={(e) => setEmpPhone(e.target.value)}
+                    placeholder="e.g. +63 917 123 4567"
+                  />
+                </Form.Group>
+              </div>
+              <div className="col-md-6">
+                <Form.Group controlId="modal-emp-hire">
+                  <Form.Label className="fw-semibold small">Hire Date</Form.Label>
+                  <Form.Control
+                    type="date"
+                    value={empHireDate}
+                    onChange={(e) => setEmpHireDate(e.target.value)}
+                  />
+                </Form.Group>
+              </div>
+              <div className="col-12 border-top pt-3">
+                <h6 className="small text-uppercase fw-bold text-secondary mb-2">Emergency Contact</h6>
+                <div className="row g-2">
+                  <div className="col-md-5">
+                    <Form.Control
+                      placeholder="Contact Name"
+                      value={empEmergencyName}
+                      onChange={(e) => setEmpEmergencyName(e.target.value)}
+                    />
+                  </div>
+                  <div className="col-md-3">
+                    <Form.Control
+                      placeholder="Relationship"
+                      value={empEmergencyRel}
+                      onChange={(e) => setEmpEmergencyRel(e.target.value)}
+                    />
+                  </div>
+                  <div className="col-md-4">
+                    <Form.Control
+                      placeholder="Phone"
+                      value={empEmergencyPhone}
+                      onChange={(e) => setEmpEmergencyPhone(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Modal.Body>
+          <Modal.Footer>
+            <button
+              type="button"
+              className="btn btn-outline-secondary"
+              onClick={() => setEmpTarget(null)}
+              disabled={empBusy}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-cerulean"
+              disabled={empBusy}
+              onClick={() => void saveEmployee()}
+            >
+              {empBusy ? "Saving…" : "Save Employee Profile"}
+            </button>
+          </Modal.Footer>
+        </Modal>
+      ) : null}
     </div>
   );
 }

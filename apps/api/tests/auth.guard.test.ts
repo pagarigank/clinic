@@ -10,7 +10,11 @@ import { Reflector } from "@nestjs/core";
 import { createHash } from "node:crypto";
 import { withTenant } from "@clinic/db";
 import { AuthGuard } from "../src/auth/guards/auth.guard.js";
-import { type AccessClaims, TokenService } from "../src/auth/crypto/tokens.js";
+import {
+  type AccessClaims,
+  type PlatformClaims,
+  TokenService,
+} from "../src/auth/crypto/tokens.js";
 import type { RequestWithAuth } from "../src/auth/auth-context.js";
 
 /**
@@ -154,6 +158,59 @@ describe("AuthGuard — bearer access token", () => {
 
     await expect(guard.canActivate(ctxFor(req))).resolves.toBe(true);
     expect((req as unknown as RequestWithAuth).authContext?.branchId).toBeUndefined();
+  });
+});
+
+describe("AuthGuard — platform console token (platform auth)", () => {
+  const platformClaims = {
+    typ: "platform",
+    sub: "99999999-9999-4999-8999-999999999999",
+    sid: "88888888-8888-4888-8888-888888888888",
+    amr: ["pwd"],
+  } as unknown as PlatformClaims;
+
+  it("projects platform claims with a null tenant and platformUserId set", async () => {
+    const tokens = {
+      verify: vi.fn().mockImplementation(async (_raw: string, kind: string) =>
+        kind === "platform" ? platformClaims : null,
+      ),
+    } as unknown as TokenService;
+    const guard = new AuthGuard(tokens, reflectorReturning(false));
+    const req: Record<string, unknown> = reqWith("Bearer platform.jwt.token");
+
+    await expect(guard.canActivate(ctxFor(req))).resolves.toBe(true);
+    expect((req as unknown as RequestWithAuth).authContext).toEqual({
+      kind: "platform",
+      userId: null,
+      tenantId: null,
+      sessionId: "88888888-8888-4888-8888-888888888888",
+      branchId: null,
+      amr: ["pwd"],
+      scopes: [],
+      platformUserId: "99999999-9999-4999-8999-999999999999",
+    });
+  });
+
+  it("never treats a tenant access token as a platform identity", async () => {
+    const accessClaims = {
+      sub: "user-1",
+      tid: TENANT_A,
+      sid: "s",
+      amr: ["pwd"],
+    } as unknown as AccessClaims;
+    const verify = vi.fn().mockImplementation(async (_raw: string, kind: string) =>
+      kind === "access" ? accessClaims : null,
+    );
+    const guard = new AuthGuard({ verify } as unknown as TokenService, reflectorReturning(false));
+    const req: Record<string, unknown> = reqWith("Bearer tenant.access.token");
+
+    // The tenant token authenticates with a tenant and a userId — the platform
+    // branch (null tenant, platformUserId) must not be what admits it.
+    await expect(guard.canActivate(ctxFor(req))).resolves.toBe(true);
+    const auth = (req as unknown as RequestWithAuth).authContext!;
+    expect(auth.kind).toBe("user");
+    expect(auth.tenantId).toBe(TENANT_A);
+    expect(auth.platformUserId).toBeUndefined();
   });
 });
 

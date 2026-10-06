@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { ModuleAllowlist } from '../rbac/module.guard.js';
+import { RequirePermission } from '../rbac/require-permission.decorator.js';
 import { ProvisioningService } from './provisioning.service.js';
 import { MODULES, type ModuleName } from '../rbac/module.guard.js';
 import type { FastifyRequest } from 'fastify';
@@ -33,6 +34,7 @@ const OffboardDto = z.object({
 @Controller('platform')
 @UseGuards(AuthGuard)
 @ModuleAllowlist()
+@RequirePermission('platform.tenant.read')
 export class ProvisioningController {
   constructor(
     @Inject(ProvisioningService) private readonly provisioning: ProvisioningService,

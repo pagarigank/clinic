@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { ModuleAllowlist } from '../rbac/module.guard.js';
+import { RequirePermission } from '../rbac/require-permission.decorator.js';
 import { BreakglassService } from './breakglass.service.js';
 import { ProblemException } from '../http/problem.exception.js';
 import type { FastifyRequest } from 'fastify';
@@ -21,6 +22,7 @@ type EnterDtoType = z.infer<typeof EnterDto>;
 @Controller('platform/tenants/:tenantId/enter')
 @UseGuards(AuthGuard)
 @ModuleAllowlist()
+@RequirePermission('platform.breakglass.enter')
 export class BreakglassController {
   constructor(
     @Inject(BreakglassService) private readonly breakglass: BreakglassService,

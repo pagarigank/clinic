@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertBanner, StatusPill, DateField, MoneyField } from "@clinic/ui";
 import { apiGet, apiPost, ApiError } from "../../shared/api/client.js";
+import { useAuth } from "../../shared/auth/AuthContext.js";
 
 /**
  * Scheduling — frontend.md §14.4 (M4 Clinical), todo.md §3.1.
@@ -42,11 +43,7 @@ const STATUS_TONE: Record<string, "critical" | "high" | "normal" | "low" | "neut
   NO_SHOW: "high",
 };
 
-const DEMO_APPOINTMENTS: Appointment[] = [
-  { id: "a1", patientName: "Santos, Maria Elena", practitionerName: "Dr. Reyes", startsAt: `${today()}T09:00`, endsAt: `${today()}T09:30`, status: "CONFIRMED" },
-  { id: "a2", patientName: "Dela Cruz, Juan", practitionerName: "Dr. Reyes", startsAt: `${today()}T10:00`, endsAt: `${today()}T10:30`, status: "BOOKED" },
-  { id: "a3", patientName: "Lim, Roberto", practitionerName: "Dr. Aquino", startsAt: `${today()}T11:00`, endsAt: `${today()}T11:30`, status: "COMPLETED" },
-];
+
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -57,8 +54,10 @@ function timeOf(iso: string): string {
 }
 
 export function SchedulingPage() {
+  const { session } = useAuth();
+  const currentBranchId = session?.branchId || session?.assignedBranches?.[0]?.id || "b1000000-0000-4000-8000-000000000001";
   const [date, setDate] = useState(today());
-  const [appointments, setAppointments] = useState<Appointment[]>(DEMO_APPOINTMENTS);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [patientOptions, setPatientOptions] = useState<PatientOption[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -76,9 +75,9 @@ export function SchedulingPage() {
   const loadDay = useCallback(async (d: string) => {
     try {
       const res = await apiGet<{ data?: Appointment[] }>(`/clinical/appointments?date=${d}`);
-      if (Array.isArray(res?.data) && res.data.length > 0) setAppointments(res.data);
+      if (Array.isArray(res?.data)) setAppointments(res.data);
     } catch {
-      /* demo rows remain */
+      /* empty on error */
     }
   }, []);
 
@@ -104,7 +103,7 @@ export function SchedulingPage() {
   const loadAvailability = useCallback(async (d: string) => {
     try {
       const res = await apiGet<{ slots?: Slot[] }>(
-        `/clinical/availability?branchId=b1000000-0000-4000-8000-000000000001&practitionerId=${practitionerId}&date=${d}`,
+        `/clinical/availability?branchId=" + currentBranchId + "&practitionerId=${practitionerId}&date=${d}`,
       );
       setSlots(res?.slots ?? []);
     } catch {
@@ -123,7 +122,7 @@ export function SchedulingPage() {
       if (isWalkIn) {
         // Walk-in: queue ticket, not a fixed slot (todo §3.1).
         const ticket = await apiPost<{ ticketNo?: string }>("/clinical/queue", {
-          branchId: "b1000000-0000-4000-8000-000000000001",
+          branchId: currentBranchId,
           patientId,
           priority: 0,
         });
@@ -132,7 +131,7 @@ export function SchedulingPage() {
         const startsAt = new Date(`${date}T${start}:00`).toISOString();
         const endsAt = new Date(`${date}T${end}:00`).toISOString();
         await apiPost("/clinical/appointments", {
-          branchId: "b1000000-0000-4000-8000-000000000001",
+          branchId: currentBranchId,
           patientId,
           practitionerId,
           startsAt,
@@ -159,7 +158,7 @@ export function SchedulingPage() {
   const checkIn = async (a: Appointment) => {
     try {
       const visit = await apiPost<{ id: string; visitNo: string }>("/clinical/visits", {
-        branchId: "b1000000-0000-4000-8000-000000000001",
+        branchId: currentBranchId,
         patientId: (a as any).patientId ?? "p1000000-0000-4000-8000-000000000001",
         practitionerId: (a as any).practitionerId ?? practitionerId,
         appointmentId: a.id,

@@ -3,7 +3,10 @@ import {
   UserCreateSchema,
   UserUpdateSchema,
   UserPasswordResetSchema,
+  EmployeeUpsertSchema,
   type UserList,
+  type Employee,
+  type EmployeeWithUser,
 } from "@clinic/contracts";
 import { withTenant, type PoolClient } from "@clinic/db";
 import { sha256 } from "../auth/mfa.service.js";
@@ -68,6 +71,16 @@ export class UsersService {
          WHERE ub.tenant_id = (SELECT app.tenant_id()) AND b.deleted_at IS NULL
          ORDER BY ub.user_id, b.name`,
       );
+      const empRows = await tx.query<any>(
+        `SELECT id, user_id, employee_no, job_title, department, employment_type,
+                specialization, prc_license_no, ptr_no, s2_license_no, phone,
+                to_char(hire_date, 'YYYY-MM-DD') as hire_date,
+                emergency_contact_name, emergency_contact_phone,
+                emergency_contact_relationship, tin, sss_no, philhealth_no, notes,
+                status, row_version, created_at, updated_at
+         FROM employees
+         WHERE tenant_id = (SELECT app.tenant_id())`,
+      );
       const rolesByUser = new Map<string, UserList["roles"]>();
       for (const r of roleRows.rows) {
         const list = rolesByUser.get(r.user_id) ?? [];
@@ -80,6 +93,10 @@ export class UsersService {
         list.push({ id: b.id, name: b.name, isDefault: b.is_default });
         branchesByUser.set(b.user_id, list);
       }
+      const empByUser = new Map<string, Employee>();
+      for (const e of empRows.rows) {
+        empByUser.set(e.user_id, this.toEmployeeDto(e));
+      }
       return rows.rows.map((u) => ({
         id: u.id,
         email: u.email,
@@ -90,6 +107,7 @@ export class UsersService {
         mfaEnabled: u.mfa_enabled,
         roles: rolesByUser.get(u.id) ?? [],
         branches: branchesByUser.get(u.id) ?? [],
+        employee: empByUser.get(u.id) ?? null,
         lastLoginAt: u.last_login_at ? u.last_login_at.toISOString() : null,
         rowVersion: u.row_version,
       }));
@@ -143,6 +161,46 @@ export class UsersService {
         // so a fresh account cannot be born holding both halves of a conflict
         // (todo §1.3 made create+update+clone+assign consistent).
         await this.assertNoSoDConflicts(tx, user.id);
+      }
+
+      if (input.employee) {
+        await tx.query(
+          `INSERT INTO employees (
+             tenant_id, user_id, employee_no, job_title, department, employment_type,
+             specialization, prc_license_no, ptr_no, s2_license_no, phone,
+             hire_date, emergency_contact_name, emergency_contact_phone,
+             emergency_contact_relationship, tin, sss_no, philhealth_no, notes,
+             status, created_by, updated_by
+           ) VALUES (
+             (SELECT app.tenant_id()), $1, $2, $3, $4, $5,
+             $6, $7, $8, $9, $10,
+             $11, $12, $13,
+             $14, $15, $16, $17, $18,
+             $19, $20, $20
+           )`,
+          [
+            user.id,
+            input.employee.employeeNo,
+            input.employee.jobTitle,
+            input.employee.department,
+            input.employee.employmentType,
+            input.employee.specialization ?? null,
+            input.employee.prcLicenseNo ?? null,
+            input.employee.ptrNo ?? null,
+            input.employee.s2LicenseNo ?? null,
+            input.employee.phone ?? null,
+            input.employee.hireDate ? input.employee.hireDate : null,
+            input.employee.emergencyContactName ?? null,
+            input.employee.emergencyContactPhone ?? null,
+            input.employee.emergencyContactRelationship ?? null,
+            input.employee.tin ?? null,
+            input.employee.sssNo ?? null,
+            input.employee.philhealthNo ?? null,
+            input.employee.notes ?? null,
+            input.employee.status ?? 'ACTIVE',
+            actorId,
+          ],
+        );
       }
 
       return this.hydrateOne(tx, user);
@@ -294,14 +352,32 @@ export class UsersService {
        ORDER BY b.name`,
       [row.id],
     );
+    const empRow = await tx.query<any>(
+      `SELECT id, user_id, employee_no, job_title, department, employment_type,
+              specialization, prc_license_no, ptr_no, s2_license_no, phone,
+              to_char(hire_date, 'YYYY-MM-DD') as hire_date,
+              emergency_contact_name, emergency_contact_phone,
+              emergency_contact_relationship, tin, sss_no, philhealth_no, notes,
+              status, row_version, created_at, updated_at
+       FROM employees
+       WHERE tenant_id = (SELECT app.tenant_id()) AND user_id = $1`,
+      [row.id],
+    );
+    const emp = empRow.rows[0] ? this.toEmployeeDto(empRow.rows[0]) : null;
     return this.toDto(
       row,
       roleRows.rows.map((r) => ({ id: r.id, code: r.code, name: r.name })),
       branchRows.rows.map((b) => ({ id: b.id, name: b.name, isDefault: b.is_default })),
+      emp,
     );
   }
 
-  private toDto(row: UserRow, roles: UserList["roles"], branches: UserList["branches"]): UserList {
+  private toDto(
+    row: UserRow,
+    roles: UserList["roles"],
+    branches: UserList["branches"],
+    employee?: Employee | null,
+  ): UserList {
     return {
       id: row.id,
       email: row.email,
@@ -312,9 +388,220 @@ export class UsersService {
       mfaEnabled: row.mfa_enabled,
       roles,
       branches,
+      employee: employee ?? null,
       lastLoginAt: row.last_login_at ? row.last_login_at.toISOString() : null,
       rowVersion: row.row_version,
     };
+  }
+
+  private toEmployeeDto(r: any): Employee {
+    return {
+      id: r.id,
+      userId: r.user_id,
+      employeeNo: r.employee_no,
+      jobTitle: r.job_title,
+      department: r.department,
+      employmentType: r.employment_type,
+      specialization: r.specialization ?? null,
+      prcLicenseNo: r.prc_license_no ?? null,
+      ptrNo: r.ptr_no ?? null,
+      s2LicenseNo: r.s2_license_no ?? null,
+      phone: r.phone ?? null,
+      hireDate: r.hire_date ?? null,
+      emergencyContactName: r.emergency_contact_name ?? null,
+      emergencyContactPhone: r.emergency_contact_phone ?? null,
+      emergencyContactRelationship: r.emergency_contact_relationship ?? null,
+      tin: r.tin ?? null,
+      sssNo: r.sss_no ?? null,
+      philhealthNo: r.philhealth_no ?? null,
+      notes: r.notes ?? null,
+      status: r.status,
+      rowVersion: r.row_version,
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : undefined,
+      updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : undefined,
+    };
+  }
+
+  // ---- Employee Information CRUD -----------------------------------------
+
+  async listEmployees(tenantId: string, actorId: string): Promise<EmployeeWithUser[]> {
+    return withTenant({ tenantId, userId: actorId }, async (tx) => {
+      const rows = await tx.query<any>(
+        `SELECT e.id, e.user_id, e.employee_no, e.job_title, e.department, e.employment_type,
+                e.specialization, e.prc_license_no, e.ptr_no, e.s2_license_no, e.phone,
+                to_char(e.hire_date, 'YYYY-MM-DD') as hire_date,
+                e.emergency_contact_name, e.emergency_contact_phone,
+                e.emergency_contact_relationship, e.tin, e.sss_no, e.philhealth_no, e.notes,
+                e.status, e.row_version, e.created_at, e.updated_at,
+                u.name as user_name, u.email as user_email, u.status as user_status
+         FROM employees e
+         JOIN users u ON u.tenant_id = e.tenant_id AND u.id = e.user_id
+         WHERE e.tenant_id = (SELECT app.tenant_id())
+         ORDER BY e.employee_no, u.name`,
+      );
+      const roleRows = await tx.query<{ user_id: string; role_name: string }>(
+        `SELECT ur.user_id, ro.name as role_name
+         FROM user_roles ur
+         JOIN roles ro ON ro.tenant_id = ur.tenant_id AND ro.id = ur.role_id
+         WHERE ur.tenant_id = (SELECT app.tenant_id()) AND ro.deleted_at IS NULL`,
+      );
+      const rolesByUser = new Map<string, string[]>();
+      for (const r of roleRows.rows) {
+        const arr = rolesByUser.get(r.user_id) ?? [];
+        arr.push(r.role_name);
+        rolesByUser.set(r.user_id, arr);
+      }
+
+      return rows.rows.map((r: any) => ({
+        ...this.toEmployeeDto(r),
+        userName: r.user_name,
+        userEmail: r.user_email,
+        userStatus: r.user_status,
+        userRoles: rolesByUser.get(r.user_id) ?? [],
+      }));
+    });
+  }
+
+  async getEmployee(tenantId: string, actorId: string, targetUserId: string): Promise<Employee | null> {
+    return withTenant({ tenantId, userId: actorId }, async (tx) => {
+      await this.findUser(tx, targetUserId);
+      const res = await tx.query<any>(
+        `SELECT id, user_id, employee_no, job_title, department, employment_type,
+                specialization, prc_license_no, ptr_no, s2_license_no, phone,
+                to_char(hire_date, 'YYYY-MM-DD') as hire_date,
+                emergency_contact_name, emergency_contact_phone,
+                emergency_contact_relationship, tin, sss_no, philhealth_no, notes,
+                status, row_version, created_at, updated_at
+         FROM employees
+         WHERE tenant_id = (SELECT app.tenant_id()) AND user_id = $1`,
+        [targetUserId],
+      );
+      return res.rows[0] ? this.toEmployeeDto(res.rows[0]) : null;
+    });
+  }
+
+  async upsertEmployee(tenantId: string, actorId: string, targetUserId: string, dto: unknown): Promise<Employee> {
+    const input = EmployeeUpsertSchema.parse(dto);
+    return withTenant({ tenantId, userId: actorId }, async (tx) => {
+      await this.findUser(tx, targetUserId);
+
+      const dup = await tx.query<{ id: string }>(
+        `SELECT id FROM employees
+         WHERE tenant_id = (SELECT app.tenant_id()) AND lower(employee_no) = $1 AND user_id != $2`,
+        [input.employeeNo.toLowerCase(), targetUserId],
+      );
+      if (dup.rows.length > 0) {
+        throw new ProblemException("CONFLICT", { detail: "employee number is already in use by another staff member" });
+      }
+
+      const existing = await tx.query<any>(
+        `SELECT id, row_version FROM employees WHERE tenant_id = (SELECT app.tenant_id()) AND user_id = $1`,
+        [targetUserId],
+      );
+
+      let resultRow;
+      if (existing.rows.length === 0) {
+        const inserted = await tx.query<any>(
+          `INSERT INTO employees (
+             tenant_id, user_id, employee_no, job_title, department, employment_type,
+             specialization, prc_license_no, ptr_no, s2_license_no, phone,
+             hire_date, emergency_contact_name, emergency_contact_phone,
+             emergency_contact_relationship, tin, sss_no, philhealth_no, notes,
+             status, created_by, updated_by
+           ) VALUES (
+             (SELECT app.tenant_id()), $1, $2, $3, $4, $5,
+             $6, $7, $8, $9, $10,
+             $11, $12, $13,
+             $14, $15, $16, $17, $18,
+             $19, $20, $20
+           )
+           RETURNING id, user_id, employee_no, job_title, department, employment_type,
+                     specialization, prc_license_no, ptr_no, s2_license_no, phone,
+                     to_char(hire_date, 'YYYY-MM-DD') as hire_date,
+                     emergency_contact_name, emergency_contact_phone,
+                     emergency_contact_relationship, tin, sss_no, philhealth_no, notes,
+                     status, row_version, created_at, updated_at`,
+          [
+            targetUserId,
+            input.employeeNo,
+            input.jobTitle,
+            input.department,
+            input.employmentType,
+            input.specialization ?? null,
+            input.prcLicenseNo ?? null,
+            input.ptrNo ?? null,
+            input.s2LicenseNo ?? null,
+            input.phone ?? null,
+            input.hireDate ? input.hireDate : null,
+            input.emergencyContactName ?? null,
+            input.emergencyContactPhone ?? null,
+            input.emergencyContactRelationship ?? null,
+            input.tin ?? null,
+            input.sssNo ?? null,
+            input.philhealthNo ?? null,
+            input.notes ?? null,
+            input.status ?? 'ACTIVE',
+            actorId,
+          ],
+        );
+        resultRow = inserted.rows[0];
+      } else {
+        const current = existing.rows[0];
+        if (input.rowVersion !== undefined && input.rowVersion !== current.row_version) {
+          throw new ProblemException("STALE_ROW_VERSION");
+        }
+        const updated = await tx.query<any>(
+          `UPDATE employees SET
+             employee_no = $2, job_title = $3, department = $4, employment_type = $5,
+             specialization = $6, prc_license_no = $7, ptr_no = $8, s2_license_no = $9, phone = $10,
+             hire_date = $11, emergency_contact_name = $12, emergency_contact_phone = $13,
+             emergency_contact_relationship = $14, tin = $15, sss_no = $16, philhealth_no = $17, notes = $18,
+             status = $19, updated_at = now(), updated_by = $20, row_version = row_version + 1
+           WHERE tenant_id = (SELECT app.tenant_id()) AND user_id = $1
+           RETURNING id, user_id, employee_no, job_title, department, employment_type,
+                     specialization, prc_license_no, ptr_no, s2_license_no, phone,
+                     to_char(hire_date, 'YYYY-MM-DD') as hire_date,
+                     emergency_contact_name, emergency_contact_phone,
+                     emergency_contact_relationship, tin, sss_no, philhealth_no, notes,
+                     status, row_version, created_at, updated_at`,
+          [
+            targetUserId,
+            input.employeeNo,
+            input.jobTitle,
+            input.department,
+            input.employmentType,
+            input.specialization ?? null,
+            input.prcLicenseNo ?? null,
+            input.ptrNo ?? null,
+            input.s2LicenseNo ?? null,
+            input.phone ?? null,
+            input.hireDate ? input.hireDate : null,
+            input.emergencyContactName ?? null,
+            input.emergencyContactPhone ?? null,
+            input.emergencyContactRelationship ?? null,
+            input.tin ?? null,
+            input.sssNo ?? null,
+            input.philhealthNo ?? null,
+            input.notes ?? null,
+            input.status ?? 'ACTIVE',
+            actorId,
+          ],
+        );
+        resultRow = updated.rows[0];
+      }
+      return this.toEmployeeDto(resultRow);
+    });
+  }
+
+  async deleteEmployee(tenantId: string, actorId: string, targetUserId: string): Promise<{ deleted: true }> {
+    return withTenant({ tenantId, userId: actorId }, async (tx) => {
+      await this.findUser(tx, targetUserId);
+      await tx.query(
+        `DELETE FROM employees WHERE tenant_id = (SELECT app.tenant_id()) AND user_id = $1`,
+        [targetUserId],
+      );
+      return { deleted: true as const };
+    });
   }
 
   private async findUser(tx: PoolClient, userId: string): Promise<UserRow> {

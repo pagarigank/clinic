@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { Alert, Badge, Button, EmptyState, Form, SkeletonTable, StatusPill } from "@clinic/ui";
-import { ApiError } from "../../shared/api/client.js";
+import { ApiError, apiGetBlob } from "../../shared/api/client.js";
 import { supplyApi } from "./api.js";
 import type { SupplyItemRow, SupplyLocation, SupplyStockRow } from "./api.js";
 
@@ -59,6 +59,34 @@ export function SupplyIssueWorkbenchPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [isDownloadingConsumptionPdf, setIsDownloadingConsumptionPdf] = useState(false);
+
+  const downloadConsumptionPdf = async () => {
+    setIsDownloadingConsumptionPdf(true);
+    try {
+      const to = new Date();
+      const from = new Date(to.getTime() - 29 * 24 * 3600 * 1000);
+      const iso = (d: Date) => d.toISOString().slice(0, 10);
+      const params = new URLSearchParams({ from: iso(from), to: iso(to) });
+      if (locationId) params.set("locationId", locationId);
+      const blob = await apiGetBlob(`/supply/consumption/pdf?${params.toString()}`);
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.download = `Supply-Consumption-${iso(from)}_${iso(to)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      console.warn("Consumption list PDF download failed, falling back to window.print():", err);
+      window.print();
+    } finally {
+      setIsDownloadingConsumptionPdf(false);
+    }
+  };
 
   const selectedItem = items.find((i) => i.id === itemId) ?? null;
   const selectedLocation = locations.find((l) => l.id === locationId) ?? null;
@@ -225,11 +253,21 @@ export function SupplyIssueWorkbenchPage() {
             Supply Issue Workbench
           </h1>
         </div>
-        <Link to="/supply/stock">
-          <Button variant="outline-secondary" size="sm">
-            Stock Explorer
+        <div className="d-flex align-items-center gap-2">
+          <Button
+            variant="outline-primary"
+            size="sm"
+            onClick={() => void downloadConsumptionPdf()}
+            disabled={isDownloadingConsumptionPdf}
+          >
+            {isDownloadingConsumptionPdf ? "Preparing…" : "Consumption List (PDF)"}
           </Button>
-        </Link>
+          <Link to="/supply/stock">
+            <Button variant="outline-secondary" size="sm">
+              Stock Explorer
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {error && (

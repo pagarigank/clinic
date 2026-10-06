@@ -332,6 +332,10 @@ body {
   }
 
   /* Printable consultation order & prescription modal print overrides */
+  body.print-modal-open #root {
+    display: none !important;
+  }
+
   .clinic-rx-print-modal-backdrop {
     position: static !important;
     display: block !important;

@@ -1,7 +1,16 @@
-import { Outlet, NavLink } from "react-router";
+import { Outlet, NavLink, useNavigate } from "react-router";
 import { Container, Nav } from "@clinic/ui";
+import { usePlatformAuth } from "../shared/auth/PlatformAuthContext.js";
 
 export function PlatformShell() {
+  const navigate = useNavigate();
+  const { platformSession, logout } = usePlatformAuth();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate("/platform/login", { replace: true });
+  };
+
   return (
     <>
       <a className="visually-hidden-focusable" href="#main">
@@ -32,7 +41,16 @@ export function PlatformShell() {
               </Nav.Link>
             </Nav.Item>
           </Nav>
-          <span className="ms-auto small text-secondary">dev</span>
+          <span className="ms-auto small text-secondary">
+            {platformSession?.email ?? "operator"}
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-light ms-3"
+              onClick={handleLogout}
+            >
+              Sign out
+            </button>
+          </span>
         </Container>
       </header>
       <main id="main" className="container py-4">

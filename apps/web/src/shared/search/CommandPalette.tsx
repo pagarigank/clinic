@@ -76,6 +76,8 @@ const DESTINATIONS: NavDestination[] = [
   { label: "Queue Board", path: "/clinical/queue", keywords: "queue tickets now serving" },
   { label: "Consultations & Chart", path: "/clinical/visits", keywords: "visits encounters chart soap" },
   { label: "Staff & Users", path: "/admin/users", keywords: "users staff directory" },
+  { label: "Create Staff User", path: "/admin/users/new", keywords: "create user new staff invite member crud" },
+  { label: "Employee Records", path: "/admin/employees", keywords: "employee records hr staff profile license prc ptr s2 doctor nurse" },
   { label: "Roles & Permissions", path: "/admin/roles", keywords: "roles rbac permissions sod" },
   { label: "Branches & Units", path: "/admin/branches", keywords: "branches service units" },
   { label: "Services & Prices", path: "/admin/service-catalog", keywords: "catalog prices discounts payments" },

@@ -4,13 +4,14 @@ import { createPool, withTenant } from '@clinic/db';
 import { SupplyService } from '../src/supply/supply.service.js';
 import { LabService } from '../src/lab/lab.service.js';
 import { ProblemException } from '../src/http/problem.exception.js';
+import { seedUsers, NO_SEED_USERS } from "@clinic/db/tests/helpers.js";
 
 const hasDb = await probeDb();
 
 const TENANT_ID = '11111111-1111-4111-8111-111111111111';
 const BRANCH_ID = 'a1000000-0000-4000-8000-000000000001';
-const ENCODER_USER_ID = 'a3000000-0000-4000-8000-000000000001';
-const VERIFIER_USER_ID = 'a3000000-0000-4000-8000-000000000002';
+const { DOCTOR_A: ENCODER_USER_ID } = hasDb ? await seedUsers() : NO_SEED_USERS;
+const { NURSE_A: VERIFIER_USER_ID } = hasDb ? await seedUsers() : NO_SEED_USERS;
 
 describe.skipIf(!hasDb)('Phase 6 Laboratory Service Tests (AC-10, AC-11, AC-17)', () => {
   const supplySvc = new SupplyService();
@@ -23,7 +24,6 @@ describe.skipIf(!hasDb)('Phase 6 Laboratory Service Tests (AC-10, AC-11, AC-17)'
   let singleTestId: string;
   let panelTestId: string;
   let kAnalyteId: string;
-  let naAnalyteId: string;
 
   beforeAll(async () => {
     const rand = Math.floor(Math.random() * 1000000);
@@ -99,13 +99,12 @@ describe.skipIf(!hasDb)('Phase 6 Laboratory Service Tests (AC-10, AC-11, AC-17)'
       tatMinutes: 30,
     });
 
-    const naAnalyte = await labSvc.createAnalyte(TENANT_ID, naTest.id, {
+    await labSvc.createAnalyte(TENANT_ID, naTest.id, {
       testId: naTest.id,
       code: `NA-AN-${rand}`,
       name: 'Sodium',
       defaultUnit: 'mmol/L',
     });
-    naAnalyteId = naAnalyte.id;
 
     // Create Electrolytes Panel (combining K and Na)
     const panel = await labSvc.createTest(TENANT_ID, {
@@ -494,5 +493,51 @@ describe.skipIf(!hasDb)('Phase 6 Laboratory Service Tests (AC-10, AC-11, AC-17)'
     });
     expect(outlierRun.status).toBe('REJECTED');
     expect(outlierRun.results[0].westgard_flags).toContain('1-3s');
+  });
+
+  it('LAB-PRINT: serves the stored report artifact and reports CONFLICT before render', async () => {
+    const order = await labSvc.createOrder(TENANT_ID, ENCODER_USER_ID, {
+      branchId: BRANCH_ID,
+      patientId,
+      testIds: [singleTestId],
+    });
+    const itemId = order.items[0].id;
+    await labSvc.collectSpecimen(TENANT_ID, order.id, itemId, ENCODER_USER_ID, { specimenTypeId: specTypeId });
+    await labSvc.receiveSpecimen(TENANT_ID, order.id, itemId, ENCODER_USER_ID, { condition: 'OK' });
+    const results = await labSvc.enterResults(TENANT_ID, order.id, itemId, ENCODER_USER_ID, {
+      results: [{ analyteId: kAnalyteId, valueNum: 4.9, unit: 'mmol/L' }],
+    });
+    await labSvc.verifyResult(TENANT_ID, results[0].id, VERIFIER_USER_ID);
+    const report = await labSvc.releaseReport(TENANT_ID, order.id, VERIFIER_USER_ID, { status: 'FINAL' });
+
+    // Until JOB-43 renders the artifact there is no file to serve.
+    await expect(labSvc.getReportArtifact(TENANT_ID, report.id)).rejects.toThrow(ProblemException);
+
+    // Simulate JOB-43: store the rendered bytes and link them to the report.
+    const bytes = Buffer.from('%PDF-1.7 test artifact', 'utf8');
+    const fileName = `Lab-Report-${report.id.slice(0, 8)}.pdf`;
+    const fileRes = await ownerPool.query<{ id: string }>(
+      `INSERT INTO files (tenant_id, object_key, file_name, mime_type, size_bytes, uploaded_by, content, sha256, origin, status)
+       VALUES ($1, $2, $3, 'application/pdf', $4, $5, $6, encode(sha256($6), 'hex'), 'GENERATED', 'READY')
+       RETURNING id`,
+      [TENANT_ID, `report-artifacts/${report.id}.pdf`, fileName, bytes.length, VERIFIER_USER_ID, bytes],
+    );
+    await ownerPool.query(
+      `UPDATE lab_reports SET file_id = $2 WHERE tenant_id = $1 AND id = $3`,
+      [TENANT_ID, fileRes.rows[0]!.id, report.id],
+    );
+
+    const artifact = await labSvc.getReportArtifact(TENANT_ID, report.id);
+    expect(artifact.fileName).toBe(fileName);
+    expect(Buffer.compare(artifact.bytes, bytes)).toBe(0);
+
+    // Unknown report id -> NOT_FOUND.
+    await expect(
+      labSvc.getReportArtifact(TENANT_ID, '00000000-0000-4000-8000-000000000000'),
+    ).rejects.toThrow(ProblemException);
+
+    // Cleanup.
+    await ownerPool.query(`UPDATE lab_reports SET file_id = NULL WHERE tenant_id = $1 AND id = $2`, [TENANT_ID, report.id]);
+    await ownerPool.query(`DELETE FROM files WHERE tenant_id = $1 AND id = $2`, [TENANT_ID, fileRes.rows[0]!.id]);
   });
 });

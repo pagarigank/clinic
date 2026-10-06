@@ -62,7 +62,7 @@ export interface TenantModuleRow {
   module: ModuleKey;
   status: ModuleStatus;
   seedStatus?: string | null;
-  limits?: number | null;
+  limits?: Record<string, number> | null;
   expiresAt?: string | null;
   disabledReason?: string | null;
   disabledBy?: string | null;

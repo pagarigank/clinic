@@ -116,6 +116,14 @@ export class PatientsService {
 
   async createPatient(tenantId: string, userId: string, dto: CreatePatientRequest) {
     return withTenant({ tenantId, userId }, async (tx) => {
+      // Mint the patient number here rather than in the browser. The web layer
+      // used to fabricate `PAT-2026-${patients.length + 5}`, which was never
+      // persisted, so every registered patient had no number at all and search
+      // by ID could never match. Year-scoped key follows the INV-2026 / SH-2026
+      // convention and matches the format the seed already uses.
+      const seq = await tx.query(`SELECT app.next_doc_no($1::uuid, 'PAT-2026') AS n`, [tenantId]);
+      const patientNo = `PAT-2026-${String(seq.rows[0].n).padStart(4, '0')}`;
+
       const res = await tx.query(
         `INSERT INTO patients (tenant_id, first_name, last_name, middle_name, date_of_birth, gender, status)
          VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE')
@@ -123,6 +131,61 @@ export class PatientsService {
         [tenantId, dto.firstName, dto.lastName, dto.middleName ?? null, dto.dateOfBirth, dto.gender],
       );
       const patient = res.rows[0];
+
+      // Stored under both keys because the readers disagree: lab reports read
+      // MRN, the patient list reads PATIENT_NO/MRN/HRN, and merge logic reads
+      // MRN or PATIENT_NO. One canonical value, two lookup keys.
+      await tx.query(
+        `INSERT INTO patient_identifiers (tenant_id, patient_id, type, value)
+         VALUES ($1, $2, 'MRN', $3), ($1, $2, 'PATIENT_NO', $3)`,
+        [tenantId, patient.id, patientNo],
+      );
+
+      if (dto.nationalId?.trim()) {
+        await tx.query(
+          `INSERT INTO patient_identifiers (tenant_id, patient_id, type, value)
+           VALUES ($1, $2, 'NATIONAL_ID', $3)`,
+          [tenantId, patient.id, dto.nationalId.trim()],
+        );
+      }
+
+      // Intake collects phone/email/allergies on the registration form. They
+      // were being accepted by the form and then dropped on the floor: the
+      // patient row was created without them and nobody noticed.
+      if (dto.phone?.trim()) {
+        await tx.query(
+          `INSERT INTO patient_contacts (tenant_id, patient_id, type, value, is_primary)
+           VALUES ($1, $2, 'MOBILE', $3, true)`,
+          [tenantId, patient.id, dto.phone.trim()],
+        );
+      }
+      if (dto.email?.trim()) {
+        await tx.query(
+          `INSERT INTO patient_contacts (tenant_id, patient_id, type, value, is_primary)
+           VALUES ($1, $2, 'EMAIL', $3, false)`,
+          [tenantId, patient.id, dto.email.trim()],
+        );
+      }
+
+      for (const substance of dto.allergies ?? []) {
+        const trimmed = substance.trim();
+        if (!trimmed) continue;
+        await tx.query(
+          `INSERT INTO patient_allergies (tenant_id, patient_id, substance, severity)
+           VALUES ($1, $2, $3, 'MODERATE')`,
+          [tenantId, patient.id, trimmed],
+        );
+      }
+
+      if (dto.philhealthNo?.trim()) {
+        await tx.query(
+          `INSERT INTO patient_philhealth (tenant_id, patient_id, pin, membership_category, konsulta_status)
+           VALUES ($1, $2, $3, 'MEMBER', 'REGISTERED')
+           ON CONFLICT (patient_id) DO UPDATE
+             SET pin = EXCLUDED.pin, konsulta_status = 'REGISTERED'`,
+          [tenantId, patient.id, dto.philhealthNo.trim()],
+        );
+      }
 
       // If emergency registration, add a flag to prompt deferred consent
       if (dto.registrationType === 'EMERGENCY') {
@@ -133,7 +196,7 @@ export class PatientsService {
         );
       }
 
-      return patient;
+      return { ...patient, patient_no: patientNo };
     });
   }
 

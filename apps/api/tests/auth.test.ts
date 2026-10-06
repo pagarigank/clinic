@@ -120,6 +120,28 @@ describe("token service", () => {
   it("rejects garbage", async () => {
     expect(await tokens.verify("garbage.token.here", "access")).toBeNull();
   });
+
+  it("issues and verifies a platform console token", async () => {
+    const access = await tokens.issuePlatformToken({
+      sub: "99999999-9999-4999-8999-999999999999",
+      sid: "88888888-8888-4888-8888-888888888888",
+      amr: ["pwd"],
+    });
+    const claims = await tokens.verify(access, "platform");
+    expect(claims?.typ).toBe("platform");
+    expect(claims?.sub).toBe("99999999-9999-4999-8999-999999999999");
+    // A platform token must never pass as a tenant access token and vice versa.
+    expect(await tokens.verify(access, "access")).toBeNull();
+
+    const refresh = await tokens.issuePlatformRefreshToken({
+      sub: "99999999-9999-4999-8999-999999999999",
+      sid: "88888888-8888-4888-8888-888888888888",
+      amr: ["pwd"],
+    });
+    expect((await tokens.verify(refresh, "platform-refresh"))?.typ).toBe("platform-refresh");
+    expect(await tokens.verify(refresh, "platform")).toBeNull();
+    expect(await tokens.verify(refresh, "refresh")).toBeNull();
+  });
 });
 
 describe("config guard", () => {

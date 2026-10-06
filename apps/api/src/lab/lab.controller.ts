@@ -1,5 +1,9 @@
-import { Inject, Controller, Get, Post, Patch, Delete, Put, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Inject, Controller, Get, Post, Patch, Delete, Put, Body, Param, Query, UseGuards, Req, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import type { FastifyReply } from 'fastify';
+import { verifyDocument } from '@clinic/print';
+import { ProblemException } from '../http/problem.exception.js';
+import { sendPdf } from '../http/pdf-response.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
 import { Module } from '../rbac/module.guard.js';
@@ -500,6 +504,31 @@ export class LabController {
   @ApiOperation({ summary: 'Get report details with hash' })
   async getReport(@Req() req: RequestWithAuth, @Param('id') id: string) {
     return this.svc.getReport(req.tenantId!, id);
+  }
+
+  @RequirePermission('lab.report.read')
+  @Get('reports/:id/pdf')
+  @ApiOperation({ summary: 'Download the stored, SHA-256 sealed laboratory report PDF' })
+  async getReportPdf(
+    @Req() req: RequestWithAuth,
+    @Param('id') id: string,
+    @Res() reply: FastifyReply,
+  ) {
+    const artifact = await this.svc.getReportArtifact(req.tenantId!, id);
+    // A stored report is a sealed clinical document. Serve it only if the bytes
+    // still hash to the digest recorded when it was issued, and always publish
+    // that digest so the client can verify the copy it filed.
+    const seal = artifact.sha256
+      ? verifyDocument(artifact.bytes, artifact.sha256)
+      : { valid: false, actualSha256: '' };
+    if (!seal.valid) {
+      throw new ProblemException('CONFLICT', {
+        detail: artifact.sha256
+          ? `The stored report PDF no longer matches its recorded SHA-256 seal. It has not been served. Expected ${artifact.sha256}, got ${seal.actualSha256}.`
+          : 'The stored report PDF has no SHA-256 seal recorded, so it cannot be served as an official document.',
+      });
+    }
+    void sendPdf(reply, { ...artifact, sha256: seal.actualSha256 }, artifact.fileName);
   }
 
   // ── Quality Control (QC) (LAB-T5) ──────────────────────────────────────────

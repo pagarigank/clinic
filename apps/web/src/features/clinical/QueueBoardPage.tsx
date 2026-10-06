@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertBanner, StatusPill } from "@clinic/ui";
 import { apiGet, apiPost, ApiError } from "../../shared/api/client.js";
+import { useAuth } from "../../shared/auth/AuthContext.js";
 
 /**
  * Queue board — frontend.md §14.4, todo.md §3.1 (CLN-T2, SSE live).
@@ -19,11 +20,7 @@ interface QueueEntry {
   issuedAt: string;
 }
 
-const DEMO_QUEUE: QueueEntry[] = [
-  { id: "q1", ticketNo: "Q20261002-001", patientName: "Santos, Maria Elena", priority: 0, status: "SERVING", issuedAt: "08:02" },
-  { id: "q2", ticketNo: "Q20261002-002", patientName: "Dela Cruz, Juan", priority: 0, status: "WAITING", issuedAt: "08:15" },
-  { id: "q3", ticketNo: "Q20261002-003", patientName: "Reyes, Angelita", priority: 2, status: "WAITING", issuedAt: "08:20" },
-];
+
 
 const STATUS_TONE: Record<QueueEntry["status"], "critical" | "high" | "normal" | "low" | "neutral" | "pending"> = {
   WAITING: "pending",
@@ -34,19 +31,20 @@ const STATUS_TONE: Record<QueueEntry["status"], "critical" | "high" | "normal" |
 };
 
 export function QueueBoardPage() {
-  const [entries, setEntries] = useState<QueueEntry[]>(DEMO_QUEUE);
+  const { session } = useAuth();
+  const branchId = session?.branchId || session?.assignedBranches?.[0]?.id;
+  const [entries, setEntries] = useState<QueueEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await apiGet<{ data?: QueueEntry[] }>(
-        "/clinical/queue?branchId=b1000000-0000-4000-8000-000000000001",
-      );
-      if (Array.isArray(res?.data) && res.data.length > 0) setEntries(res.data);
+      const url = branchId ? `/clinical/queue?branchId=${branchId}` : `/clinical/queue`;
+      const res = await apiGet<{ data?: QueueEntry[] }>(url);
+      if (Array.isArray(res?.data)) setEntries(res.data);
     } catch {
-      /* demo rows remain; the board is read-only in the fallback */
+      /* queue fetch failed or empty */
     }
-  }, []);
+  }, [branchId]);
 
   useEffect(() => {
     void load();

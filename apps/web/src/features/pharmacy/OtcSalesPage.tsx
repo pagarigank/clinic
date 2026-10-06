@@ -9,7 +9,7 @@ import {
   Modal,
   ScanInput,
 } from "@clinic/ui";
-import { apiPost } from "../../shared/api/client.js";
+import { apiPost, printBlob } from "../../shared/api/client.js";
 
 interface AvailableOtcItem {
   id: string;
@@ -120,6 +120,8 @@ export function OtcSalesPage() {
   const [rejectionAlert, setRejectionAlert] = useState<string | null>(null);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [completedSaleRef, setCompletedSaleRef] = useState<string | null>(null);
+  const [completedSaleId, setCompletedSaleId] = useState<string | null>(null);
+  const [isPrintingReceipt, setIsPrintingReceipt] = useState(false);
 
   const subtotal = basket.reduce((acc, b) => acc + b.qty * b.item.unitPrice, 0);
   const discountAmount = hasSeniorPwdDiscount ? subtotal * 0.2 : 0;
@@ -172,10 +174,12 @@ export function OtcSalesPage() {
 
   const handleCompleteSale = async () => {
     if (basket.length === 0) return;
-    const saleId = `OTC-2026-${Date.now().toString().slice(-6)}`;
 
     try {
-      await apiPost("/pharmacy/sales", {
+      // The server returns the posted dispense — its id is what the official
+      // receipt PDF endpoint renders from, so the printed document carries the
+      // real OTC- dispense number, not a client-side mock.
+      const sale = await apiPost<{ id?: string; dispense_no?: string; dispenseNo?: string }>("/pharmacy/sales", {
         customerName,
         paymentMethod,
         isSeniorOrPwd: hasSeniorPwdDiscount,
@@ -186,11 +190,12 @@ export function OtcSalesPage() {
           unitPrice: b.item.unitPrice,
         })),
       });
+      setCompletedSaleId(sale?.id ?? null);
+      setCompletedSaleRef(sale?.dispense_no ?? sale?.dispenseNo ?? sale?.id ?? `OTC-${Date.now().toString(36).toUpperCase()}`);
     } catch {
-      // offline / mock fallback
+      // offline / mock fallback — keep the screen receipt usable
     }
 
-    setCompletedSaleRef(saleId);
     setIsReceiptModalOpen(true);
   };
 
@@ -522,8 +527,27 @@ export function OtcSalesPage() {
           <Button variant="secondary" onClick={() => setIsReceiptModalOpen(false)}>
             Close
           </Button>
-          <Button variant="primary" onClick={() => window.print()}>
-            🖨️ Print Receipt
+          <Button
+            variant="primary"
+            disabled={isPrintingReceipt}
+            onClick={async () => {
+              // Official route: server-rendered receipt PDF via the shared
+              // print pipeline. Falls back to the browser's screen print only
+              // if the PDF endpoint is unreachable.
+              if (completedSaleId) {
+                setIsPrintingReceipt(true);
+                try {
+                  await printBlob(`/pharmacy/sales/${completedSaleId}/receipt-pdf`);
+                  setIsPrintingReceipt(false);
+                  return;
+                } catch {
+                  setIsPrintingReceipt(false);
+                }
+              }
+              window.print();
+            }}
+          >
+            {isPrintingReceipt ? "Preparing official PDF…" : "🖨️ Print Official Receipt"}
           </Button>
         </Modal.Footer>
       </Modal>

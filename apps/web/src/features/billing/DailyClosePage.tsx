@@ -17,6 +17,7 @@ import {
   fetchDiscountsReport,
   fetchVoidsReport,
 } from "./api.js";
+import { printBlob } from "../../shared/api/client.js";
 
 export function DailyClosePage() {
   const [targetDate, setTargetDate] = useState<string>(
@@ -25,6 +26,8 @@ export function DailyClosePage() {
   const [activeTab, setActiveTab] = useState<
     "CLOSE" | "RECEIVABLES" | "DISCOUNTS" | "VOIDS" | "KONSULTA"
   >("CLOSE");
+  const [isPrintingClose, setIsPrintingClose] = useState(false);
+  const [isPrintingReceivables, setIsPrintingReceivables] = useState(false);
 
   // Tab 1: Daily Close (JOB-48)
   const [dailyData, setDailyData] = useState<any | null>({
@@ -482,19 +485,40 @@ export function DailyClosePage() {
               <span className="text-muted small">
                 Closing seals the financial day and locks transactions for accounting audit (JOB-48).
               </span>
-              {!dailyData.isLocked ? (
+              <div className="d-flex gap-2">
                 <Button
-                  variant="primary"
+                  variant="outline-secondary"
                   size="sm"
-                  onClick={() => setShowConfirmModal(true)}
+                  disabled={isPrintingClose}
+                  onClick={async () => {
+                    setIsPrintingClose(true);
+                    try {
+                      await printBlob(`/billing/daily-close/pdf?date=${targetDate}`);
+                      setIsPrintingClose(false);
+                      return;
+                    } catch (err) {
+                      console.warn("Daily close PDF failed, falling back to window.print():", err);
+                      setIsPrintingClose(false);
+                    }
+                    window.print();
+                  }}
                 >
-                  🔒 Execute Daily Close &amp; Lock Ledger
+                  {isPrintingClose ? "Preparing PDF…" : "🖨️ Print Daily Close Summary (PDF)"}
                 </Button>
-              ) : (
-                <span className="badge bg-success py-2 px-3">
-                  ✓ Day Locked by Auditor
-                </span>
-              )}
+                {!dailyData.isLocked ? (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => setShowConfirmModal(true)}
+                  >
+                    🔒 Execute Daily Close &amp; Lock Ledger
+                  </Button>
+                ) : (
+                  <span className="badge bg-success py-2 px-3">
+                    ✓ Day Locked by Auditor
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -510,8 +534,24 @@ export function DailyClosePage() {
                 Outstanding patient and institutional claims grouped by age brackets.
               </small>
             </div>
-            <Button variant="outline-primary" size="sm" onClick={() => window.print()}>
-              🖨️ Print Receivables Report
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={isPrintingReceivables}
+              onClick={async () => {
+                setIsPrintingReceivables(true);
+                try {
+                  await printBlob(`/billing/reports/receivables-pdf?asOfDate=${targetDate}`);
+                  setIsPrintingReceivables(false);
+                  return;
+                } catch (err) {
+                  console.warn("Receivables PDF failed, falling back to window.print():", err);
+                  setIsPrintingReceivables(false);
+                }
+                window.print();
+              }}
+            >
+              {isPrintingReceivables ? "Preparing PDF…" : "🖨️ Print Receivables Report (PDF)"}
             </Button>
           </div>
 

@@ -62,8 +62,10 @@ describe("Duplicate candidates review (todo §2.2, JOB-22)", () => {
             candidates: [
               {
                 id: "live-1",
-                patientId: "a3000000-0000-4000-8000-000000000001",
-                otherId: "a3000000-0000-4000-8000-000000000002",
+                // Synthetic: this suite mocks the duplicates endpoint, so the pair of
+                // patient IDs only has to be distinct.
+                patientId: crypto.randomUUID(),
+                otherId: crypto.randomUUID(),
                 patientName: "Live, Alpha",
                 otherName: "Live, Beta",
                 patientNo: "",

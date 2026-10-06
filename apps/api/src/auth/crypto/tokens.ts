@@ -13,9 +13,18 @@ import { getConfig } from "../../config.js";
  *                user's sessions in that tenant (reuse detection)
  *  - mfa-ticket  2 min;  password verified, TOTP pending — only /auth/mfa/verify accepts it
  *  - step-up     5 min;  recent re-auth proof for high-risk actions (arch §10)
+ *  - platform        console staff access; carries sub, sid, amr — no tenant
+ *  - platform-refresh rotated on use in platform_sessions (same reuse detection)
  */
 
-export type TokenKind = "access" | "refresh" | "mfa-ticket" | "step-up" | "breakglass";
+export type TokenKind =
+  | "access"
+  | "refresh"
+  | "mfa-ticket"
+  | "step-up"
+  | "breakglass"
+  | "platform"
+  | "platform-refresh";
 
 export interface AccessClaims {
   typ: "access";
@@ -60,7 +69,28 @@ export interface BreakglassClaims {
   amr: string[];
 }
 
-export type Claims = AccessClaims | RefreshClaims | MfaTicketClaims | StepUpClaims | BreakglassClaims;
+export interface PlatformClaims {
+  typ: "platform";
+  sub: string; // platform_user id
+  sid: string; // platform_sessions.id
+  amr: string[]; // pwd, totp, mfa-recovery
+}
+
+export interface PlatformRefreshClaims {
+  typ: "platform-refresh";
+  sub: string; // platform_user id
+  sid: string; // platform_sessions.id (rotation chain)
+  amr: string[];
+}
+
+export type Claims =
+  | AccessClaims
+  | RefreshClaims
+  | MfaTicketClaims
+  | StepUpClaims
+  | BreakglassClaims
+  | PlatformClaims
+  | PlatformRefreshClaims;
 
 export class TokenService {
   // getConfig() is a cached singleton — no constructor DI (esbuild/tsx does
@@ -115,5 +145,18 @@ export class TokenService {
   async issueBreakglassToken(claims: Omit<BreakglassClaims, "typ">, ttlSeconds: number): Promise<string> {
     const MAX = 8 * 3600;
     return this.sign<BreakglassClaims>({ ...claims, typ: "breakglass" }, Math.min(ttlSeconds, MAX));
+  }
+
+  /** Platform console access token: no tenant (`tid` is intentionally absent). */
+  async issuePlatformToken(claims: Omit<PlatformClaims, "typ">): Promise<string> {
+    return this.sign<PlatformClaims>({ ...claims, typ: "platform" }, getConfig().ACCESS_TTL_SECONDS);
+  }
+
+  /** Platform console refresh token: rotated in platform_sessions. */
+  async issuePlatformRefreshToken(claims: Omit<PlatformRefreshClaims, "typ">): Promise<string> {
+    return this.sign<PlatformRefreshClaims>(
+      { ...claims, typ: "platform-refresh" },
+      getConfig().REFRESH_TTL_SECONDS,
+    );
   }
 }

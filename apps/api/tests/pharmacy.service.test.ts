@@ -4,11 +4,12 @@ import { SupplyService } from '../src/supply/supply.service.js';
 import { PharmacyService } from '../src/pharmacy/pharmacy.service.js';
 import { runControlledReconcile } from '../../worker/src/handlers/pharmacy-jobs.handler.js';
 import { ProblemException } from '../src/http/problem.exception.js';
+import { seedUsers, NO_SEED_USERS } from "@clinic/db/tests/helpers.js";
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
 const BRANCH_A = 'a1000000-0000-4000-8000-000000000001';
-const USER_PHARMACIST = 'a3000000-0000-4000-8000-000000000001';
-const USER_WITNESS = 'a3000000-0000-4000-8000-000000000002';
+const { DOCTOR_A: USER_PHARMACIST } = await seedUsers();
+const { NURSE_A: USER_WITNESS } = await seedUsers();
 const PATIENT_A = 'a4000000-0000-4000-8000-000000000001';
 
 describe('PharmacyService (Phase 5 — Pharmacy Core & AC-7)', () => {
@@ -963,5 +964,53 @@ describe('PharmacyService (Phase 5 — Pharmacy Core & AC-7)', () => {
     const reconcileResult = await runControlledReconcile();
     expect(reconcileResult).toBeDefined();
     expect(reconcileResult.reconciledCount).toBeGreaterThanOrEqual(0);
+  });
+
+  it('PHM-PRINT: maps the ISSUED verification queue to a printable document', async () => {
+    const rand = Math.floor(Math.random() * 1000000);
+    const visitRes = await ownerPool.query(
+      `INSERT INTO visits (tenant_id, branch_id, patient_id, practitioner_id, visit_no, status, opened_at, created_by)
+       VALUES ($1, $2, $3, $4, $5, 'IN_PROGRESS', now(), $4)
+       RETURNING id`,
+      [tenantId, branchId, patientId, pharmacistId, `VIS-PRNT-${rand}`],
+    );
+    const visitId = visitRes.rows[0].id;
+    const rxNo = `RX-PRNT-${rand}`;
+    const rxRes = await ownerPool.query(
+      `INSERT INTO prescriptions (tenant_id, visit_id, patient_id, prescriber_id, rx_no, status, is_controlled, issued_at, valid_until)
+       VALUES ($1, $2, $3, $4, $5, 'ISSUED', false, now(), now() + INTERVAL '7 days')
+       RETURNING id`,
+      [tenantId, visitId, patientId, pharmacistId, rxNo],
+    );
+    const rxId = rxRes.rows[0].id;
+    await ownerPool.query(
+      `INSERT INTO prescription_items (tenant_id, rx_id, drug_product_id, generic_name, sig_dose, sig_frequency, qty_prescribed)
+       VALUES ($1, $2, $3, 'Amoxicillin', '500mg', 'TID', 21)`,
+      [tenantId, rxId, amoxProductId],
+    );
+
+    const doc = await pharmacySvc.getVerificationQueueDocument(tenantId, 'ISSUED', {
+      clinicName: 'Test Pharmacy',
+      generatedBy: 'Pharm Tester',
+    });
+    expect(doc.clinicName).toBe('Test Pharmacy');
+    expect(doc.status).toBe('ISSUED');
+    expect(doc.generatedBy).toBe('Pharm Tester');
+    expect(doc.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+
+    const row = doc.rows.find((r) => r.rxNo === rxNo);
+    expect(row).toBeTruthy();
+    expect(row!.patientName).toContain(',');
+    expect(row!.itemCount).toBe(1);
+    expect(row!.isControlled).toBe(false);
+    expect(row!.prescriberName).toBeTruthy();
+    expect(row!.visitNo).toBe(`VIS-PRNT-${rand}`);
+    expect(row!.issuedAt).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    expect(row!.validUntil).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+    // Cleanup.
+    await ownerPool.query(`DELETE FROM prescription_items WHERE tenant_id = $1 AND rx_id = $2`, [tenantId, rxId]);
+    await ownerPool.query(`DELETE FROM prescriptions WHERE id = $1 AND tenant_id = $2`, [rxId, tenantId]);
+    await ownerPool.query(`DELETE FROM visits WHERE id = $1 AND tenant_id = $2`, [visitId, tenantId]);
   });
 });

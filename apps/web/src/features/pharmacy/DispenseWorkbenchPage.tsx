@@ -11,7 +11,7 @@ import {
   SkeletonTable,
   StatusPill,
 } from "@clinic/ui";
-import { ApiError } from "../../shared/api/client.js";
+import { ApiError, printBlob } from "../../shared/api/client.js";
 import { pharmacyApi } from "./api.js";
 import type {
   DispenseDetail,
@@ -141,6 +141,7 @@ export function DispenseWorkbenchPage() {
   });
   const [isControlledOpen, setIsControlledOpen] = useState(false);
   const [isLabelOpen, setIsLabelOpen] = useState(false);
+  const [isPrintingLabels, setIsPrintingLabels] = useState(false);
 
   // ── Load the ready-to-dispense queue when no Rx is selected ────────────────
   useEffect(() => {
@@ -805,8 +806,27 @@ export function DispenseWorkbenchPage() {
           <Button variant="secondary" onClick={() => setIsLabelOpen(false)}>
             Close
           </Button>
-          <Button variant="primary" onClick={() => window.print()}>
-            Print
+          <Button
+            variant="primary"
+            disabled={isPrintingLabels}
+            onClick={async () => {
+              // Official route: server-rendered label sheet PDF via the shared
+              // print pipeline; ZPL stays available through /dispenses/:id/label
+              // for thermal printers. Screen print only as a last fallback.
+              if (posted?.id) {
+                setIsPrintingLabels(true);
+                try {
+                  await printBlob(`/pharmacy/dispenses/${posted.id}/label-pdf`);
+                  setIsPrintingLabels(false);
+                  return;
+                } catch {
+                  setIsPrintingLabels(false);
+                }
+              }
+              window.print();
+            }}
+          >
+            {isPrintingLabels ? "Preparing label PDF…" : "🖨️ Print Label Sheet (PDF)"}
           </Button>
         </Modal.Footer>
       </Modal>

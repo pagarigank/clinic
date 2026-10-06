@@ -4,6 +4,7 @@ import { HttpException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { withTenant } from "@clinic/db";
 import { probeDb } from "@clinic/db/tests/helpers.js";
+import { seedUsers, NO_SEED_USERS } from "@clinic/db/tests/helpers.js";
 import { MODULE_KEY, ModuleGuard } from "../src/rbac/module.guard.js";
 
 /**
@@ -17,6 +18,7 @@ import { MODULE_KEY, ModuleGuard } from "../src/rbac/module.guard.js";
  */
 
 const dbUp = await probeDb();
+const { USER_A } = dbUp ? await seedUsers() : NO_SEED_USERS;
 const TENANT_A = "11111111-1111-4111-8111-111111111111";
 const TENANT_B = "22222222-2222-4222-8222-222222222222";
 const reflector = new Reflector();
@@ -36,7 +38,7 @@ function ctxFor(module: string, tenantId: string, method = "GET"): ExecutionCont
     method,
     authContext: {
       kind: "user",
-      userId: "a3000000-0000-4000-8000-000000000001",
+      userId: USER_A,
       tenantId,
       sessionId: null,
       branchId: null,
@@ -122,6 +124,9 @@ describe.skipIf(!dbUp)("ModuleGuard against the real DB (todo 1.6)", () => {
   });
 
   it("refuses a module with no entitlement row", async () => {
+    // The demo seed grants every module to demo-a, so the precondition is created
+    // explicitly instead of relying on a module happening to be un-granted.
+    await dropModule(TENANT_A, "compliance");
     expect(await codeOf(guard.canActivate(ctxFor("compliance", TENANT_A)))).toBe(
       "MODULE_NOT_ENTITLED",
     );

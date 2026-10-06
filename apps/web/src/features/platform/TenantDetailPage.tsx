@@ -438,7 +438,13 @@ function ModulesTab({ tenantId, tenantSlug, moduleList, onNotice, onError, onHis
                     <td className="small">{row.seedStatus ? SEED_LABEL[row.seedStatus] ?? row.seedStatus : "—"}</td>
                     <td className="small">
                       {row.status === "TRIAL" && row.expiresAt ? `ends ${row.expiresAt}` : "—"}
-                      {row.limits != null ? <div className="text-muted">limit {row.limits}</div> : null}
+                      {row.limits != null && Object.keys(row.limits).length > 0 ? (
+                        <div className="text-muted">
+                          limits: {Object.entries(row.limits)
+                            .map(([k, v]) => `${k}=${v}`)
+                            .join(", ")}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="small">
                       {row.status === "DISABLED" && row.disabledReason ? (

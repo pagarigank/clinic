@@ -14,7 +14,12 @@ import {
   type AuthContext,
   type RequestWithAuth,
 } from "../auth-context.js";
-import { type AccessClaims, type BreakglassClaims, TokenService } from "../crypto/tokens.js";
+import {
+  type AccessClaims,
+  type BreakglassClaims,
+  type PlatformClaims,
+  TokenService,
+} from "../crypto/tokens.js";
 import { getAppPool } from "@clinic/db";
 
 /**
@@ -59,6 +64,21 @@ export class AuthGuard implements CanActivate {
           scopes: [],
           modules: accessClaims.mod,
           modulesVersion: accessClaims.mdv,
+        };
+        return true;
+      }
+
+      const platformClaims = await this.tokens.verify<PlatformClaims>(raw, "platform");
+      if (platformClaims) {
+        request.authContext = {
+          kind: "platform",
+          userId: null,
+          tenantId: null,
+          sessionId: platformClaims.sid,
+          branchId: null,
+          amr: platformClaims.amr,
+          scopes: [],
+          platformUserId: platformClaims.sub,
         };
         return true;
       }

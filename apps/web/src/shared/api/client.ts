@@ -56,6 +56,27 @@ export function refreshAccessToken(): Promise<string | null> {
   return refreshInFlight;
 }
 
+// Platform console refresh: separate single-flight and endpoint (distinct
+// `clinic_prt` cookie), so a tenant refresh and a platform refresh can never
+// present the same rotating token twice.
+let platformRefreshInFlight: Promise<string | null> | null = null;
+
+export function refreshPlatformAccessToken(): Promise<string | null> {
+  if (!platformRefreshInFlight) {
+    platformRefreshInFlight = apiPost<{ accessToken?: string }>("/auth/platform/refresh")
+      .then((res) => {
+        const token = res?.accessToken ?? null;
+        if (token) setAccessToken(token);
+        return token;
+      })
+      .catch(() => null)
+      .finally(() => {
+        platformRefreshInFlight = null;
+      });
+  }
+  return platformRefreshInFlight;
+}
+
 // Resolve to an absolute URL: jsdom's fetch rejects relative URLs, while in
 // the browser location.origin keeps the Vite proxy behaviour identical to a
 // relative "/api/v1". Component tests set API_ORIGIN to a loopback stub.
@@ -163,4 +184,73 @@ export async function apiDelete<T>(path: string, signal?: AbortSignal): Promise<
     ...(signal && !isJsdom ? { signal } : {}),
   });
   return handleResponse<T>(res);
+}
+
+/**
+ * Fetch a server-rendered binary artifact (e.g. a printout PDF) with the same
+ * origin resolution and auth as the JSON helpers. Callers open or download the
+ * Blob themselves — nothing is generated in the browser (frontend §5.2).
+ */
+export async function apiGetBlob(path: string): Promise<Blob> {
+  const res = await fetch(`${apiBase()}${path}`, {
+    method: "GET",
+    headers: buildHeaders(),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    let problem: ApiProblem | undefined;
+    try {
+      problem = (await res.json()) as ApiProblem;
+    } catch {
+      // non-JSON error body — fall through to generic problem
+    }
+    throw new ApiError(
+      problem ?? {
+        type: "about:blank",
+        title: res.statusText || "Request Failed",
+        status: res.status,
+        code: "UPSTREAM_UNAVAILABLE",
+      },
+      res.status,
+    );
+  }
+  return res.blob();
+}
+
+/**
+ * Fetch an official PDF and send it straight to the printer: the bytes are
+ * loaded into a hidden iframe as a blob and the *browser's PDF viewer* is
+ * what prints, so what lands on paper is the server-rendered document
+ * (deterministic SHA-256 bytes), never a print of the app screen. The iframe
+ * is removed once the print dialog is dismissed.
+ */
+export async function printBlob(path: string): Promise<void> {
+  const blob = await apiGetBlob(path);
+  const url = window.URL.createObjectURL(blob);
+  const frame = document.createElement("iframe");
+  frame.style.position = "fixed";
+  frame.style.right = "0";
+  frame.style.bottom = "0";
+  frame.style.width = "0";
+  frame.style.height = "0";
+  frame.style.border = "0";
+  frame.src = url;
+  frame.title = "Official document print frame";
+  const cleanup = () => {
+    window.URL.revokeObjectURL(url);
+    frame.remove();
+  };
+  frame.addEventListener("load", () => {
+    try {
+      frame.contentWindow?.focus();
+      frame.contentWindow?.print();
+    } catch {
+      // Some browsers refuse programmatic print on cross-origin-ish blob
+      // frames — falling back to a visible tab still prints the true PDF.
+      window.open(url, "_blank");
+    }
+    // Give the print dialog time to take the document before disposal.
+    window.setTimeout(cleanup, 60_000);
+  });
+  document.body.appendChild(frame);
 }

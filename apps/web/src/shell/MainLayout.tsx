@@ -102,6 +102,8 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/admin/approvals", icon: "📝", label: "Staff Approvals" },
       { to: "/admin/users", icon: "👤", label: "Staff & Users" },
+      { to: "/admin/users/new", icon: "➕", label: "Create Staff User" },
+      { to: "/admin/employees", icon: "🪪", label: "Employee Records" },
       { to: "/admin/roles", icon: "🛡️", label: "Roles & Permissions" },
       { to: "/admin/branches", icon: "🏢", label: "Branches & Units" },
       { to: "/admin/service-catalog", icon: "💰", label: "Services & Prices" },
@@ -128,7 +130,6 @@ const NAV_GROUPS: NavGroup[] = [
     icon: "🖥️",
     items: [
       { to: "/ping", icon: "📡", label: "System Health" },
-      { to: "/platform/tenants", icon: "🖥️", label: "Platform Console" },
     ],
   },
 ];
@@ -252,7 +253,12 @@ export function MainLayout() {
     compliance: "compliance",
   };
   const PERMS_BY_ITEM: Record<string, string[]> = {
+    "/patients": ["patient.record.read", "patients.read"],
+    "/patients/duplicates": ["patient.record.merge", "patient.record.read", "patients.read"],
+    "/admin/approvals": ["admin.user.read"],
     "/admin/users": ["admin.user.read"],
+    "/admin/users/new": ["admin.user.create"],
+    "/admin/employees": ["admin.user.read"],
     "/admin/roles": ["admin.role.read"],
     "/admin/branches": ["admin.branch.read"],
     "/admin/service-catalog": ["admin.service.read", "admin.price.read"],

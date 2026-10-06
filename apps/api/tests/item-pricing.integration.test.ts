@@ -4,11 +4,12 @@ import { createPool } from '@clinic/db';
 import { SupplyService } from '../src/supply/supply.service.js';
 import { PharmacyService } from '../src/pharmacy/pharmacy.service.js';
 import { TenantConfigService } from '../src/tenant-config/tenant-config.service.js';
+import { seedUsers, NO_SEED_USERS } from "@clinic/db/tests/helpers.js";
 
 const hasDb = await probeDb();
 
 const TENANT_ID = '22222222-2222-4222-8222-222222222222';
-const USER_ID = 'b3000000-0000-4000-8000-000000000001';
+const { USER_B: USER_ID } = hasDb ? await seedUsers() : NO_SEED_USERS;
 
 describe.skipIf(!hasDb)('Pharmacy and Central Supply Item & Pricing Management Integration', () => {
   const supplySvc = new SupplyService();

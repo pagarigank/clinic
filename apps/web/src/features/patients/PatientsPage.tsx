@@ -222,38 +222,75 @@ export function PatientsPage() {
     e.preventDefault();
     if (!firstName.trim() || !lastName.trim()) return;
 
-    const newPatient: PatientRecord = {
-      id: `p-${Date.now()}`,
-      patientNo: `PAT-2026-${String(patients.length + 5).padStart(4, "0")}`,
-      firstName: firstName.trim(),
-      lastName: lastName.trim(),
-      dob,
-      gender,
-      phone: phone.trim() || "N/A",
-      email: email.trim() || undefined,
-      philhealthNo: philhealthNo.trim() || undefined,
-      nationalId: nationalId.trim() || undefined,
-      allergies: allergiesText ? allergiesText.split(",").map((s) => s.trim()) : undefined,
-      isEmergency,
-      status: "ACTIVE",
-      konsultaStatus: philhealthNo.trim() ? "REGISTERED" : "NOT_ENROLLED",
-    };
-
     try {
           // Field names must match CreatePatientSchema (packages/contracts) exactly.
           // It is a strict object — unknown keys are stripped and `dateOfBirth` is
           // required — so sending `dob` produced 422 VALIDATION_FAILED on
           // "dateOfBirth: expected string, received undefined" and the registration
           // silently never persisted.
-          await apiPost("/patients", {
-            firstName: newPatient.firstName,
-            lastName: newPatient.lastName,
-            dateOfBirth: newPatient.dob,
-            gender: newPatient.gender,
+          const created = await apiPost<{
+            id: string;
+            patient_no: string;
+            first_name: string;
+            last_name: string;
+            date_of_birth: string;
+            gender: string;
+          }>("/patients", {
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+            dateOfBirth: dob,
+            gender,
             // Q-11: emergency intake is expressed as registrationType, not a
             // boolean the schema does not know about.
-            ...(newPatient.isEmergency ? { registrationType: "EMERGENCY" as const } : {}),
+            ...(isEmergency ? { registrationType: "EMERGENCY" as const } : {}),
+            // These were collected on the form and silently discarded before;
+            // the service now writes them in the same transaction.
+            ...(phone.trim() ? { phone: phone.trim() } : {}),
+            ...(email.trim() ? { email: email.trim() } : {}),
+            ...(philhealthNo.trim() ? { philhealthNo: philhealthNo.trim() } : {}),
+            ...(nationalId.trim() ? { nationalId: nationalId.trim() } : {}),
+            ...(allergiesText
+              ? { allergies: allergiesText.split(",").map((s) => s.trim()).filter(Boolean) }
+              : {}),
           });
+
+          // Use the server's row, including the number it minted. Building a
+          // local PatientRecord here showed a fabricated patient number that
+          // existed nowhere in the database and drifted as soon as any patient
+          // was removed.
+          const newPatient: PatientRecord = {
+            id: created.id,
+            patientNo: created.patient_no,
+            firstName: created.first_name,
+            lastName: created.last_name,
+            dob: created.date_of_birth,
+            gender: created.gender as PatientRecord["gender"],
+            phone: phone.trim() || "N/A",
+            email: email.trim() || undefined,
+            philhealthNo: philhealthNo.trim() || undefined,
+            nationalId: nationalId.trim() || undefined,
+            allergies: allergiesText
+              ? allergiesText.split(",").map((s) => s.trim()).filter(Boolean)
+              : undefined,
+            isEmergency,
+            status: "ACTIVE",
+            konsultaStatus: philhealthNo.trim() ? "REGISTERED" : "NOT_ENROLLED",
+          };
+
+          setPatients([newPatient, ...patients]);
+          setIsRegisterOpen(false);
+          setFirstName("");
+          setLastName("");
+          setDob("");
+          setPhone("");
+          setEmail("");
+          setPhilhealthNo("");
+          setNationalId("");
+          setAllergiesText("");
+          setIsEmergency(false);
+          setMessage(
+            `Patient ${newPatient.lastName}, ${newPatient.firstName} (${newPatient.patientNo}) registered successfully.`,
+          );
         } catch (err) {
           // Previously an empty catch, so a rejected save still reported
                     // "registered successfully" and added the patient to local state only —
@@ -269,20 +306,6 @@ export function PatientsPage() {
                     setMessage(`Registration failed: ${reason}. Nothing was saved — please retry.`);
                     return;
                   }
-
-    setPatients([newPatient, ...patients]);
-    setIsRegisterOpen(false);
-    setMessage(`Patient ${newPatient.lastName}, ${newPatient.firstName} (${newPatient.patientNo}) registered successfully.`);
-
-    // Reset Form
-    setFirstName("");
-    setLastName("");
-    setPhone("");
-    setEmail("");
-    setPhilhealthNo("");
-    setNationalId("");
-    setAllergiesText("");
-    setIsEmergency(false);
   };
 
   const maskValue = (val?: string) => {

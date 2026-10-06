@@ -5,11 +5,12 @@ import { UsersService } from "../src/rbac/users.service.js";
 import { RbacService } from "../src/rbac/rbac.service.js";
 import { PasswordService } from "../src/auth/crypto/password.js";
 import { ProblemException } from "../src/http/problem.exception.js";
+import { seedUsers, NO_SEED_USERS } from "@clinic/db/tests/helpers.js";
 
 const dbUp = await probeDb();
 
 const TENANT_A = "11111111-1111-4111-8111-111111111111";
-const USER_A_ADMIN = "a3000000-0000-4000-8000-000000000001"; // admin@demo-a.test
+const { USER_A: USER_A_ADMIN } = dbUp ? await seedUsers() : NO_SEED_USERS;
 const ROLE_A_RECEPTIONIST = "a2000000-0000-4000-8000-000000000003";
 
 const users = new UsersService();
@@ -203,4 +204,64 @@ describe.skipIf(!dbUp)("admin user CRUD (specification §18.2, real DB)", () => 
     });
     expect(hashRow && (await passwords.verifyPassword("FreshPassw0rd!2026", hashRow.password_hash))).toBe(true);
   });
+
+  it("creates a user with tied employee information and supports employee CRUD", async () => {
+    const created = await users.create(TENANT_A, USER_A_ADMIN, {
+      email: `emp-tied-${suffix}@demo-a.test`,
+      name: "Dr. Roberto Cruz",
+      roleIds: [ROLE_A_RECEPTIONIST],
+      employee: {
+        employeeNo: `EMP-${suffix}`,
+        jobTitle: "Attending Cardiologist",
+        department: "Clinical Care",
+        employmentType: "FULL_TIME",
+        specialization: "Cardiology",
+        prcLicenseNo: "PRC-998877",
+        phone: "+639171234567",
+      },
+    });
+    createdUserIds.push(created.id);
+
+    expect(created.employee).toBeDefined();
+    expect(created.employee?.employeeNo).toBe(`EMP-${suffix}`);
+    expect(created.employee?.jobTitle).toBe("Attending Cardiologist");
+    expect(created.employee?.prcLicenseNo).toBe("PRC-998877");
+
+    // Retrieve directly via getEmployee
+    const emp = await users.getEmployee(TENANT_A, USER_A_ADMIN, created.id);
+    expect(emp?.employeeNo).toBe(`EMP-${suffix}`);
+    expect(emp?.department).toBe("Clinical Care");
+
+    // Upsert employee details (e.g. add S2 license and emergency contact)
+    const updatedEmp = await users.upsertEmployee(TENANT_A, USER_A_ADMIN, created.id, {
+      employeeNo: `EMP-${suffix}`,
+      jobTitle: "Lead Cardiologist & Medical Specialist",
+      department: "Cardiology Unit",
+      employmentType: "FULL_TIME",
+      specialization: "Interventional Cardiology",
+      prcLicenseNo: "PRC-998877",
+      s2LicenseNo: "S2-12345-C",
+      emergencyContactName: "Elena Cruz",
+      emergencyContactPhone: "+639189876543",
+      emergencyContactRelationship: "Spouse",
+      rowVersion: emp?.rowVersion,
+    });
+    expect(updatedEmp.jobTitle).toBe("Lead Cardiologist & Medical Specialist");
+    expect(updatedEmp.s2LicenseNo).toBe("S2-12345-C");
+    expect(updatedEmp.emergencyContactName).toBe("Elena Cruz");
+
+    // Verify employee appears in listEmployees
+    const allEmployees = await users.listEmployees(TENANT_A, USER_A_ADMIN);
+    const foundEmp = allEmployees.find((e) => e.userId === created.id);
+    expect(foundEmp?.userName).toBe("Dr. Roberto Cruz");
+    expect(foundEmp?.employeeNo).toBe(`EMP-${suffix}`);
+
+    // Verify deletion
+    const delResult = await users.deleteEmployee(TENANT_A, USER_A_ADMIN, created.id);
+    expect(delResult.deleted).toBe(true);
+
+    const afterDelete = await users.getEmployee(TENANT_A, USER_A_ADMIN, created.id);
+    expect(afterDelete).toBeNull();
+  });
 });
+

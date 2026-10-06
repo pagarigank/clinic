@@ -7,6 +7,7 @@ import "./shared/styles/tokens.css";
 import "./theme.css";
 import { ThemeProvider } from "./shared/theme/ThemeProvider.js";
 import { AuthProvider } from "./shared/auth/AuthContext.js";
+import { PlatformAuthProvider, RequirePlatform } from "./shared/auth/PlatformAuthContext.js";
 import { PermissionsProvider, RequirePermission } from "./shared/auth/PermissionsContext.js";
 import { StepUpProvider } from "./shared/auth/StepUpContext.js";
 import { SearchProvider } from "./shared/search/CommandPalette.js";
@@ -22,6 +23,8 @@ import { VisitsPage } from "./features/clinical/VisitsPage.js";
 import { VisitChartPage } from "./features/clinical/VisitChartPage.js";
 import { ApprovalsPage } from "./features/admin/ApprovalsPage.js";
 import { UsersPage } from "./features/admin/UsersPage.js";
+import { CreateUserPage } from "./features/admin/CreateUserPage.js";
+import { EmployeesPage } from "./features/admin/EmployeesPage.js";
 import { RolesPage } from "./features/admin/RolesPage.js";
 import { BranchesPage } from "./features/admin/BranchesPage.js";
 import { CatalogPage } from "./features/admin/CatalogPage.js";
@@ -54,6 +57,7 @@ import { CompliancePage } from "./features/compliance/CompliancePage.js";
 import { ReportsCatalogPage } from "./features/reports/ReportsCatalogPage.js";
 import { PingPage } from "./features/ping/PingPage.js";
 import { PlatformShell } from "./shell/PlatformShell.js";
+import { PlatformLoginPage } from "./features/platform/PlatformLoginPage.js";
 import { TenantsPage } from "./features/platform/TenantsPage.js";
 import { TenantDetailPage } from "./features/platform/TenantDetailPage.js";
 import { NewTenantWizard } from "./features/platform/NewTenantWizard.js";
@@ -76,8 +80,8 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: "dashboard", element: <DashboardPage /> },
-      { path: "patients", element: <RequirePermission module="patients" codes={["patients.read"]}><PatientsPage /></RequirePermission> },
-      { path: "patients/duplicates", element: <RequirePermission module="patients" codes={["patients.read"]}><DuplicateReviewPage /></RequirePermission> },
+      { path: "patients", element: <RequirePermission module="patients" codes={["patient.record.read", "patients.read"]}><PatientsPage /></RequirePermission> },
+      { path: "patients/duplicates", element: <RequirePermission module="patients" codes={["patient.record.merge", "patient.record.read", "patients.read"]}><DuplicateReviewPage /></RequirePermission> },
       {
         path: "clinical",
         children: [
@@ -142,6 +146,8 @@ const router = createBrowserRouter([
         children: [
           { path: "approvals", element: <RequirePermission module="admin" codes={["admin.user.read"]}><ApprovalsPage /></RequirePermission> },
           { path: "users", element: <RequirePermission module="admin" codes={["admin.user.read"]}><UsersPage /></RequirePermission> },
+          { path: "users/new", element: <RequirePermission module="admin" codes={["admin.user.create"]}><CreateUserPage /></RequirePermission> },
+          { path: "employees", element: <RequirePermission module="admin" codes={["admin.user.read"]}><EmployeesPage /></RequirePermission> },
           { path: "roles", element: <RequirePermission module="admin" codes={["admin.role.read"]}><RolesPage /></RequirePermission> },
           { path: "branches", element: <RequirePermission module="admin" codes={["admin.branch.read"]}><BranchesPage /></RequirePermission> },
           { path: "service-catalog", element: <RequirePermission module="admin" codes={["admin.service.read", "admin.price.read"]}><CatalogPage /></RequirePermission> },
@@ -154,10 +160,18 @@ const router = createBrowserRouter([
     ],
   },
 
-  // Platform Console (Superadmin)
+  // Platform Console (Superadmin) — separate login + platform scope guard
+  {
+    path: "/platform/login",
+    element: <PlatformLoginPage />,
+  },
   {
     path: "/platform",
-    element: <PlatformShell />,
+    element: (
+      <RequirePlatform>
+        <PlatformShell />
+      </RequirePlatform>
+    ),
     children: [
       { path: "tenants", element: <TenantsPage /> },
       { path: "tenants/new", element: <NewTenantWizard /> },
@@ -179,13 +193,15 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ThemeProvider>
       <AuthProvider>
-        <StepUpProvider>
-          <SearchProvider>
-            <PermissionsProvider>
-              <RouterProvider router={router} />
-            </PermissionsProvider>
-          </SearchProvider>
-        </StepUpProvider>
+        <PlatformAuthProvider>
+          <StepUpProvider>
+            <SearchProvider>
+              <PermissionsProvider>
+                <RouterProvider router={router} />
+              </PermissionsProvider>
+            </SearchProvider>
+          </StepUpProvider>
+        </PlatformAuthProvider>
       </AuthProvider>
     </ThemeProvider>
   </StrictMode>,

@@ -48,7 +48,7 @@ export class ComplianceController {
   // ── 1. Audit Explorer (§12.1, §18.10) ─────────────────────────────────────
 
   @RequirePermission('compliance.audit.read')
-  @Get('audit')
+  @Get(['audit', 'audit-logs'])
   @ApiOperation({ summary: 'List system audit log entries' })
   async listAuditLogs(
     @Req() req: RequestWithAuth,
@@ -74,7 +74,7 @@ export class ComplianceController {
   }
 
   @RequirePermission('compliance.audit.read')
-  @Get('audit/:id')
+  @Get(['audit/:id', 'audit-logs/:id'])
   @ApiOperation({ summary: 'Get audit entry with state diff' })
   async getAuditLogById(@Req() req: RequestWithAuth, @Param('id') id: string) {
     return this.svc.getAuditLogById(req.tenantId!, id);
@@ -83,7 +83,7 @@ export class ComplianceController {
   // ── 2. PHI Access Log (§12.1, §18.10) ─────────────────────────────────────
 
   @RequirePermission('compliance.access.read')
-  @Get('phi-access')
+  @Get(['phi-access', 'phi-access-logs'])
   @ApiOperation({ summary: 'List PHI access records' })
   async listPhiAccessLogs(
     @Req() req: RequestWithAuth,
@@ -297,21 +297,21 @@ export class ComplianceController {
   // ── 6. Retention Policies & Legal Holds (CMP-T1/T5, JOB-15) ─────────────────
 
   @RequirePermission('compliance.retention.read')
-  @Get('retention-policies')
+  @Get(['retention-policies', 'retention/policies'])
   @ApiOperation({ summary: 'List data retention policies' })
   async listRetentionPolicies(@Req() req: RequestWithAuth) {
     return this.svc.listRetentionPolicies(req.tenantId!);
   }
 
   @RequirePermission('compliance.retention.create')
-  @Post('retention-policies')
+  @Post(['retention-policies', 'retention/policies'])
   @ApiOperation({ summary: 'Create or update retention policy' })
   async createRetentionPolicy(@Req() req: RequestWithAuth, @Body() body: CreateRetentionPolicyRequest) {
     return this.svc.createRetentionPolicy(req.tenantId!, body, getActorId(req));
   }
 
   @RequirePermission('compliance.retention.update')
-  @Patch('retention-policies/:id')
+  @Patch(['retention-policies/:id', 'retention/policies/:id'])
   @ApiOperation({ summary: 'Update retention policy' })
   async updateRetentionPolicy(
     @Req() req: RequestWithAuth,
@@ -322,7 +322,7 @@ export class ComplianceController {
   }
 
   @RequirePermission('compliance.hold.read')
-  @Get('legal-holds')
+  @Get(['legal-holds', 'retention/legal-holds'])
   @ApiOperation({ summary: 'List legal holds' })
   async listLegalHolds(
     @Req() req: RequestWithAuth,
@@ -333,14 +333,14 @@ export class ComplianceController {
   }
 
   @RequirePermission('compliance.hold.create')
-  @Post('legal-holds')
+  @Post(['legal-holds', 'retention/legal-holds'])
   @ApiOperation({ summary: 'Place new legal hold' })
   async createLegalHold(@Req() req: RequestWithAuth, @Body() body: CreateLegalHoldRequest) {
     return this.svc.createLegalHold(req.tenantId!, body, getActorId(req));
   }
 
   @RequirePermission('compliance.hold.release')
-  @Post('legal-holds/:id/release')
+  @Post(['legal-holds/:id/release', 'retention/legal-holds/:id/release'])
   @ApiOperation({ summary: 'Release active legal hold' })
   async releaseLegalHold(
     @Req() req: RequestWithAuth,

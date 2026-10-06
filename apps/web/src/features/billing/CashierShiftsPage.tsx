@@ -17,12 +17,15 @@ import {
   fetchShiftXReport,
   fetchShiftZReport,
 } from "./api.js";
+import { printBlob } from "../../shared/api/client.js";
 
 export function CashierShiftsPage() {
   const [showXReportModal, setShowXReportModal] = useState(false);
   const [xReportData, setXReportData] = useState<any | null>(null);
+  const [isPrintingXReport, setIsPrintingXReport] = useState(false);
   const [showZReportModal, setShowZReportModal] = useState(false);
   const [zReportData, setZReportData] = useState<any | null>(null);
+  const [isPrintingZReport, setIsPrintingZReport] = useState(false);
 
   const [shifts, setShifts] = useState<any[]>([
 
@@ -587,8 +590,26 @@ export function CashierShiftsPage() {
             </div>
           </Modal.Body>
           <Modal.Footer>
-            <Button variant="outline-secondary" size="sm" onClick={() => window.print()}>
-              🖨️ Print X-Slip
+            <Button
+              variant="outline-secondary"
+              size="sm"
+              disabled={isPrintingXReport}
+              onClick={async () => {
+                if (xReportData?.shiftId) {
+                  setIsPrintingXReport(true);
+                  try {
+                    await printBlob(`/billing/shifts/${xReportData.shiftId}/x-report-pdf`);
+                    setIsPrintingXReport(false);
+                    return;
+                  } catch (err) {
+                    console.warn("X-Report PDF failed, falling back to window.print():", err);
+                    setIsPrintingXReport(false);
+                  }
+                }
+                window.print();
+              }}
+            >
+              {isPrintingXReport ? "Preparing PDF…" : "🖨️ Print X-Slip (PDF)"}
             </Button>
             <Button variant="primary" size="sm" onClick={() => setShowXReportModal(false)}>
               Close
@@ -681,10 +702,28 @@ export function CashierShiftsPage() {
             </div>
           </Modal.Body>
           <Modal.Footer>
-            <Button variant="outline-secondary" size="sm" onClick={() => window.print()}>
-              🖨️ Print Z-Tape
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={isPrintingZReport}
+              onClick={async () => {
+                if (zReportData?.shiftId) {
+                  setIsPrintingZReport(true);
+                  try {
+                    await printBlob(`/billing/shifts/${zReportData.shiftId}/z-report-pdf`);
+                    setIsPrintingZReport(false);
+                    return;
+                  } catch (err) {
+                    console.warn("Z-Report PDF failed, falling back to window.print():", err);
+                    setIsPrintingZReport(false);
+                  }
+                }
+                window.print();
+              }}
+            >
+              {isPrintingZReport ? "Preparing PDF…" : "🖨️ Print Z-Tape (PDF)"}
             </Button>
-            <Button variant="primary" size="sm" onClick={() => setShowZReportModal(false)}>
+            <Button variant="secondary" size="sm" onClick={() => setShowZReportModal(false)}>
               Close
             </Button>
           </Modal.Footer>
