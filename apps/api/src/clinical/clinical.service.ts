@@ -1351,12 +1351,22 @@ export class ClinicalService {
   async getCertificatePrint(tenantId: string, userId: string, certId: string) {
     return withTenant({ tenantId, userId }, async (tx) => {
       const certRes = await tx.query(
-        `SELECT mc.*, p.first_name || ' ' || p.last_name AS patient_name, p.date_of_birth, p.gender,
-                u.name AS issuer_name, pp.philhealth_accreditation_no
+        `SELECT mc.*,
+                p.first_name || ' ' || COALESCE(p.middle_name || ' ', '') || p.last_name AS patient_name,
+                p.date_of_birth, p.gender,
+                (SELECT pc.value FROM patient_contacts pc WHERE pc.tenant_id = mc.tenant_id AND pc.patient_id = p.id AND pc.type IN ('ADDRESS', 'HOME') ORDER BY pc.is_primary DESC, pc.created_at ASC LIMIT 1) as patient_address,
+                u.name AS issuer_name,
+                e.job_title AS issuer_job_title,
+                e.specialization AS issuer_specialization,
+                e.prc_license_no AS issuer_prc_no,
+                e.ptr_no AS issuer_ptr_no,
+                e.s2_license_no AS issuer_s2_no,
+                pp.philhealth_accreditation_no
          FROM medical_certificates mc
          JOIN visits v ON v.id = mc.visit_id
          JOIN patients p ON p.id = v.patient_id
          JOIN users u ON u.id = mc.issued_by
+         LEFT JOIN employees e ON e.tenant_id = mc.tenant_id AND e.user_id = mc.issued_by
          LEFT JOIN practitioner_profiles pp ON pp.user_id = mc.issued_by AND pp.tenant_id = mc.tenant_id
          WHERE mc.tenant_id = $1 AND mc.id = $2`,
         [tenantId, certId],
@@ -1408,13 +1418,6 @@ export class ClinicalService {
       patientAge = Math.floor((Date.now() - birthDate.getTime()) / (365.25 * 24 * 3600 * 1000));
     }
 
-    const typeLabels: Record<string, string> = {
-      FIT_TO_WORK: 'FIT TO WORK CERTIFICATE',
-      SICK_LEAVE: 'MEDICAL CERTIFICATE FOR SICK LEAVE',
-      CLEARANCE: 'MEDICAL CLEARANCE',
-    };
-    const title = typeLabels[cert.cert_type] || 'MEDICAL CERTIFICATE';
-
     let unfitForDays: number | undefined;
     if (cert.cert_type === 'SICK_LEAVE' && cert.valid_from && cert.valid_to) {
       const from = new Date(cert.valid_from).getTime();
@@ -1422,31 +1425,127 @@ export class ClinicalService {
       if (Number.isFinite(from) && Number.isFinite(to) && to >= from) {
         unfitForDays = Math.round((to - from) / (24 * 3600 * 1000)) + 1;
       }
+    } else if (cert.cert_type === 'FIT_TO_WORK') {
+      unfitForDays = 0;
     }
 
-    const findings = cert.findings ? String(cert.findings).trim() : undefined;
-    const validity =
-      cert.valid_from || cert.valid_to
-        ? `Validity: ${cert.valid_from ?? '—'} to ${cert.valid_to ?? '—'}.`
-        : undefined;
-    const body =
-      [title + '.', findings, validity].filter(Boolean).join('\n\n') ||
-      `${title} issued after clinical consultation.`;
+    // Format diagnoses from encounter visit
+    const dxList = (visit.diagnoses || [])
+      .map((d: any) => {
+        const code = (d.icd10_code || d.icd10Code || '').trim();
+        const desc = (d.description || d.icd10_description || '').trim();
+        if (desc && code && desc.toLowerCase() !== code.toLowerCase()) {
+          return `${desc} (${code})`;
+        }
+        return desc || code;
+      })
+      .filter(Boolean);
+
+    const primaryDx = (visit.diagnoses || [])[0];
+    const visitDxString = dxList.length > 0 ? dxList.join('; ') : undefined;
+    const certFindings = cert.findings ? String(cert.findings).trim() : undefined;
+
+    // Resolved diagnosis: overrides -> certificate findings -> encounter visit diagnoses -> SOAP assessment -> chief complaint
+    const diagnosis =
+      overrides?.diagnosis ||
+      (certFindings && certFindings.length > 0 ? certFindings : undefined) ||
+      visitDxString ||
+      visit.clinical_note?.assessment ||
+      visit.chief_complaint ||
+      'Clinical consultation and evaluation';
+
+    // Format vital signs if recorded during encounter
+    let vitalSignsSummary: string | undefined;
+    if (Array.isArray(visit.vitals) && visit.vitals.length > 0) {
+      const v = visit.vitals[0];
+      const parts: string[] = [];
+      if (v.bp_sys && v.bp_dia) parts.push(`BP: ${v.bp_sys}/${v.bp_dia} mmHg`);
+      if (v.heart_rate) parts.push(`HR: ${v.heart_rate} bpm`);
+      if (v.temperature_c) parts.push(`Temp: ${v.temperature_c} °C`);
+      if (v.respiratory_rate) parts.push(`RR: ${v.respiratory_rate} cpm`);
+      if (v.spo2) parts.push(`SpO2: ${v.spo2}%`);
+      if (v.weight_kg) parts.push(`Weight: ${v.weight_kg} kg`);
+      if (parts.length > 0) vitalSignsSummary = parts.join(' | ');
+    }
+
+    // Format encounter date
+    const encounterDate = visit.opened_at
+      ? new Date(visit.opened_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })
+      : new Date(cert.issued_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    // Build authentic narrative body
+    const patientName = overrides?.patientName || cert.patient_name || visit.patient_name || 'Patient';
+    const ageStr = patientAge != null ? `${patientAge} years old` : '';
+    const sexStr = (cert.gender || visit.gender) === 'M' ? 'Male' : (cert.gender || visit.gender) === 'F' ? 'Female' : (cert.gender || visit.gender || '');
+    const patientDemographicsDesc = [patientName, ageStr, sexStr].filter(Boolean).join(', ');
+    const patientAddress = cert.patient_address || visit.address || undefined;
+
+    const openingNarrative = `This is to certify that ${patientDemographicsDesc}${patientAddress ? `, residing at ${patientAddress}` : ''}, was examined and treated at this health facility on ${encounterDate}.`;
+
+    let recommendationText = '';
+    const validFromStr = cert.valid_from ? new Date(cert.valid_from).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' }) : '';
+    const validToStr = cert.valid_to ? new Date(cert.valid_to).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' }) : '';
+
+    if (cert.cert_type === 'FIT_TO_WORK') {
+      recommendationText = `The patient has been clinically evaluated and is found to be PHYSICALLY AND MENTALLY FIT TO RESUME WORK / REGULAR DUTIES${validFromStr ? ` effective ${validFromStr}` : ''}.`;
+    } else if (cert.cert_type === 'SICK_LEAVE') {
+      const durationStr = unfitForDays ? `${unfitForDays} day(s)` : 'the recommended period';
+      const rangeStr = validFromStr && validToStr ? ` from ${validFromStr} to ${validToStr}` : '';
+      recommendationText = `The patient is advised to undergo MEDICAL REST / SICK LEAVE for ${durationStr}${rangeStr} due to the diagnosed condition.`;
+    } else if (cert.cert_type === 'CLEARANCE') {
+      recommendationText = `The patient is hereby given MEDICAL CLEARANCE with no active communicable illness or acute physical contraindications identified at the time of examination.`;
+    } else {
+      recommendationText = certFindings || 'Clinical consultation and evaluation completed.';
+    }
+
+    const bodyParagraphs = [
+      openingNarrative,
+      recommendationText,
+      certFindings && certFindings !== diagnosis ? `Clinical Findings / Remarks: ${certFindings}` : undefined,
+    ].filter(Boolean);
+
+    const body = overrides?.body || bodyParagraphs.join('\n\n');
+
+    // Doctor licensure & credentials
+    const doctorName = overrides?.doctorName || cert.issuer_name || visit.practitioner_name || 'Attending Physician, MD';
+    const doctorSpecialty = overrides?.specialty || cert.issuer_specialization || visit.practitioner_specialization || undefined;
+    const doctorTitle = overrides?.doctorTitle || cert.issuer_job_title || visit.practitioner_job_title || 'Attending Physician';
+    const prcNumber = overrides?.prcNumber || cert.issuer_prc_no || visit.practitioner_prc_no || cert.philhealth_accreditation_no || undefined;
+    const ptrNumber = overrides?.ptrNumber || cert.issuer_ptr_no || visit.practitioner_ptr_no || undefined;
+    const s2Number = overrides?.s2Number || cert.issuer_s2_no || visit.practitioner_s2_no || undefined;
 
     const doc: MedicalCertificate = {
       clinicName: overrides?.clinicName || visit.clinic_name || 'Clinic Medical Center',
+      branchName: overrides?.branchName || visit.branch_name || undefined,
       clinicAddress: overrides?.clinicAddress || visit.branch_address || undefined,
+      clinicPhone: overrides?.clinicPhone || visit.branch_phone || undefined,
       certificateNo: cert.doc_no,
-      issuedAt: new Date(cert.issued_at).toISOString().slice(0, 10),
-      patientName: cert.patient_name || visit.patient_name || 'Patient',
+      issuedAt: new Date(cert.issued_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' }),
+      encounterDate,
+      patientName,
       patientAge: patientAge != null ? String(patientAge) : undefined,
       patientSex: cert.gender || visit.gender || undefined,
-      diagnosis: findings,
+      patientAddress,
+      diagnosis,
+      diagnosisDescription: primaryDx?.description || undefined,
+      icd10Codes: dxList.length > 0 ? dxList : undefined,
+      vitalSigns: vitalSignsSummary,
+      clinicalFindings: certFindings,
+      certType: cert.cert_type,
+      validFrom: validFromStr || undefined,
+      validTo: validToStr || undefined,
+      recommendations: recommendationText,
       body,
       unfitForDays,
-      clinicianName: overrides?.doctorName || cert.issuer_name || visit.practitioner_name || 'Attending Physician, MD',
-      clinicianLicenseNo: overrides?.prcNumber || visit.practitioner_prc_no || cert.philhealth_accreditation_no || undefined,
+      clinicianName: doctorName,
+      clinicianTitle: doctorTitle,
+      clinicianSpecialty: doctorSpecialty,
+      clinicianLicenseNo: prcNumber,
+      ptrNo: ptrNumber,
+      s2LicenseNo: s2Number,
+      philhealthAccreditationNo: cert.philhealth_accreditation_no || undefined,
       signedElectronically: true,
+      verificationHash: printed.verificationHash,
     };
 
     return renderPdf(renderCertificateHtml(doc), { format: 'A4' });

@@ -4,6 +4,7 @@ import { AlertBanner, StatusPill, PatientBanner, Timeline } from "@clinic/ui";
 import { apiGet, apiPost, apiGetBlob, ApiError } from "../../shared/api/client.js";
 import { useStepUp, isStepUpRequired } from "../../shared/auth/StepUpContext.js";
 import { PrescriptionPrintModal } from "./PrescriptionPrintModal.js";
+import { MedicalCertificatePrintModal } from "./MedicalCertificatePrintModal.js";
 
 /**
  * Visit chart — frontend.md §14.4, todo.md §3.2 (CLN-T4/T5), LAB-T1, SUP-T10.
@@ -159,6 +160,7 @@ export function VisitChartPage() {
   const [certValidTo, setCertValidTo] = useState("");
   const [certSubmitting, setCertSubmitting] = useState(false);
   const [certPrintingId, setCertPrintingId] = useState<string | null>(null);
+  const [certModal, setCertModal] = useState<CertificateRow | null>(null);
 
   const [printModal, setPrintModal] = useState<{ open: boolean; tab: "RX" | "LAB" | "ALL" } | null>(null);
   const [availableDrugs, setAvailableDrugs] = useState<any[]>([]);
@@ -691,9 +693,17 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
     setError(null);
     setCertSubmitting(true);
     try {
-      await apiPost(`/clinical/visits/${visitId}/certificates`, {
+      const defaultCertFindings =
+        diagnoses.length > 0
+          ? diagnoses
+              .map((d) => (d.description && d.description !== d.icd10Code ? `${d.description} (${d.icd10Code})` : d.description || d.icd10Code))
+              .join("; ")
+          : assessment || visit?.chiefComplaint || "";
+      const resolvedFindings = certFindings.trim() || defaultCertFindings || undefined;
+
+      const newCert = await apiPost<CertificateRow>(`/clinical/visits/${visitId}/certificates`, {
         certType,
-        ...(certFindings.trim() ? { findings: certFindings.trim() } : {}),
+        ...(resolvedFindings ? { findings: resolvedFindings } : {}),
         ...(certValidFrom ? { validFrom: certValidFrom } : {}),
         ...(certValidTo ? { validTo: certValidTo } : {}),
       });
@@ -702,6 +712,9 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
       setCertValidFrom("");
       setCertValidTo("");
       await loadCertificates();
+      if (newCert?.id) {
+        setCertModal(newCert);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.problem.detail ?? err.problem.title : "Could not issue the medical certificate.");
     } finally {
@@ -715,20 +728,56 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
     try {
       const blob = await apiGetBlob(`/clinical/certificates/${cert.id}/pdf`);
       const blobUrl = window.URL.createObjectURL(blob);
+      const frame = document.createElement("iframe");
+      frame.style.position = "fixed";
+      frame.style.right = "0";
+      frame.style.bottom = "0";
+      frame.style.width = "0";
+      frame.style.height = "0";
+      frame.style.border = "0";
+      frame.src = blobUrl;
+      frame.title = "Medical Certificate Print Frame";
+      const cleanup = () => {
+        window.URL.revokeObjectURL(blobUrl);
+        frame.remove();
+      };
+      frame.addEventListener("load", () => {
+        try {
+          frame.contentWindow?.focus();
+          frame.contentWindow?.print();
+        } catch {
+          window.open(blobUrl, "_blank");
+        }
+        setTimeout(cleanup, 60000);
+      });
+      document.body.appendChild(frame);
+    } catch (err) {
+      console.warn("Certificate PDF print failed:", err);
+      try {
+        const blob = await apiGetBlob(`/clinical/certificates/${cert.id}/pdf`);
+        const blobUrl = window.URL.createObjectURL(blob);
+        window.open(blobUrl, "_blank");
+      } catch (err2) {
+        setError(err2 instanceof ApiError ? err2.problem.detail || err2.problem.title : "Failed to load medical certificate PDF.");
+      }
+    } finally {
+      setCertPrintingId(null);
+    }
+  };
+
+  const downloadCertificatePdf = async (cert: CertificateRow) => {
+    try {
+      const blob = await apiGetBlob(`/clinical/certificates/${cert.id}/pdf`);
+      const blobUrl = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = blobUrl;
-      a.target = "_blank";
-      a.rel = "noopener";
       a.download = `MedicalCertificate-${cert.doc_no}.pdf`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(blobUrl);
     } catch (err) {
-      console.warn("Certificate PDF download failed, falling back to window.print():", err);
-      window.print();
-    } finally {
-      setCertPrintingId(null);
+      setError(err instanceof ApiError ? err.problem.detail || err.problem.title : "Failed to download medical certificate PDF.");
     }
   };
 
@@ -1526,15 +1575,36 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
                         {cert.valid_to ? <span className="text-muted">to {String(cert.valid_to).slice(0, 10)}</span> : null}
                         {cert.findings ? <span className="text-muted italic">({cert.findings})</span> : null}
                       </div>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-primary py-0 px-2"
-                        style={{ fontSize: "0.78rem" }}
-                        disabled={certPrintingId === cert.id}
-                        onClick={() => void printCertificatePdf(cert)}
-                      >
-                        {certPrintingId === cert.id ? "Preparing…" : "🖨️ Print PDF"}
-                      </button>
+                      <div className="d-flex align-items-center gap-1 flex-wrap">
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-info py-0 px-2"
+                          style={{ fontSize: "0.78rem" }}
+                          onClick={() => setCertModal(cert)}
+                          title="Preview and customize certificate"
+                        >
+                          👁️ Preview
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-primary py-0 px-2"
+                          style={{ fontSize: "0.78rem" }}
+                          disabled={certPrintingId === cert.id}
+                          onClick={() => void printCertificatePdf(cert)}
+                          title="Print official medical certificate PDF"
+                        >
+                          {certPrintingId === cert.id ? "Preparing…" : "🖨️ Print PDF"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary py-0 px-2"
+                          style={{ fontSize: "0.78rem" }}
+                          onClick={() => void downloadCertificatePdf(cert)}
+                          title="Download PDF"
+                        >
+                          📥
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1599,6 +1669,28 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
             plan ||
             undefined
           }
+        />
+      ) : null}
+
+      {/* Printable Official Medical Certificate Modal */}
+      {certModal && visit ? (
+        <MedicalCertificatePrintModal
+          isOpen={true}
+          onClose={() => setCertModal(null)}
+          cert={certModal}
+          visit={{
+            id: visit.id,
+            visitNo: visit.visitNo,
+            patientId: visit.patientId,
+            patientName: visit.patientName,
+            dateOfBirth: visit.dateOfBirth,
+            gender: visit.sex,
+            clinicName: visit.clinicName,
+            branchName: visit.branchName,
+            chiefComplaint: visit.chiefComplaint,
+          }}
+          diagnoses={diagnoses}
+          practitionerName={visit.practitionerName}
         />
       ) : null}
     </div>

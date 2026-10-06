@@ -77,21 +77,44 @@ function field(key: string, value: unknown): string {
 export interface MedicalCertificate {
   clinicName: string;
   clinicAddress?: string;
+  clinicPhone?: string;
+  clinicEmail?: string;
+  branchName?: string;
+  dohAccreditationNo?: string;
   certificateNo: string;
   issuedAt: string;
+  encounterDate?: string;
   patientName: string;
   patientAge?: string;
   patientSex?: string;
-  /** The clinical reason, as recorded by the clinician. */
+  patientAddress?: string;
+  patientCivilStatus?: string;
+  patientDob?: string;
+  /** The clinical reason / ICD-10 diagnosis, as recorded by the clinician. */
   diagnosis?: string;
+  diagnosisDescription?: string;
+  icd10Codes?: string[];
+  vitalSigns?: string;
+  clinicalFindings?: string;
+  /** Certificate classification: FIT_TO_WORK | SICK_LEAVE | CLEARANCE | CONSULTATION */
+  certType?: string;
+  validFrom?: string;
+  validTo?: string;
+  recommendations?: string;
   /** Free-text body of the certificate. */
   body: string;
   /** Days the patient is unfit for work, when it is a fit-to-work note. */
   unfitForDays?: number;
   clinicianName: string;
+  clinicianTitle?: string;
+  clinicianSpecialty?: string;
   clinicianLicenseNo?: string;
+  ptrNo?: string;
+  s2LicenseNo?: string;
+  philhealthAccreditationNo?: string;
   /** True when a clinician signature image has been embedded by the caller. */
   signedElectronically?: boolean;
+  verificationHash?: string;
 }
 
 /**
@@ -102,40 +125,112 @@ export interface MedicalCertificate {
  * certificate is a new document with its own number.
  */
 export function renderCertificateHtml(doc: MedicalCertificate): string {
-  const body = [
-    "<header>",
-    `<div class="clinic">${escapeHtml(doc.clinicName)}</div>`,
-    doc.clinicAddress ? `<div class="muted">${escapeHtml(doc.clinicAddress)}</div>` : "",
-    `<div class="doc-no">Certificate No. ${escapeHtml(doc.certificateNo)}</div>`,
-    "</header>",
-    '<div class="grid">',
+  const headerHtml = [
+    '<header style="border-bottom: 2pt solid #0f2942; padding-bottom: 4mm; margin-bottom: 5mm;">',
+    '  <table style="width: 100%; border: none; margin: 0;">',
+    '    <tr>',
+    '      <td style="border: none; padding: 0; vertical-align: top;">',
+    `        <div class="clinic" style="font-size: 16pt; font-weight: 800; color: #0f2942; letter-spacing: -0.2pt; text-transform: uppercase;">${escapeHtml(doc.clinicName)}</div>`,
+    doc.branchName ? `        <div style="font-size: 9.5pt; font-weight: 600; color: #0284c7; text-transform: uppercase; letter-spacing: 0.4pt; margin-top: 1mm;">${escapeHtml(doc.branchName)}</div>` : '',
+    doc.clinicAddress ? `        <div class="muted" style="font-size: 8.5pt; color: #64748b; margin-top: 1mm;">${escapeHtml(doc.clinicAddress)}${doc.clinicPhone ? ` &middot; Tel: ${escapeHtml(doc.clinicPhone)}` : ''}${doc.clinicEmail ? ` &middot; ${escapeHtml(doc.clinicEmail)}` : ''}</div>` : '',
+    '      </td>',
+    '      <td style="border: none; padding: 0; vertical-align: top; text-align: right; width: 170px;">',
+    '        <div style="display: inline-block; background: #0f2942; color: #fff; font-size: 9pt; font-weight: 700; padding: 1.5mm 3.5mm; border-radius: 4px; letter-spacing: 0.5pt;">',
+    '          OFFICIAL DOCUMENT',
+    '        </div>',
+    `        <div class="doc-no" style="font-family: Consolas, monospace; font-size: 9.5pt; font-weight: 700; color: #0f172a; margin-top: 2mm;">Certificate No. ${escapeHtml(doc.certificateNo)}</div>`,
+    `        <div style="font-size: 8.5pt; color: #64748b;">Date: ${escapeHtml(doc.issuedAt)}</div>`,
+    '      </td>',
+    '    </tr>',
+    '  </table>',
+    '</header>',
+  ].filter(Boolean).join('\n');
+
+  const titleSection = `
+    <div style="text-align: center; margin: 4mm 0 6mm;">
+      <h1 style="font-size: 15pt; font-weight: 900; letter-spacing: 1.5pt; color: #0f172a; text-transform: uppercase; margin: 0; padding-bottom: 1.5mm; display: inline-block; border-bottom: 1.5pt solid #0f172a;">
+        MEDICAL CERTIFICATE
+      </h1>
+      ${doc.certType && doc.certType !== 'OTHER' ? `
+        <div style="font-size: 9pt; font-weight: 700; color: #0284c7; text-transform: uppercase; letter-spacing: 0.8pt; margin-top: 1.5mm;">
+          ${escapeHtml(doc.certType.replace(/_/g, ' '))}
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  const demographicsGrid = [
+    '<div class="grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 2mm 6mm; margin-bottom: 5mm; background: #f8fafc; border: 0.5pt solid #e2e8f0; border-radius: 4px; padding: 3mm 4mm;">',
     field("Patient", doc.patientName),
     field("Date issued", doc.issuedAt),
     doc.patientAge ? field("Age", doc.patientAge) : "",
     doc.patientSex ? field("Sex", doc.patientSex) : "",
+    doc.patientAddress ? field("Address", doc.patientAddress) : "",
+    doc.encounterDate ? field("Examination Date", doc.encounterDate) : "",
     "</div>",
-    doc.diagnosis
-      ? `<h2>Diagnosis</h2><div>${escapeHtml(doc.diagnosis)}</div>`
-      : "",
-    "<h2>Certificate</h2>",
-    `<div style="white-space: pre-wrap">${escapeHtml(doc.body)}</div>`,
+  ].filter(Boolean).join('\n');
+
+  const salutation = `
+    <div style="font-size: 10pt; font-weight: 700; color: #0f172a; margin-bottom: 3.5mm; text-transform: uppercase; letter-spacing: 0.4pt;">
+      TO WHOM IT MAY CONCERN:
+    </div>
+  `;
+
+  const diagnosisSection = doc.diagnosis ? [
+    '<div style="margin-bottom: 4mm;">',
+    '  <h2>Diagnosis</h2>',
+    `  <div style="font-size: 10pt; font-weight: 600; color: #0f172a; background: #fff; border-left: 3pt solid #0284c7; padding: 2mm 3.5mm; border-top: 0.5pt solid #e2e8f0; border-right: 0.5pt solid #e2e8f0; border-bottom: 0.5pt solid #e2e8f0; border-radius: 0 4px 4px 0;">${escapeHtml(doc.diagnosis)}</div>`,
+    doc.vitalSigns ? `  <div style="font-size: 8.5pt; color: #64748b; margin-top: 1.5mm;"><strong>Vital signs at examination:</strong> ${escapeHtml(doc.vitalSigns)}</div>` : '',
+    doc.clinicalFindings && doc.clinicalFindings !== doc.diagnosis ? `  <div style="font-size: 9pt; color: #334155; margin-top: 1.5mm;"><strong>Clinical findings:</strong> ${escapeHtml(doc.clinicalFindings)}</div>` : '',
+    '</div>',
+  ].filter(Boolean).join('\n') : '';
+
+  const certificateBodySection = [
+    '<div style="margin-bottom: 5mm;">',
+    '  <h2>Certificate</h2>',
+    `  <div style="white-space: pre-wrap; font-size: 10pt; line-height: 1.6; color: #1e293b; text-align: justify;">${escapeHtml(doc.body)}</div>`,
     typeof doc.unfitForDays === "number"
-      ? `<p><strong>This patient is unfit for work for ${doc.unfitForDays} day(s) from the date of issue.</strong></p>`
+      ? `  <p style="margin-top: 3.5mm; padding: 2.5mm 3.5mm; background: #fef2f2; border-left: 3pt solid #ef4444; border-radius: 0 4px 4px 0; color: #991b1b; font-size: 9.5pt;"><strong>This patient is unfit for work for ${doc.unfitForDays} day(s) from the date of issue.</strong></p>`
       : "",
-    '<div class="sig">',
-    `<div class="sig-line">${escapeHtml(doc.clinicianName)}${
-      doc.clinicianLicenseNo ? ` &middot; Lic. No. ${escapeHtml(doc.clinicianLicenseNo)}` : ""
-    }</div>`,
+    doc.validFrom && doc.validTo && !doc.body.includes(doc.validFrom) ? `  <div style="font-size: 9pt; color: #475569; margin-top: 2mm;"><strong>Validity:</strong> ${escapeHtml(doc.validFrom)} to ${escapeHtml(doc.validTo)}</div>` : '',
+    '</div>',
+  ].filter(Boolean).join('\n');
+
+  const physicianBlock = [
+    '<div class="sig" style="margin-top: 8mm; display: flex; justify-content: flex-end;">',
+    '  <div style="width: 75mm; text-align: center;">',
+    `    <div class="sig-line" style="border-top: 1pt solid #0f172a; padding-top: 1.5mm; font-size: 10pt; font-weight: 700; color: #0f172a;">${escapeHtml(doc.clinicianName)}${doc.clinicianLicenseNo ? ` &middot; Lic. No. ${escapeHtml(doc.clinicianLicenseNo)}` : ""}</div>`,
+    doc.clinicianTitle || doc.clinicianSpecialty ? `    <div style="font-size: 8.5pt; color: #475569; margin-top: 0.5mm;">${escapeHtml([doc.clinicianTitle, doc.clinicianSpecialty].filter(Boolean).join(' &middot; '))}</div>` : '',
+    doc.ptrNo ? `    <div style="font-size: 8pt; color: #64748b;">PTR No. ${escapeHtml(doc.ptrNo)}</div>` : '',
+    doc.s2LicenseNo ? `    <div style="font-size: 8pt; color: #64748b;">S2 License No. ${escapeHtml(doc.s2LicenseNo)}</div>` : '',
+    doc.philhealthAccreditationNo ? `    <div style="font-size: 8pt; color: #64748b;">PhilHealth Accr. No. ${escapeHtml(doc.philhealthAccreditationNo)}</div>` : '',
     doc.signedElectronically
-      ? '<div class="muted">Electronically signed. Signature authenticity is evidenced by the document SHA-256 recorded on issue.</div>'
+      ? '    <div class="muted" style="margin-top: 2mm; font-size: 7.5pt; color: #64748b; font-style: italic;">Electronically signed. Signature authenticity is evidenced by the document SHA-256 recorded on issue.</div>'
       : "",
-    "</div>",
-    `<footer>${escapeHtml(doc.clinicName)} &middot; Certificate ${escapeHtml(
-      doc.certificateNo,
-    )} &middot; This document is void if altered.</footer>`,
-  ]
-    .filter(Boolean)
-    .join("");
+    '  </div>',
+    '</div>',
+  ].filter(Boolean).join('\n');
+
+  const legalDisclaimer = `
+    <div style="margin-top: 8mm; text-align: center; font-size: 7.5pt; color: #64748b; font-style: italic; border-top: 0.5pt dashed #cbd5e1; padding-top: 2.5mm;">
+      NOTE: This medical certificate is issued upon patient request for whatever legal purpose it may serve, except for medico-legal cases.
+      Valid only with attending physician's signature and clinic dry seal.
+    </div>
+  `;
+
+  const footer = `<footer>${escapeHtml(doc.clinicName)} &middot; Certificate ${escapeHtml(doc.certificateNo)} &middot; This document is void if altered.</footer>`;
+
+  const body = [
+    headerHtml,
+    titleSection,
+    salutation,
+    demographicsGrid,
+    diagnosisSection,
+    certificateBodySection,
+    physicianBlock,
+    legalDisclaimer,
+    footer,
+  ].filter(Boolean).join('\n');
 
   return shell(`Certificate ${doc.certificateNo}`, body);
 }
