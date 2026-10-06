@@ -9,6 +9,7 @@ export interface StarterCredentialItem {
 
 export interface StarterCredentialsPayload {
   defaultPassword: string;
+  loginUrl?: string;
   logins: StarterCredentialItem[];
   formattedText: string;
 }
@@ -93,13 +94,18 @@ export function getFallbackCredentials(slug: string, name: string): StarterCrede
     },
   ];
 
+  const loginUrl =
+    typeof window !== "undefined" && window.location?.origin
+      ? `${window.location.origin}/login`
+      : "http://localhost:8085/login";
+
   const formattedText = [
     "============================================================",
     "CLINIC PLATFORM — NEW TENANT CREDENTIALS",
     "============================================================",
     `Tenant Name:      ${cleanName}`,
     `Tenant Slug:      ${cleanSlug}`,
-    `Login URL:        http://localhost:5173/login`,
+    `Login URL:        ${loginUrl}`,
     `Default Password: ${defaultPassword}`,
     `(All accounts share common email stub: '@${cleanSlug}.emr')`,
     "",
@@ -113,7 +119,7 @@ export function getFallbackCredentials(slug: string, name: string): StarterCrede
     "============================================================",
   ].join("\n");
 
-  return { defaultPassword, logins, formattedText };
+  return { defaultPassword, loginUrl, logins, formattedText };
 }
 
 interface TenantCredentialsCardProps {
@@ -135,6 +141,11 @@ export function TenantCredentialsCard({
   const [showRawText, setShowRawText] = useState(false);
 
   const creds = credentials ?? getFallbackCredentials(tenantSlug, tenantName);
+  const displayLoginUrl =
+    creds.loginUrl ||
+    (typeof window !== "undefined" && window.location?.origin
+      ? `${window.location.origin}/login`
+      : "http://localhost:8085/login");
 
   const copyToClipboard = async (text: string, key: string) => {
     try {
@@ -213,11 +224,11 @@ export function TenantCredentialsCard({
             <div className="p-3 bg-light rounded border h-100">
               <div className="text-muted small fw-semibold text-uppercase mb-1">Login URL</div>
               <div className="d-flex align-items-center justify-content-between">
-                <code className="fs-6 text-dark text-truncate">http://localhost:5173/login</code>
+                <code className="fs-6 text-dark text-truncate">{displayLoginUrl}</code>
                 <button
                   type="button"
                   className="btn btn-outline-secondary btn-sm py-0 px-2 ms-1"
-                  onClick={() => copyToClipboard("http://localhost:5173/login", "url")}
+                  onClick={() => copyToClipboard(displayLoginUrl, "url")}
                   title="Copy login URL"
                 >
                   {copiedKey === "url" ? "✓" : "Copy"}

@@ -157,7 +157,7 @@ describe("Platform console (todo §1.7)", () => {
             credentials: {
               tenantSlug: "metro-general",
               defaultPassword: "DemoPassw0rd!2026",
-              loginUrl: "http://localhost:5173/login",
+              loginUrl: "http://localhost:8085/login",
               accounts: [
                 { email: "admintenant@metro-general.emr", role: "admin", description: "Tenant Administrator" },
                 { email: "doctor@metro-general.emr", role: "doctor", description: "Primary Physician" },

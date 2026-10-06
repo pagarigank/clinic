@@ -84,7 +84,7 @@ function apiBase(): string {
   if (typeof process !== "undefined" && process.env.API_ORIGIN) {
     return `${process.env.API_ORIGIN}/api/v1`;
   }
-  const origin = typeof location !== "undefined" ? location.origin : "http://localhost:3000";
+  const origin = typeof location !== "undefined" ? location.origin : "http://localhost:3085";
   return `${origin}/api/v1`;
 }
 

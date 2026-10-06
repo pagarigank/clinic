@@ -120,7 +120,7 @@ export function buildStarterCredentials(slug: string, name: string): StarterCred
     '============================================================',
     `Tenant Name:      ${name}`,
     `Tenant Slug:      ${slug}`,
-    `Login URL:        http://localhost:5173/login`,
+    `Login URL:        http://localhost:8085/login`,
     `Default Password: ${defaultPassword}`,
     `(Common email stub: '@${slug}.emr')`,
     '',

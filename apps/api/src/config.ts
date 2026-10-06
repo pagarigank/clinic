@@ -2,9 +2,9 @@ import { z } from "zod";
 
 const ConfigSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  PORT: z.coerce.number().int().default(3000),
+  PORT: z.coerce.number().int().default(3085),
   DATABASE_URL_APP: z.string().optional(),
-  CORS_ORIGIN: z.string().default("http://localhost:5173"),
+  CORS_ORIGIN: z.string().default("http://localhost:8085"),
 
   // ---- Auth (Phase 1.2, architecture §10) ----
   // HS256 signing key. Required (min 32 chars) in production; the dev default
