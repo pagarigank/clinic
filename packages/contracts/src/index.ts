@@ -68,6 +68,10 @@ export const ERROR_CODES = {
   DISCOUNT_ID_REQUIRED: 422,
   INSUFFICIENT_PAYMENT: 422,
   PAYMENT_EXCEEDS_BALANCE: 422,
+  // The payment and its official receipt are written in one transaction, so a
+  // receipt that cannot be rendered must fail the whole payment rather than
+  // leave a POSTED payment with no stored artifact.
+  RECEIPT_RENDER_FAILED: 500,
   INVOICE_NOT_DRAFT: 409,
   QUOTA_EXCEEDED: 429,
   IDEMPOTENCY_CONFLICT: 409,
@@ -157,6 +161,70 @@ export const UserBranchAssignSchema = z.object({
 });
 export type UserBranchAssign = z.infer<typeof UserBranchAssignSchema>;
 
+export const EmployeeStatusSchema = z.enum(["ACTIVE", "ON_LEAVE", "PROBATION", "RESIGNED", "TERMINATED"]);
+export type EmployeeStatus = z.infer<typeof EmployeeStatusSchema>;
+
+export const EmploymentTypeSchema = z.enum(["FULL_TIME", "PART_TIME", "CONTRACT", "CONSULTANT", "INTERN"]);
+export type EmploymentType = z.infer<typeof EmploymentTypeSchema>;
+
+export const EmployeeSchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+  employeeNo: z.string().min(1).max(64),
+  jobTitle: z.string().min(1).max(120),
+  department: z.string().min(1).max(120),
+  employmentType: EmploymentTypeSchema.default("FULL_TIME"),
+  specialization: z.string().max(160).nullable().optional(),
+  prcLicenseNo: z.string().max(64).nullable().optional(),
+  ptrNo: z.string().max(64).nullable().optional(),
+  s2LicenseNo: z.string().max(64).nullable().optional(),
+  phone: z.string().max(32).nullable().optional(),
+  hireDate: z.string().nullable().optional(),
+  emergencyContactName: z.string().max(120).nullable().optional(),
+  emergencyContactPhone: z.string().max(32).nullable().optional(),
+  emergencyContactRelationship: z.string().max(64).nullable().optional(),
+  tin: z.string().max(32).nullable().optional(),
+  sssNo: z.string().max(32).nullable().optional(),
+  philhealthNo: z.string().max(32).nullable().optional(),
+  notes: z.string().max(1000).nullable().optional(),
+  status: EmployeeStatusSchema.default("ACTIVE"),
+  rowVersion: z.number().int(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+export type Employee = z.infer<typeof EmployeeSchema>;
+
+export const EmployeeUpsertSchema = z.object({
+  employeeNo: z.string().min(1).max(64),
+  jobTitle: z.string().min(1).max(120),
+  department: z.string().min(1).max(120),
+  employmentType: EmploymentTypeSchema.default("FULL_TIME"),
+  specialization: z.string().max(160).nullable().optional(),
+  prcLicenseNo: z.string().max(64).nullable().optional(),
+  ptrNo: z.string().max(64).nullable().optional(),
+  s2LicenseNo: z.string().max(64).nullable().optional(),
+  phone: z.string().max(32).nullable().optional(),
+  hireDate: z.string().nullable().optional(),
+  emergencyContactName: z.string().max(120).nullable().optional(),
+  emergencyContactPhone: z.string().max(32).nullable().optional(),
+  emergencyContactRelationship: z.string().max(64).nullable().optional(),
+  tin: z.string().max(32).nullable().optional(),
+  sssNo: z.string().max(32).nullable().optional(),
+  philhealthNo: z.string().max(32).nullable().optional(),
+  notes: z.string().max(1000).nullable().optional(),
+  status: EmployeeStatusSchema.default("ACTIVE"),
+  rowVersion: z.number().int().optional(),
+});
+export type EmployeeUpsert = z.infer<typeof EmployeeUpsertSchema>;
+
+export const EmployeeWithUserSchema = EmployeeSchema.extend({
+  userName: z.string(),
+  userEmail: z.string(),
+  userStatus: z.string(),
+  userRoles: z.array(z.string()).default([]),
+});
+export type EmployeeWithUser = z.infer<typeof EmployeeWithUserSchema>;
+
 /**
  * Admin user directory + lifecycle (specification §18.2, lines 1029–1035).
  * Users live behind the `admin` module with `admin.user.*` permissions and are
@@ -171,6 +239,7 @@ export const UserListSchema = z.object({
   mfaEnabled: z.boolean(),
   roles: z.array(z.object({ id: z.string().uuid(), code: z.string(), name: z.string() })),
   branches: z.array(z.object({ id: z.string().uuid(), name: z.string(), isDefault: z.boolean() })),
+  employee: EmployeeSchema.nullable().optional(),
   lastLoginAt: z.string().nullable(),
   rowVersion: z.number().int(),
 });
@@ -180,6 +249,7 @@ export const UserCreateSchema = z.object({
   email: z.string().email().max(320),
   name: z.string().min(1).max(160),
   roleIds: z.array(z.string().uuid()).max(50).default([]),
+  employee: EmployeeUpsertSchema.optional(),
 });
 export type UserCreate = z.infer<typeof UserCreateSchema>;
 
@@ -409,6 +479,14 @@ export const CreatePatientSchema = z.object({
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD'),
   gender: PatientGenderSchema,
   registrationType: z.enum(['STANDARD', 'EMERGENCY']).optional(),
+  // Intake collects these on the same form, so accepting them here is what
+  // stops the web layer from silently dropping them. The service writes them
+  // inside the same transaction as the patient row.
+  phone: z.string().max(200).optional(),
+  email: z.string().max(200).optional(),
+  philhealthNo: z.string().max(30).optional(),
+  nationalId: z.string().max(100).optional(),
+  allergies: z.array(z.string().min(1).max(200)).max(50).optional(),
 });
 export type CreatePatientRequest = z.infer<typeof CreatePatientSchema>;
 

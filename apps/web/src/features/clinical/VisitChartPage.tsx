@@ -492,10 +492,22 @@ export function VisitChartPage() {
     setError(null);
     setSupplySubmitting(true);
     try {
-      const item = availableSupplyItems.find((i) => i.id === selectedItemId);
-      const location = availableLocations.find((l) => l.id === selectedLocationId) || availableLocations[0];
-      const locId = location?.id || selectedLocationId || "a1000000-0000-4000-8000-000000000001";
-      const uomId = item?.base_uom_id || "uom-1";
+const item = availableSupplyItems.find((i) => i.id === selectedItemId);
+        const location = availableLocations.find((l) => l.id === selectedLocationId) || availableLocations[0];
+        // No synthetic fallbacks: a made-up location or UOM id is not a "safe
+        // default", it is a foreign-key violation that used to surface as an
+        // opaque 500 while the chart still showed the row.
+        const locId = location?.id;
+        const uomId = item?.base_uom_id;
+        if (!locId || !uomId) {
+          setError(
+            !locId
+              ? "Choose a stock location before logging consumption."
+              : `${item?.name ?? "That item"} has no base unit of measure on file.`,
+          );
+          setSupplySubmitting(false);
+          return;
+        }
 
       await apiPost("/supply/consumption", {
         locationId: locId,

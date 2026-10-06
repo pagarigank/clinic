@@ -20,11 +20,13 @@ import {
   fetchDiscountTypes,
   fetchPatientStatement,
 } from "./api.js";
+import { printBlob, apiGet } from "../../shared/api/client.js";
 
 export function BillingWorkbenchPage() {
   const [showStatementModal, setShowStatementModal] = useState(false);
   const [statementData, setStatementData] = useState<any | null>(null);
   const [statementLoading, setStatementLoading] = useState(false);
+  const [isPrintingStatement, setIsPrintingStatement] = useState(false);
 
   const [invoices, setInvoices] = useState<any[]>([
     {
@@ -110,6 +112,11 @@ export function BillingWorkbenchPage() {
   // New Invoice Modal
   const [showNewInvoiceModal, setShowNewInvoiceModal] = useState(false);
   const [newInvoicePatientId, setNewInvoicePatientId] = useState("");
+  const [newInvoiceVisitId, setNewInvoiceVisitId] = useState("");
+  const [patientQuery, setPatientQuery] = useState("");
+  const [patientMatches, setPatientMatches] = useState<any[]>([]);
+  const [selectedPatientLabel, setSelectedPatientLabel] = useState("");
+  const [patientVisits, setPatientVisits] = useState<any[]>([]);
   const [newInvoicePayerType, setNewInvoicePayerType] = useState("PRIVATE_CASH");
   const [newInvoiceLines, setNewInvoiceLines] = useState<
     Array<{ description: string; qty: number; unitPrice: number; isProfessionalFee: boolean }>
@@ -193,10 +200,49 @@ export function BillingWorkbenchPage() {
     return { totalInvoiced, totalBalance, totalPaid, openCount };
   }, [invoices]);
 
+  const searchInvoicePatients = async (q: string) => {
+    const term = q.trim();
+    if (term.length < 2) {
+      setPatientMatches([]);
+      return;
+    }
+    try {
+      // `q`, not `search`: the endpoint ignores an unknown param and then returns
+      // the unfiltered first page, which silently picked the wrong patient. It
+      // matches patient_identifiers, so patient numbers and MRNs resolve.
+      const res = await apiGet<{ data?: any[]; patients?: any[] }>(
+        `/patients?q=${encodeURIComponent(term)}&limit=8`,
+      );
+      setPatientMatches(res?.data ?? res?.patients ?? []);
+    } catch {
+      setPatientMatches([]);
+    }
+  };
+
+  // Visits are fetched only for the chosen patient so the invoice can be tied to
+  // the episode of care, not just to a name.
+  const loadPatientVisits = async (patientId: string) => {
+    if (!patientId) {
+      setPatientVisits([]);
+      return;
+    }
+    try {
+      const res = await apiGet<{ data?: any[] }>(`/clinical/visits?patientId=${patientId}`);
+      setPatientVisits(res?.data ?? []);
+    } catch {
+      setPatientVisits([]);
+    }
+  };
+
   const handleCreateInvoice = async () => {
     try {
       await createInvoice({
         branchId: "a1000000-0000-4000-8000-000000000001",
+        // Both were omitted, so every invoice was a patientless cash document
+        // and payments inherited patient_id = NULL. Walk-in stays legal: empty
+        // strings are omitted rather than sent as a bad uuid.
+        ...(newInvoicePatientId ? { patientId: newInvoicePatientId } : {}),
+        ...(newInvoiceVisitId ? { visitId: newInvoiceVisitId } : {}),
         payerType: newInvoicePayerType as any,
         lines: newInvoiceLines,
       });
@@ -846,7 +892,94 @@ export function BillingWorkbenchPage() {
                 <option value="CORPORATE">Corporate Retainer Account</option>
               </Form.Select>
             </div>
+            <div className="col-sm-6">
+              <Form.Label className="small fw-semibold">Patient</Form.Label>
+              {selectedPatientLabel ? (
+                <>
+                  <Form.Control size="sm" value={selectedPatientLabel} readOnly />
+                  <div className="d-flex gap-2 mt-1">
+                    <Button
+                      size="sm"
+                      variant="outline-secondary"
+                      onClick={() => {
+                        setNewInvoicePatientId("");
+                        setSelectedPatientLabel("");
+                        setNewInvoiceVisitId("");
+                        setPatientVisits([]);
+                      }}
+                    >
+                      Change
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <Form.Control
+                  size="sm"
+                  placeholder="Search by name or patient no. (leave blank for walk-in)"
+                  aria-label="Search patient"
+                  value={patientQuery}
+                  onChange={(e) => {
+                    setPatientQuery(e.target.value);
+                    void searchInvoicePatients(e.target.value);
+                  }}
+                />
+              )}
+              {!selectedPatientLabel && patientMatches.length > 0 && (
+                <div
+                  className="list-group list-group-flush mt-1 border rounded"
+                  style={{ maxHeight: 160, overflowY: "auto" }}
+                >
+                  {patientMatches.map((p) => {
+                      const key = p.id;
+                      const no = p.patient_no ?? p.patientNo ?? p.mrn ?? "";
+                      const name = [p.first_name ?? p.firstName, p.last_name ?? p.lastName]
+                        .filter(Boolean)
+                        .join(" ");
+                      return (
+                      <button
+                      type="button"
+                      key={key}
+                      className="list-group-item list-group-item-action py-1 small"
+                      onClick={() => {
+                        setNewInvoicePatientId(p.id);
+                        setSelectedPatientLabel(`${no} — ${name}`.trim());
+                        setPatientMatches([]);
+                        setPatientQuery("");
+                        void loadPatientVisits(p.id);
+                      }}
+                    >
+                      {no} — {name}
+                    </button>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
           </div>
+
+          {newInvoicePatientId && (
+            <div className="row g-3 mb-3">
+              <div className="col-sm-6">
+                <Form.Label className="small fw-semibold">Visit</Form.Label>
+                <Form.Select
+                  aria-label="Select visit"
+                  value={newInvoiceVisitId}
+                  onChange={(e) => setNewInvoiceVisitId(e.target.value)}
+                >
+                  <option value="">No specific visit</option>
+                  {patientVisits.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.visit_no} —{" "}
+                      {v.opened_at ? new Date(v.opened_at).toLocaleString() : ""}
+                    </option>
+                  ))}
+                </Form.Select>
+                <Form.Text className="small text-muted">
+                  Links this invoice to the visit being charged.
+                </Form.Text>
+              </div>
+            </div>
+          )}
 
           <h6 className="fw-semibold mb-2">Itemized Charges</h6>
           {newInvoiceLines.map((line, idx) => (
@@ -1097,8 +1230,26 @@ export function BillingWorkbenchPage() {
           <Button variant="secondary" size="sm" onClick={() => setShowStatementModal(false)}>
             Close
           </Button>
-          <Button variant="outline-primary" size="sm" onClick={() => window.print()}>
-            🖨️ Print Statement
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={isPrintingStatement}
+            onClick={async () => {
+              if (statementData?.patient?.id) {
+                setIsPrintingStatement(true);
+                try {
+                  await printBlob(`/billing/patients/${statementData.patient.id}/statement-pdf`);
+                  setIsPrintingStatement(false);
+                  return;
+                } catch (err) {
+                  console.warn("Statement PDF download failed, falling back to window.print():", err);
+                  setIsPrintingStatement(false);
+                }
+              }
+              window.print();
+            }}
+          >
+            {isPrintingStatement ? "Preparing Statement PDF…" : "🖨️ Print Statement (PDF)"}
           </Button>
         </Modal.Footer>
       </Modal>

@@ -2,6 +2,7 @@ import { Inject, Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Re
 import type { FastifyReply } from 'fastify';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
+import { sendPdf } from '../http/pdf-response.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
 import { Module } from '../rbac/module.guard.js';
@@ -178,9 +179,14 @@ export class ClinicalController {
   // ── Visits ────────────────────────────────────────────────────────────────
   @RequirePermission('clinical.visit.read')
   @Get('visits')
-  async listVisits(@Req() req: RequestWithAuth, @Query('branchId') branchId?: string, @Query('status') status?: string) {
-    return this.svc.listVisits(req.tenantId!, req.authContext!.userId!, branchId, status);
-  }
+async listVisits(
+      @Req() req: RequestWithAuth,
+      @Query('branchId') branchId?: string,
+      @Query('status') status?: string,
+      @Query('patientId') patientId?: string,
+    ) {
+      return this.svc.listVisits(req.tenantId!, req.authContext!.userId!, branchId, status, patientId);
+    }
 
   @RequirePermission('clinical.visit.read')
   @PhiAccess({ resource: 'visit', patientIdParam: 'id' })
@@ -332,11 +338,7 @@ export class ClinicalController {
     @Res() reply: FastifyReply,
   ) {
     const doc = await this.svc.renderPrescriptionPdf(req.tenantId!, req.authContext!.userId!, id, query);
-    void reply
-      .status(200)
-      .header('content-type', 'application/pdf')
-      .header('content-disposition', `inline; filename="Prescription-${id.slice(0, 8)}.pdf"`)
-      .send(doc.bytes);
+    void sendPdf(reply, doc, `Prescription-${id.slice(0, 8)}.pdf`);
   }
 
   @RequirePermission('clinical.rx.read')
@@ -349,11 +351,7 @@ export class ClinicalController {
     @Res() reply: FastifyReply,
   ) {
     const doc = await this.svc.renderVisitPrescriptionPdf(req.tenantId!, req.authContext!.userId!, visitId, query);
-    void reply
-      .status(200)
-      .header('content-type', 'application/pdf')
-      .header('content-disposition', `inline; filename="Prescription-Visit-${visitId.slice(0, 8)}.pdf"`)
-      .send(doc.bytes);
+    void sendPdf(reply, doc, `Prescription-Visit-${visitId.slice(0, 8)}.pdf`);
   }
 
   @RequirePermission('clinical.visit.read')
@@ -366,11 +364,7 @@ export class ClinicalController {
     @Res() reply: FastifyReply,
   ) {
     const doc = await this.svc.renderVisitLabRequisitionPdf(req.tenantId!, req.authContext!.userId!, visitId, query);
-    void reply
-      .status(200)
-      .header('content-type', 'application/pdf')
-      .header('content-disposition', `inline; filename="LabRequisition-${visitId.slice(0, 8)}.pdf"`)
-      .send(doc.bytes);
+    void sendPdf(reply, doc, `LabRequisition-${visitId.slice(0, 8)}.pdf`);
   }
 
   @RequirePermission('clinical.visit.read')
@@ -383,15 +377,26 @@ export class ClinicalController {
     @Res() reply: FastifyReply,
   ) {
     const doc = await this.svc.renderVisitOrdersPdf(req.tenantId!, req.authContext!.userId!, visitId, query);
-    void reply
-      .status(200)
-      .header('content-type', 'application/pdf')
-      .header('content-disposition', `inline; filename="ClinicalOrders-${visitId.slice(0, 8)}.pdf"`)
-      .send(doc.bytes);
+    void sendPdf(reply, doc, `ClinicalOrders-${visitId.slice(0, 8)}.pdf`);
+  }
+
+  @RequirePermission('clinical.visit.read')
+  @Get('visits/:id/print-profile')
+  @ApiOperation({ summary: 'Recorded doctor + clinic identity for the official print center (users.name × employees licensure)' })
+  async getVisitPrintProfile(@Req() req: RequestWithAuth, @Param('id') visitId: string) {
+    return this.svc.getVisitPrintProfile(req.tenantId!, req.authContext!.userId!, visitId);
   }
 
 
   // ── Certificates / referrals ──────────────────────────────────────────────
+  @RequirePermission('clinical.certificate.read')
+  @PhiAccess({ resource: 'visit', patientIdParam: 'id' })
+  @Get('visits/:id/certificates')
+  @ApiOperation({ summary: 'List the numbered certificates issued for a visit' })
+  async listCertificates(@Req() req: RequestWithAuth, @Param('id') visitId: string) {
+    return this.svc.listCertificates(req.tenantId!, req.authContext!.userId!, visitId);
+  }
+
   @RequirePermission('clinical.certificate.create')
   @Post('visits/:id/certificates')
   async issueCertificate(@Req() req: RequestWithAuth, @Param('id') visitId: string, @Body(new ZodValidationPipe(IssueCertificateSchema)) dto: IssueCertificateRequest) {
@@ -408,6 +413,19 @@ export class ClinicalController {
   @Get('certificates/:id/print')
   async getCertificatePrint(@Req() req: RequestWithAuth, @Param('id') id: string) {
     return this.svc.getCertificatePrint(req.tenantId!, req.authContext!.userId!, id);
+  }
+
+  @RequirePermission('clinical.certificate.read')
+  @Get('certificates/:id/pdf')
+  @ApiOperation({ summary: 'Render numbered, electronically signed medical certificate PDF' })
+  async getCertificatePdf(
+    @Req() req: RequestWithAuth,
+    @Param('id') id: string,
+    @Query() query: Record<string, string>,
+    @Res() reply: FastifyReply,
+  ) {
+    const doc = await this.svc.renderCertificatePdf(req.tenantId!, req.authContext!.userId!, id, query);
+    void sendPdf(reply, doc, `MedicalCertificate-${id.slice(0, 8)}.pdf`);
   }
 
   @RequirePermission('clinical.referral.create')

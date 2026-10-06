@@ -1,8 +1,22 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { withTenant, type PoolClient } from '@clinic/db';
-import { buildReceiptDocument, renderPdf, renderReceiptHtml, type ReceiptFacts } from '@clinic/print';
 import { ProblemException } from '../http/problem.exception.js';
+import {
+  buildReceiptDocument,
+  renderPdf,
+  renderReceiptHtml,
+  renderPatientStatementHtml,
+  renderShiftReportHtml,
+  renderReceivablesAgingHtml,
+  renderDailyCloseSummaryHtml,
+  type ReceiptFacts,
+  type RenderedDocument,
+  type PatientStatementDocument,
+  type ShiftReportDocument,
+  type ReceivablesAgingDocument,
+  type DailyCloseSummaryDocument,
+} from '@clinic/print';
 import { resolveServicePrice } from '../common/pricing.js';
 import type {
   CreateInvoiceRequest,
@@ -814,12 +828,24 @@ export class BillingService {
         });
       }
 
-      const tenderedAmount = Number(dto.tenderedAmount ?? amount);
-      if (tenderedAmount < amount - 0.001) {
-        throw new ProblemException('INSUFFICIENT_PAYMENT', {
-          detail: `Tendered amount (${tenderedAmount.toFixed(2)}) is less than payment amount (${amount.toFixed(2)}).`,
-        });
-      }
+      // The tendered figure must come from the split lines, not from a top-level
+// field the caller also controls: the POS posts amount=500 with a cash split of
+// tendered=1000, and trusting `dto.tenderedAmount` (which the client filled with
+// the payment amount) recorded change=0 for a real 500 hand-back. Money is
+// derived here so the client cannot assert its own change.
+// Mixed tenders sum to a total hand-over rather than a single cash figure; a
+// split payment that needs per-method change must post separate payments.
+const splitTendered = Array.isArray(dto.splits)
+  ? dto.splits.reduce((sum, s) => sum + Number(s.tenderedAmount ?? s.amount ?? 0), 0)
+  : null;
+const tenderedAmount = Number(
+  splitTendered !== null ? splitTendered : (dto.tenderedAmount ?? amount),
+);
+if (tenderedAmount < amount - 0.001) {
+  throw new ProblemException('INSUFFICIENT_PAYMENT', {
+    detail: `Tendered amount (${tenderedAmount.toFixed(2)}) is less than payment amount (${amount.toFixed(2)}).`,
+  });
+}
       const changeAmount = Math.max(0, Number((tenderedAmount - amount).toFixed(2)));
 
       // Generate Official Receipt number
@@ -898,9 +924,70 @@ export class BillingService {
         [newPaid, newBalance, newStatus, tenantId, inv.id],
       );
 
+      // Persist the official receipt as an artifact at issue time. It used to be
+      // rendered only when someone asked to print it, so receipt_file_id and the
+      // hashes stayed NULL: the printed page was never the stored, hashable
+      // record, and a reprint could not prove it reproduced the issued document.
+      // Rendering once here and storing the exact bytes we hash means the
+      // served artifact and the recorded digest are the same thing.
+      // Written inside this transaction so a payment can never be POSTED
+      // without its receipt.
+      let receipt: { fileId: string; sha256: string } | null = null;
+      try {
+        // Deliberately NOT this.renderPaymentReceiptPdf(): that helper opens its
+        // own withTenant connection, so its read of the invoice would block on
+        // the row lock held by the UPDATE above in this very transaction — a
+        // self-deadlock, which is what the first attempt actually hit. Loading
+        // the facts on this transaction avoids the second connection.
+        const facts = (await this.loadReprintFacts(tx, tenantId, payment.id)).facts;
+        const rendered = await renderPdf(renderReceiptHtml(buildReceiptDocument(facts)), {
+          format: 'A4',
+        });
+        // origin/status/sha256/size_bytes are all pinned by
+        // files_generated_artifact_integrity: a GENERATED row must carry inline
+        // content, a digest, status READY, and a size that matches the stored
+        // bytes exactly. size is measured from the buffer rather than trusting
+        // the renderer's reported length.
+        const fileRes = await tx.query(
+          `INSERT INTO files (
+             tenant_id, object_key, file_name, mime_type, size_bytes,
+             status, origin, sha256, uploaded_by, content
+           ) VALUES ($1, $2, $3, $4, $5, 'READY', 'GENERATED', $6, $7, $8)
+           RETURNING id`,
+          [
+            tenantId,
+            `receipts/${payment.payment_no}.pdf`,
+            `${payment.payment_no}.pdf`,
+            rendered.mediaType,
+            rendered.bytes.length,
+            rendered.sha256,
+            userId,
+            rendered.bytes,
+          ],
+        );
+        const fileId = fileRes.rows[0].id as string;
+        await tx.query(
+          `UPDATE payments
+           SET receipt_file_id = $1, receipt_sha256 = $2, receipt_generated_at = now()
+           WHERE tenant_id = $3 AND id = $4`,
+          [fileId, rendered.sha256, tenantId, payment.id],
+        );
+        receipt = { fileId, sha256: rendered.sha256 };
+      } catch (err) {
+        // Surface it rather than silently issuing a receipt-less payment: the
+        // caller can retry, and the payment row stays POSTED only if the whole
+        // transaction commits, which it will not while this throws.
+        throw new ProblemException('RECEIPT_RENDER_FAILED', {
+          detail: `Payment ${payment.payment_no} was recorded but its official receipt could not be generated: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        });
+      }
+
       return {
         payment,
         changeAmount,
+        receipt,
         invoice: {
           id: inv.id,
           invoiceNo: inv.invoice_no,
@@ -1037,6 +1124,21 @@ export class BillingService {
 
   async getPaymentReceipt(tenantId: string, id: string) {
     return withTenant({ tenantId }, async (tx) => this.getPaymentReceiptWithTx(tx, tenantId, id));
+  }
+
+  /**
+   * Official receipt PDF (BIL-T3/T5, todo.md §7.2): reuses the reprint facts
+   * loader so the JSON view and the PDF view are shaped by the same Q-17
+   * patient-facing filter. Rendered on demand through the shared print
+   * pipeline — deterministic bytes plus the SHA-256 served as an integrity
+   * response header. Rendering intentionally happens outside any transaction.
+   */
+  async renderPaymentReceiptPdf(tenantId: string, userId: string, paymentId: string): Promise<RenderedDocument> {
+    const pre = await withTenant({ tenantId, userId }, async (tx) =>
+      this.loadReprintFacts(tx, tenantId, paymentId),
+    );
+    const doc = buildReceiptDocument(pre.facts);
+    return renderPdf(renderReceiptHtml(doc), { format: 'A4' });
   }
 
   /**
@@ -1270,6 +1372,45 @@ export class BillingService {
 
   // ── 4. Cashier Shifts ──────────────────────────────────────────────────────
 
+  /**
+   * The shift the caller is currently working, if any.
+   *
+   * The POS asks for this before it will submit a tender (`/billing/shifts/active`).
+   * It is scoped to the caller's own session -- branch from the verified token,
+   * cashier from the verified user id -- and never accepts a branchId from the
+   * client, so one cashier cannot adopt another branch's drawer. Paying requires
+   * this row to be OPEN, which createPayment re-checks server-side under the
+   * transaction lock; this endpoint is the UI's preflight, not the guard.
+   *
+   * Returns the shift row itself, or null when there is nothing open -- the same
+   * shape `openShift` returns, so the POS can store either without unwrapping.
+   * "No open shift" is a normal state rendered as the Open Shift prompt, not an
+   * error.
+   */
+  async getActiveShift(tenantId: string, userId: string, branchId?: string) {
+    const params: any[] = [tenantId, userId];
+    let branchClause = '';
+    if (branchId) {
+      params.push(branchId);
+      branchClause = 'AND s.branch_id = $3';
+    }
+
+    return withTenant({ tenantId }, async (tx) => {
+      const { rows } = await tx.query(
+        `SELECT s.id, s.shift_no, s.branch_id, s.cashier_id, s.status,
+                s.opening_cash, s.opened_at
+           FROM cashier_shifts s
+          WHERE s.tenant_id = $1
+            AND s.cashier_id = $2
+            AND s.status = 'OPEN'
+            ${branchClause}
+          ORDER BY s.opened_at DESC
+          LIMIT 1`,
+        params,
+      );
+      return rows[0] ?? null;
+    });
+  }
   async openShift(tenantId: string, userId: string, dto: OpenShiftRequest) {
     return withTenant({ tenantId, userId }, async (tx) => {
       // Period lock applies to shift operations: opening a shift in a locked
@@ -2287,5 +2428,128 @@ export class BillingService {
       };
     });
   }
+
+  // ── High-Fidelity Report PDF Generation (packages/print pipeline) ─────────
+
+  async renderPatientStatementPdf(tenantId: string, patientId: string): Promise<RenderedDocument> {
+    const statement = await this.getPatientStatement(tenantId, patientId);
+    const clinic = await withTenant({ tenantId }, async (tx) => {
+      const res = await tx.query(`SELECT name FROM tenants WHERE id = $1`, [tenantId]);
+      return res.rows[0]?.name || 'Clinic Medical Center';
+    });
+
+    const doc: PatientStatementDocument = {
+      clinicName: clinic,
+      generatedAt: statement.asOfDate,
+      patient: {
+        id: statement.patient.id,
+        name: statement.patient.name,
+        dateOfBirth: statement.patient.dateOfBirth,
+        gender: statement.patient.sex,
+        patientNumber: statement.patient.patientNumber,
+      },
+      summary: {
+        totalBilled: statement.totalBilled,
+        totalPaid: statement.totalPaid,
+        totalBalance: statement.totalBalance,
+        aging: statement.aging,
+      },
+      invoices: (statement.invoices || []).map((inv: any) => ({
+        invoiceNo: inv.invoice_no,
+        issuedAt: inv.issued_at,
+        dueAt: inv.due_at,
+        status: inv.status,
+        total: inv.total,
+        paidAmount: inv.paid_amount,
+        balance: inv.balance,
+        lines: inv.lines,
+        payments: inv.payments,
+      })),
+    };
+
+    return renderPdf(renderPatientStatementHtml(doc), { format: 'A4' });
+  }
+
+  async renderShiftReportPdf(
+    tenantId: string,
+    shiftId: string,
+    reportType: 'X' | 'Z',
+  ): Promise<RenderedDocument> {
+    const reportData = reportType === 'X'
+      ? await this.getShiftXReport(tenantId, shiftId)
+      : await this.getShiftZReport(tenantId, shiftId);
+
+    const clinic = await withTenant({ tenantId }, async (tx) => {
+      const res = await tx.query(`SELECT name FROM tenants WHERE id = $1`, [tenantId]);
+      return res.rows[0]?.name || 'Clinic Medical Center';
+    });
+
+    const doc: ShiftReportDocument = {
+      clinicName: clinic,
+      branchName: reportData.branch,
+      reportType: reportType === 'X' ? 'X_REPORT' : 'Z_REPORT',
+      title: reportData.title,
+      timestamp: reportData.timestamp,
+      shiftNo: reportData.shiftNo,
+      shiftId: reportData.shiftId,
+      cashier: reportData.cashier,
+      openedAt: reportData.openedAt,
+      closedAt: (reportData as any).closedAt ?? null,
+      status: reportData.status,
+      openingCash: reportData.openingCash,
+      countedCash: (reportData as any).countedCash ?? null,
+      expectedCash: (reportData as any).expectedCash ?? (reportData as any).estimatedDrawerCash ?? null,
+      variance: (reportData as any).variance ?? null,
+      notes: (reportData as any).notes ?? null,
+      metrics: reportData.metrics,
+    };
+
+    return renderPdf(renderShiftReportHtml(doc), { format: 'A4' });
+  }
+
+  async renderReceivablesReportPdf(
+    tenantId: string,
+    opts: { asOfDate?: string; branchId?: string; payerType?: string } = {},
+  ): Promise<RenderedDocument> {
+    const report = await this.getReceivablesReport(tenantId, opts);
+    const clinic = await withTenant({ tenantId }, async (tx) => {
+      const res = await tx.query(`SELECT name FROM tenants WHERE id = $1`, [tenantId]);
+      return res.rows[0]?.name || 'Clinic Medical Center';
+    });
+
+    const doc: ReceivablesAgingDocument = {
+      clinicName: clinic,
+      asOfDate: report.asOfDate,
+      totalReceivables: report.totalReceivables,
+      totalInvoices: report.totalInvoices,
+      aging: report.aging,
+      byPayer: report.byPayer,
+      items: report.items,
+    };
+
+    return renderPdf(renderReceivablesAgingHtml(doc), { format: 'A4' });
+  }
+
+  async renderDailyClosePdf(
+    tenantId: string,
+    dateStr?: string,
+    branchId?: string,
+  ): Promise<RenderedDocument> {
+    const dailyClose = await this.getDailyClose(tenantId, dateStr, branchId);
+    const clinic = await withTenant({ tenantId }, async (tx) => {
+      const res = await tx.query(`SELECT name FROM tenants WHERE id = $1`, [tenantId]);
+      return res.rows[0]?.name || 'Clinic Medical Center';
+    });
+
+    const doc: DailyCloseSummaryDocument = {
+      clinicName: clinic,
+      closeDate: dailyClose.date,
+      generatedAt: new Date().toISOString(),
+      summaries: dailyClose.summaries,
+    };
+
+    return renderPdf(renderDailyCloseSummaryHtml(doc), { format: 'A4' });
+  }
 }
+
 

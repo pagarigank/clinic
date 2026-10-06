@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { withTenant, type QueryResultRow } from '@clinic/db';
+import { withTenant } from '@clinic/db';
 import { ProblemException } from '../http/problem.exception.js';
 import { resolveServicePrice } from '../common/pricing.js';
 import {
@@ -7,11 +7,13 @@ import {
   renderPrescriptionHtml,
   renderLabRequisitionHtml,
   renderEncounterOrdersHtml,
+  renderCertificateHtml,
   type PrescriptionDocument,
   type PrescriptionItemDocument,
   type LabRequisitionDocument,
   type LabRequisitionItem,
   type EncounterOrdersDocument,
+  type MedicalCertificate,
   type RenderedDocument,
 } from '@clinic/print';
 import type {
@@ -55,6 +57,47 @@ import type {
 
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0];
 void (0 as unknown as Tx);
+
+/**
+ * Doctor identity for official printouts (specification §7 print contract,
+ * §18.4 RX-PDF rows): the prescriber's registration credentials live on the
+ * tenant `employees` record tied to the prescribing user (migration 0052).
+ * Every official document — prescription pad, lab requisition, encounter
+ * orders, medical certificate — prints the *recorded* licence numbers; the
+ * print-modal overrides are for clinic-specific corrections only and blank
+ * values must never fall back to placeholder licence numbers.
+ */
+export interface PractitionerPrintProfile {
+  userId: string;
+  name: string | null;
+  jobTitle: string | null;
+  specialization: string | null;
+  prcLicenseNo: string | null;
+  ptrNo: string | null;
+  s2LicenseNo: string | null;
+}
+
+const PRACTITIONER_PROFILE_SELECT = `
+  u.id AS user_id, u.name,
+  e.job_title, e.specialization,
+  e.prc_license_no, e.ptr_no, e.s2_license_no`;
+
+const PRACTITIONER_PROFILE_FROM = `
+  FROM users u
+  LEFT JOIN employees e ON e.tenant_id = u.tenant_id AND e.user_id = u.id
+  WHERE u.tenant_id = $1 AND u.id = $2`;
+
+function toPractitionerPrintProfile(row: Record<string, unknown> | undefined, fallbackId: string): PractitionerPrintProfile {
+  return {
+    userId: (row?.user_id as string) ?? fallbackId,
+    name: (row?.name as string) ?? null,
+    jobTitle: (row?.job_title as string) ?? null,
+    specialization: (row?.specialization as string) ?? null,
+    prcLicenseNo: (row?.prc_license_no as string) ?? null,
+    ptrNo: (row?.ptr_no as string) ?? null,
+    s2LicenseNo: (row?.s2_license_no as string) ?? null,
+  };
+}
 
 @Injectable()
 export class ClinicalService {
@@ -433,11 +476,17 @@ export class ClinicalService {
       const v = await tx.query(
         `SELECT v.*, p.first_name || ' ' || p.last_name AS patient_name, p.date_of_birth, p.gender,
                 u.name AS practitioner_name,
+                e.job_title AS practitioner_job_title,
+                e.specialization AS practitioner_specialization,
+                e.prc_license_no AS practitioner_prc_no,
+                e.ptr_no AS practitioner_ptr_no,
+                e.s2_license_no AS practitioner_s2_no,
                 t.name AS clinic_name,
                 b.name AS branch_name
          FROM visits v
          JOIN patients p ON p.id = v.patient_id
          LEFT JOIN users u ON u.id = v.practitioner_id
+         LEFT JOIN employees e ON e.tenant_id = v.tenant_id AND e.user_id = v.practitioner_id
          LEFT JOIN tenants t ON t.id = v.tenant_id
          LEFT JOIN branches b ON b.id = v.branch_id AND b.tenant_id = v.tenant_id
          WHERE v.tenant_id = $1 AND v.id = $2`,
@@ -509,12 +558,22 @@ export class ClinicalService {
     });
   }
 
-  async listVisits(tenantId: string, userId: string, branchId?: string, status?: string) {
+  async listVisits(
+    tenantId: string,
+    userId: string,
+    branchId?: string,
+    status?: string,
+    patientId?: string,
+  ) {
     return withTenant({ tenantId, userId }, async (tx) => {
       const params: unknown[] = [tenantId];
       let where = '';
       if (branchId) { params.push(branchId); where += ` AND v.branch_id = $${params.length}`; }
       if (status) { params.push(status); where += ` AND v.status = $${params.length}`; }
+      // Billing needs a patient's visits to attach an invoice to the episode of
+      // care it is charging for; without this the picker could only link cash to
+      // a patient, never to the visit that consumed stock and ordered labs.
+      if (patientId) { params.push(patientId); where += ` AND v.patient_id = $${params.length}`; }
       const res = await tx.query(
         `SELECT v.*, p.first_name || ' ' || p.last_name AS patient_name
          FROM visits v JOIN patients p ON p.id = v.patient_id
@@ -864,6 +923,25 @@ export class ClinicalService {
     });
   }
 
+  async listCertificates(tenantId: string, userId: string, visitId: string) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const res = await tx.query(
+        `SELECT mc.id, mc.cert_type, mc.findings, mc.valid_from, mc.valid_to, mc.doc_no,
+                mc.issued_at, mc.voided_at, mc.void_reason,
+                p.first_name || ' ' || p.last_name AS patient_name,
+                u.name AS issuer_name
+         FROM medical_certificates mc
+         JOIN visits v ON v.tenant_id = mc.tenant_id AND v.id = mc.visit_id
+         JOIN patients p ON p.id = v.patient_id
+         JOIN users u ON u.id = mc.issued_by
+         WHERE mc.tenant_id = $1 AND mc.visit_id = $2
+         ORDER BY mc.issued_at DESC, mc.doc_no DESC`,
+        [tenantId, visitId],
+      );
+      return { data: res.rows, total: res.rowCount ?? 0 };
+    });
+  }
+
   async createReferral(tenantId: string, userId: string, visitId: string, dto: CreateReferralRequest) {
     return withTenant({ tenantId, userId }, async (tx) => {
       const res = await tx.query(
@@ -1106,6 +1184,118 @@ export class ClinicalService {
 
   // ── High-Fidelity PDF Generation (packages/print pipeline) ───────────────
 
+  /**
+   * Resolved doctor identity for print headers — users.name joined to the
+   * employee record's licensure. Exposed to the web print center so the modal
+   * pre-fills from the recorded profile (specification §7, §18.4) instead of
+   * fabricated placeholder licence numbers.
+   */
+  async getPractitionerPrintProfile(tenantId: string, userId: string, practitionerId: string): Promise<PractitionerPrintProfile> {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const res = await tx.query(
+        `SELECT ${PRACTITIONER_PROFILE_SELECT} ${PRACTITIONER_PROFILE_FROM}`,
+        [tenantId, practitionerId],
+      );
+      if ((res.rowCount ?? 0) === 0) {
+        throw new ProblemException('NOT_FOUND', { detail: 'Practitioner not found.' });
+      }
+      return toPractitionerPrintProfile(res.rows[0], practitionerId);
+    });
+  }
+
+  async renderCertificatePdf(
+    tenantId: string,
+    userId: string,
+    certId: string,
+    overrides?: Record<string, string>,
+  ): Promise<RenderedDocument> {
+    const printed = await this.getCertificatePrint(tenantId, userId, certId);
+    const cert = printed.certificate as any;
+    const visit = await this.getVisit(tenantId, userId, cert.visit_id);
+
+    const birthDate = cert.date_of_birth ? new Date(cert.date_of_birth) : null;
+    let patientAge: number | undefined;
+    if (birthDate && !isNaN(birthDate.getTime())) {
+      patientAge = Math.floor((Date.now() - birthDate.getTime()) / (365.25 * 24 * 3600 * 1000));
+    }
+
+    const typeLabels: Record<string, string> = {
+      FIT_TO_WORK: 'FIT TO WORK CERTIFICATE',
+      SICK_LEAVE: 'MEDICAL CERTIFICATE FOR SICK LEAVE',
+      CLEARANCE: 'MEDICAL CLEARANCE',
+    };
+    const title = typeLabels[cert.cert_type] || 'MEDICAL CERTIFICATE';
+
+    let unfitForDays: number | undefined;
+    if (cert.cert_type === 'SICK_LEAVE' && cert.valid_from && cert.valid_to) {
+      const from = new Date(cert.valid_from).getTime();
+      const to = new Date(cert.valid_to).getTime();
+      if (Number.isFinite(from) && Number.isFinite(to) && to >= from) {
+        unfitForDays = Math.round((to - from) / (24 * 3600 * 1000)) + 1;
+      }
+    }
+
+    const findings = cert.findings ? String(cert.findings).trim() : undefined;
+    const validity =
+      cert.valid_from || cert.valid_to
+        ? `Validity: ${cert.valid_from ?? '—'} to ${cert.valid_to ?? '—'}.`
+        : undefined;
+    const body =
+      [title + '.', findings, validity].filter(Boolean).join('\n\n') ||
+      `${title} issued after clinical consultation.`;
+
+    const doc: MedicalCertificate = {
+      clinicName: overrides?.clinicName || visit.clinic_name || 'Clinic Medical Center',
+      clinicAddress: overrides?.clinicAddress || visit.branch_address || undefined,
+      certificateNo: cert.doc_no,
+      issuedAt: new Date(cert.issued_at).toISOString().slice(0, 10),
+      patientName: cert.patient_name || visit.patient_name || 'Patient',
+      patientAge: patientAge != null ? String(patientAge) : undefined,
+      patientSex: cert.gender || visit.gender || undefined,
+      diagnosis: findings,
+      body,
+      unfitForDays,
+      clinicianName: overrides?.doctorName || cert.issuer_name || visit.practitioner_name || 'Attending Physician, MD',
+      clinicianLicenseNo: overrides?.prcNumber || visit.practitioner_prc_no || cert.philhealth_accreditation_no || undefined,
+      signedElectronically: true,
+    };
+
+    return renderPdf(renderCertificateHtml(doc), { format: 'A4' });
+  }
+
+  /**
+   * Doctor + clinic identity for the encounter print center: the visit's
+   * practitioner resolved through `employees` for recorded licensure, plus
+   * branch/tenant names for the letterhead (specification §7, §18.4). The web
+   * print modal hydrates from this and only sends back values the user actually
+   * edited, so blank server fields print as "N/A" instead of fabricated
+   * placeholder licence numbers.
+   */
+  async getVisitPrintProfile(tenantId: string, userId: string, visitId: string) {
+    const visit = await this.getVisit(tenantId, userId, visitId);
+    const practitionerId = visit.practitioner_id as string | undefined;
+    const practitioner = practitionerId
+      ? await this.getPractitionerPrintProfile(tenantId, userId, practitionerId)
+      : null;
+    return {
+      visit: {
+        id: visitId,
+        visitNo: visit.visit_no,
+        branchId: visit.branch_id,
+        branchName: visit.branch_name ?? null,
+      },
+      clinic: {
+        name: visit.clinic_name ?? null,
+        branchName: visit.branch_name ?? null,
+        // branches carries no address/phone columns today; overrides stay the
+        // single source for those lines until a letterhead table exists.
+        address: null,
+        phone: null,
+      },
+      practitioner,
+    };
+  }
+
   async renderVisitPrescriptionPdf(
     tenantId: string,
     userId: string,
@@ -1165,12 +1355,13 @@ export class ClinicalService {
       patientAddress: visit.address,
       patientMrn: visit.patient_id ? String(visit.patient_id).slice(0, 8) : undefined,
       allergies: visit.allergies || [],
-      prescriberName: overrides?.doctorName || visit.prescriber_name || 'Dr. Attending Physician, MD',
-      prescriberTitle: overrides?.doctorTitle || 'Attending Physician',
-      specialty: overrides?.specialty || 'Internal Medicine / Family Medicine',
-      prcLicenseNo: overrides?.prcNumber || 'PRC-0123456',
-      ptrNo: overrides?.ptrNumber || 'PTR-8765432',
-      s2LicenseNo: overrides?.s2Number || (s2SerialNo ? 'S2-DDB-2026-99' : undefined),
+      prescriberName:
+        overrides?.doctorName || visit.practitioner_name || 'Dr. Attending Physician, MD',
+      prescriberTitle: overrides?.doctorTitle || visit.practitioner_job_title || 'Attending Physician',
+      specialty: overrides?.specialty || visit.practitioner_specialization || undefined,
+      prcLicenseNo: overrides?.prcNumber || visit.practitioner_prc_no || undefined,
+      ptrNo: overrides?.ptrNumber || visit.practitioner_ptr_no || undefined,
+      s2LicenseNo: overrides?.s2Number || visit.practitioner_s2_no || (s2SerialNo ? 'S2-DDB-2026-99' : undefined),
       s2SerialNo,
       s2QuantityInWords: s2SerialNo ? `${allItems.length} controlled medication items prescribed` : undefined,
       specialInstruction: overrides?.advice || visit.clinical_note?.plan || 'Take medications strictly as directed. Keep all medicines out of reach of children. Follow up as scheduled.',
@@ -1240,8 +1431,8 @@ export class ClinicalService {
       patientDob: visit.date_of_birth ? new Date(visit.date_of_birth).toISOString().slice(0, 10) : undefined,
       patientMrn: visit.patient_id ? String(visit.patient_id).slice(0, 8) : undefined,
       clinicalImpression: overrides?.clinicalImpression || visit.diagnoses?.[0]?.description || visit.chief_complaint || 'Diagnostic workup and clinical evaluation',
-      orderingPhysician: overrides?.doctorName || visit.prescriber_name || 'Dr. Attending Physician, MD',
-      physicianPrcNo: overrides?.prcNumber || 'PRC-0123456',
+      orderingPhysician: overrides?.doctorName || visit.practitioner_name || 'Dr. Attending Physician, MD',
+      physicianPrcNo: overrides?.prcNumber || visit.practitioner_prc_no || undefined,
       tests: allTests.length > 0 ? allTests : [
         {
           testCode: 'DIAG',
@@ -1314,10 +1505,10 @@ export class ClinicalService {
       allergies: visit.allergies || [],
       clinicalImpression: overrides?.clinicalImpression || visit.diagnoses?.[0]?.description || visit.chief_complaint || 'Diagnostic workup and clinical management',
       planNotes: visit.clinical_note?.plan || undefined,
-      prescriberName: overrides?.doctorName || visit.prescriber_name || 'Dr. Attending Physician, MD',
-      prcLicenseNo: overrides?.prcNumber || 'PRC-0123456',
-      ptrNo: overrides?.ptrNumber || 'PTR-8765432',
-      s2LicenseNo: overrides?.s2Number || undefined,
+      prescriberName: overrides?.doctorName || visit.practitioner_name || 'Dr. Attending Physician, MD',
+      prcLicenseNo: overrides?.prcNumber || visit.practitioner_prc_no || undefined,
+      ptrNo: overrides?.ptrNumber || visit.practitioner_ptr_no || undefined,
+      s2LicenseNo: overrides?.s2Number || visit.practitioner_s2_no || undefined,
       prescriptions: allRx,
       labRequests: allLab,
       advice: overrides?.advice || visit.clinical_note?.plan || 'Take medications as directed and return for follow-up evaluation as scheduled.',
@@ -1336,6 +1527,18 @@ export class ClinicalService {
     const rxPrint = await this.getPrescriptionPrint(tenantId, userId, rxId);
     const rx = rxPrint.prescription;
     const items = rxPrint.items;
+    // Recorded licensure for the actual prescriber (employees record); blank
+    // when the profile is unfilled — the template prints "N/A" rather than a
+    // fabricated licence number.
+    const profile = rx.prescriber_id
+      ? await withTenant({ tenantId, userId }, async (tx) => {
+          const res = await tx.query(
+            `SELECT ${PRACTITIONER_PROFILE_SELECT} ${PRACTITIONER_PROFILE_FROM}`,
+            [tenantId, rx.prescriber_id],
+          );
+          return toPractitionerPrintProfile(res.rows[0], String(rx.prescriber_id));
+        })
+      : null;
 
     const allItems: PrescriptionItemDocument[] = items.map((item: any) => ({
       genericName: item.generic_name || 'MEDICATION',
@@ -1364,10 +1567,12 @@ export class ClinicalService {
       patientAge: rx.date_of_birth ? Math.floor((Date.now() - new Date(rx.date_of_birth).getTime()) / (365.25 * 24 * 3600 * 1000)) : undefined,
       patientSex: rx.gender,
       patientDob: rx.date_of_birth ? new Date(rx.date_of_birth).toISOString().slice(0, 10) : undefined,
-      prescriberName: overrides?.doctorName || rx.prescriber_name || 'Dr. Attending Physician, MD',
-      prcLicenseNo: overrides?.prcNumber || 'PRC-0123456',
-      ptrNo: overrides?.ptrNumber || 'PTR-8765432',
-      s2LicenseNo: overrides?.s2Number,
+      prescriberName: overrides?.doctorName || rx.prescriber_name || profile?.name || 'Dr. Attending Physician, MD',
+      prescriberTitle: overrides?.doctorTitle || profile?.jobTitle || undefined,
+      specialty: overrides?.specialty || profile?.specialization || undefined,
+      prcLicenseNo: overrides?.prcNumber || profile?.prcLicenseNo || undefined,
+      ptrNo: overrides?.ptrNumber || profile?.ptrNo || undefined,
+      s2LicenseNo: overrides?.s2Number || profile?.s2LicenseNo || undefined,
       specialInstruction: overrides?.advice || 'Take medications strictly as directed.',
       items: allItems,
       verificationHash: rxPrint.verificationHash,

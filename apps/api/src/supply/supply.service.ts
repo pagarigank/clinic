@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { withTenant, getAppPool } from '@clinic/db';
+import type { ConsumptionListDocument } from '@clinic/print';
 import { ProblemException } from '../http/problem.exception.js';
 import { resolveServicePrice } from '../common/pricing.js';
 import type {
@@ -38,6 +39,10 @@ import type {
   CreateSupplierInvoiceRequest,
   CreateSupplierReturnRequest,
 } from '@clinic/contracts';
+
+function formatDateTime(d: Date): string {
+  return d.toISOString().slice(0, 16).replace('T', ' ');
+}
 
 @Injectable()
 export class SupplyService {
@@ -826,11 +831,11 @@ export class SupplyService {
 
       if (dto.batchId) {
         batchesToPost = [{ batchId: dto.batchId, qty: dto.qty }];
-      } else {
-        // Auto FEFO
-        const fefo = await this.allocateFefo(tenantId, dto.itemId, dto.locationId, dto.qty, tx);
-        batchesToPost = fefo.map(f => ({ batchId: f.batchId, qty: f.qty, unitCost: f.unitCost }));
-      }
+} else {
+          // Auto FEFO
+          const fefo = await this.allocateFefo(tenantId, dto.itemId, dto.locationId, dto.qty, tx);
+          batchesToPost = fefo.map(f => ({ batchId: f.batchId, qty: f.qty, unitCost: f.unitCost }));
+        }
 
       // For a patient-visit issue, capture a SUPPLY charge per consumption line
       // against the visit's invoice (BIL-T1). Price is resolved server-side
@@ -2387,6 +2392,101 @@ export class SupplyService {
       );
       return res.rows;
     });
+  }
+
+  /**
+   * List append-only consumption/issuance entries for a period.
+   *
+   * Optional `locationId` narrows to one store; `from`/`to` are ISO dates and
+   * `to` is inclusive of the whole day.
+   */
+  async listConsumption(
+    tenantId: string,
+    filters: { from?: string; to?: string; locationId?: string } = {},
+  ) {
+    return withTenant({ tenantId }, async (tx) => {
+      const params: unknown[] = [tenantId];
+      let where = `WHERE cl.tenant_id = $1`;
+      if (filters.from) {
+        params.push(filters.from);
+        where += ` AND cl.logged_at >= $${params.length}::date`;
+      }
+      if (filters.to) {
+        params.push(filters.to);
+        where += ` AND cl.logged_at < ($${params.length}::date + INTERVAL '1 day')`;
+      }
+      if (filters.locationId) {
+        params.push(filters.locationId);
+        where += ` AND cl.location_id = $${params.length}`;
+      }
+      const res = await tx.query(
+        `SELECT cl.id, cl.qty, cl.ref_type, cl.ref_id, cl.notes, cl.logged_at,
+                i.code as item_code, i.name as item_name,
+                u.code as uom_code,
+                sl.name as location_name,
+                us.name as logged_by_name
+           FROM consumption_logs cl
+           JOIN items i ON i.tenant_id = cl.tenant_id AND i.id = cl.item_id
+           JOIN uoms u ON u.tenant_id = cl.tenant_id AND u.id = cl.uom_id
+           JOIN stock_locations sl ON sl.tenant_id = cl.tenant_id AND sl.id = cl.location_id
+           LEFT JOIN users us ON us.tenant_id = cl.tenant_id AND us.id = cl.logged_by
+           ${where}
+          ORDER BY cl.logged_at DESC, cl.id DESC`,
+        params,
+      );
+      return res.rows;
+    });
+  }
+
+  /** Map consumption rows to the printable document (no HTTP needed to test). */
+  async getConsumptionListDocument(
+    tenantId: string,
+    filters: { from?: string; to?: string; locationId?: string } = {},
+    meta: { clinicName?: string; branchName?: string; generatedBy?: string } = {},
+  ): Promise<ConsumptionListDocument> {
+    const rows = (await this.listConsumption(tenantId, filters)) as Array<{
+      qty: string | number;
+      ref_type: string | null;
+      ref_id: string | null;
+      notes: string | null;
+      logged_at: string;
+      item_code: string;
+      item_name: string;
+      uom_code: string;
+      location_name: string;
+      logged_by_name: string | null;
+    }>;
+    let locationName = filters.locationId ? rows[0]?.location_name ?? undefined : undefined;
+    if (!locationName && filters.locationId) {
+      const locRes = await withTenant({ tenantId }, async (tx) =>
+        tx.query<{ name: string }>(
+          `SELECT name FROM stock_locations WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, filters.locationId],
+        ),
+      );
+      locationName = locRes.rows[0]?.name;
+    }
+    return {
+      clinicName: meta.clinicName ?? 'Clinic Medical Center',
+      branchName: meta.branchName,
+      locationName,
+      fromDate: filters.from,
+      toDate: filters.to,
+      generatedAt: formatDateTime(new Date()),
+      generatedBy: meta.generatedBy,
+      rows: rows.map((r) => ({
+        loggedAt: formatDateTime(new Date(r.logged_at)),
+        itemCode: r.item_code,
+        itemName: r.item_name,
+        qty: r.qty,
+        uom: r.uom_code,
+        locationName: r.location_name,
+        refType: r.ref_type,
+        refId: r.ref_id,
+        notes: r.notes,
+        loggedBy: r.logged_by_name,
+      })),
+    };
   }
 
   async getValuationSnapshot(tenantId: string, asOf?: string) {

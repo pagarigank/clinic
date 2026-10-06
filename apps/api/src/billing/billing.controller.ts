@@ -1,5 +1,7 @@
-import { Inject, Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Inject, Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Req, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import type { FastifyReply } from 'fastify';
+import { sendPdf } from '../http/pdf-response.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
 import { Module } from '../rbac/module.guard.js';
@@ -181,6 +183,18 @@ export class BillingController {
     return this.svc.getPaymentReceipt(req.tenantId!, id);
   }
 
+  @RequirePermission('billing.payment.read')
+  @Get('payments/:id/receipt-pdf')
+  @ApiOperation({ summary: 'Official receipt as a true vector PDF (shared print pipeline, deterministic SHA-256)' })
+  async getPaymentReceiptPdf(
+    @Req() req: RequestWithAuth,
+    @Param('id') id: string,
+    @Res() reply: FastifyReply,
+  ) {
+    const doc = await this.svc.renderPaymentReceiptPdf(req.tenantId!, req.authContext!.userId!, id);
+    void sendPdf(reply, doc, `Receipt-${id.slice(0, 8)}.pdf`);
+  }
+
   @RequirePermission('billing.payment.create')
   @Post('payments')
   @ApiOperation({ summary: 'Take payment (split tender supported)' })
@@ -243,6 +257,25 @@ export class BillingController {
       limit: limit ? parseInt(limit, 10) : undefined,
       offset: offset ? parseInt(offset, 10) : undefined,
     });
+  }
+
+  /**
+   * Declared before `shifts/:id` on purpose: Nest resolves routes in
+   * declaration order, so a later `shifts/active` would be swallowed by
+   * `shifts/:id` and looked up as a shift id.
+   */
+  @RequirePermission('billing.shift.read')
+  @Get('shifts/active')
+  @ApiOperation({ summary: 'Get the caller’s currently open cashier shift' })
+  async getActiveShift(@Req() req: RequestWithAuth) {
+    return this.svc.getActiveShift(
+      req.tenantId!,
+      req.authContext!.userId!,
+      // branchId is `string | null` on the auth context; the service takes an
+      // optional filter, so a caller without an active branch must not be read
+      // as "filter to the empty string".
+      req.authContext!.branchId ?? undefined,
+    );
   }
 
   @RequirePermission('billing.shift.read')
@@ -339,6 +372,19 @@ export class BillingController {
     return this.svc.getDailyClose(req.tenantId!, date, branchId);
   }
 
+  @RequirePermission('billing.shift.read')
+  @Get('daily-close/pdf')
+  @ApiOperation({ summary: 'Render Daily Close Collections Summary (JOB-48) as a true vector PDF' })
+  async getDailyClosePdf(
+    @Req() req: RequestWithAuth,
+    @Query('date') date: string | undefined,
+    @Query('branchId') branchId: string | undefined,
+    @Res() reply: FastifyReply,
+  ) {
+    const doc = await this.svc.renderDailyClosePdf(req.tenantId!, date, branchId);
+    void sendPdf(reply, doc, `DailyClose-${date || new Date().toISOString().slice(0, 10)}.pdf`);
+  }
+
   @RequirePermission('billing.shift.close')
   @Post('daily-close')
   @ApiOperation({ summary: 'Trigger daily close summary on demand' })
@@ -369,6 +415,18 @@ export class BillingController {
   }
 
   @RequirePermission('billing.invoice.read')
+  @Get('patients/:patientId/statement-pdf')
+  @ApiOperation({ summary: 'Render Patient Statement of Account (SOA) as a true vector PDF' })
+  async getPatientStatementPdf(
+    @Req() req: RequestWithAuth,
+    @Param('patientId') patientId: string,
+    @Res() reply: FastifyReply,
+  ) {
+    const doc = await this.svc.renderPatientStatementPdf(req.tenantId!, patientId);
+    void sendPdf(reply, doc, `Statement-${patientId.slice(0, 8)}.pdf`);
+  }
+
+  @RequirePermission('billing.invoice.read')
   @Get('reports/receivables')
   @ApiOperation({ summary: 'Get accounts receivables and aging report (RPT-BIL-03)' })
   async getReceivablesReport(
@@ -378,6 +436,20 @@ export class BillingController {
     @Query('payerType') payerType?: string,
   ) {
     return this.svc.getReceivablesReport(req.tenantId!, { asOfDate, branchId, payerType });
+  }
+
+  @RequirePermission('billing.invoice.read')
+  @Get('reports/receivables-pdf')
+  @ApiOperation({ summary: 'Render Accounts Receivables & Aging Report (RPT-BIL-03) as a true vector PDF' })
+  async getReceivablesReportPdf(
+    @Req() req: RequestWithAuth,
+    @Query('asOfDate') asOfDate: string | undefined,
+    @Query('branchId') branchId: string | undefined,
+    @Query('payerType') payerType: string | undefined,
+    @Res() reply: FastifyReply,
+  ) {
+    const doc = await this.svc.renderReceivablesReportPdf(req.tenantId!, { asOfDate, branchId, payerType });
+    void sendPdf(reply, doc, `Receivables-Aging-${asOfDate || new Date().toISOString().slice(0, 10)}.pdf`);
   }
 
   @RequirePermission('billing.discount.read')
@@ -412,10 +484,34 @@ export class BillingController {
   }
 
   @RequirePermission('billing.shift.read')
+  @Get('shifts/:id/x-report-pdf')
+  @ApiOperation({ summary: 'Render Cashier X-Report (Mid-Shift Inquiry) as a true vector PDF' })
+  async getShiftXReportPdf(
+    @Req() req: RequestWithAuth,
+    @Param('id') id: string,
+    @Res() reply: FastifyReply,
+  ) {
+    const doc = await this.svc.renderShiftReportPdf(req.tenantId!, id, 'X');
+    void sendPdf(reply, doc, `Shift-XReport-${id.slice(0, 8)}.pdf`);
+  }
+
+  @RequirePermission('billing.shift.read')
   @Get('shifts/:id/z-report')
   @ApiOperation({ summary: 'Get end-of-shift Z-Report (todo.md §7.3, RPT-BIL-01)' })
   async getShiftZReport(@Req() req: RequestWithAuth, @Param('id') id: string) {
     return this.svc.getShiftZReport(req.tenantId!, id);
+  }
+
+  @RequirePermission('billing.shift.read')
+  @Get('shifts/:id/z-report-pdf')
+  @ApiOperation({ summary: 'Render Cashier Z-Report (End-of-Shift Settlement) as a true vector PDF' })
+  async getShiftZReportPdf(
+    @Req() req: RequestWithAuth,
+    @Param('id') id: string,
+    @Res() reply: FastifyReply,
+  ) {
+    const doc = await this.svc.renderShiftReportPdf(req.tenantId!, id, 'Z');
+    void sendPdf(reply, doc, `Shift-ZReport-${id.slice(0, 8)}.pdf`);
   }
 }
 
