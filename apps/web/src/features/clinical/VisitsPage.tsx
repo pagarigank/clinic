@@ -182,7 +182,7 @@ export function VisitsPage() {
       }
       setError(null);
     } catch {
-      setError("Live visit list unavailable — showing the demonstration set.");
+      setError("Live visit list unavailable.");
     } finally {
       setVisitsLoading(false);
     }

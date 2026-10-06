@@ -70,7 +70,7 @@ export function QueueBoardPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Queue Board</h1>
-          <div className="page-subtitle">Live branch queue — now serving, waiting list, skip/recall (CLN-T2)</div>
+          <div className="page-subtitle">Live branch queue — now serving, waiting list, skip/recall</div>
         </div>
       </div>
 
@@ -95,8 +95,7 @@ export function QueueBoardPage() {
           </div>
           <div className="clinic-card p-3 mt-3">
             <p className="small text-body-secondary mb-0">
-              Display-board view refreshes every 15 s; the SSE stream replaces polling when the
-              realtime infrastructure lands (frontend §16). Priority tickets (elderly, PWD,
+              Display-board view refreshes every 15 s. Priority tickets (elderly, PWD,
               emergency) sort first.
             </p>
           </div>

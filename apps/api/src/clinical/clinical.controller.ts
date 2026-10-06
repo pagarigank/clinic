@@ -55,6 +55,14 @@ export class ClinicalController {
   constructor(
     @Inject(ClinicalService) private readonly svc: ClinicalService,
   ) {}
+  // ── Practitioners ─────────────────────────────────────────────────────────
+  @RequirePermission('clinical.schedule.read')
+  @Get('practitioners')
+  @ApiOperation({ summary: 'List practitioners for appointment booking and scheduling' })
+  async listPractitioners(@Req() req: RequestWithAuth) {
+    return this.svc.listPractitioners(req.tenantId!, req.authContext!.userId!);
+  }
+
   // ── Schedules ─────────────────────────────────────────────────────────────
   @RequirePermission('clinical.schedule.read')
   @Get('schedules')

@@ -53,6 +53,12 @@ if (typeof window !== "undefined") {
     writable: true,
     configurable: true,
   });
+  if (!window.URL.createObjectURL) {
+    window.URL.createObjectURL = () => "blob:http://localhost/mock-blob";
+  }
+  if (!window.URL.revokeObjectURL) {
+    window.URL.revokeObjectURL = () => {};
+  }
 }
 
 let server: Server | undefined;

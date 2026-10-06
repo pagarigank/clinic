@@ -9,6 +9,9 @@
  *   pnpm --filter @clinic/db clean:demo -- --tenant <uuid> --apply --confirm <slug>  # delete
  *
  *   --wipe keeps only tenancy, access-control and master/reference data for that tenant.
+ *   --prune-items deletes never-stocked items and their dead companion master rows
+ *     (the residue of an old bulk import), plus the RX- service entries and generic
+ *     names those items were the only referent of.
  *   --drop-test-tenants additionally drops every leftover `test-*` tenant cluster-wide.
  *   `--confirm` is a comma-separated set of tokens, one per destructive scope, so each is
  *   acknowledged on its own: `--confirm demo-a,test-tenants`.
@@ -35,7 +38,7 @@
  *      deleting from. That check is directional: deleting a child never breaks its parent.
  *   6. A tenant-scoped table with rows but no explicit rule is UNCLASSIFIED and blocks
  *      `--apply`, so a new migration cannot silently start deleting new master data.
- *   7. Seeded rows (3 patients, 3 staff) are preserved by id/email and re-verified before commit.
+ *   7. Seeded rows (3 patients, 8 staff) are preserved by id/email and re-verified before commit.
  *
  * This deletes PHI. It is a demo/QA tool. Point it only at a demo tenant.
  */
@@ -52,6 +55,7 @@ const TENANT_ID = valueOf('--tenant');
 const APPLY = has('--apply');
 const ALLOW_UNCLASSIFIED = has('--allow-unclassified');
 const WIPE = has('--wipe');
+const PRUNE_ITEMS = has('--prune-items');
 const DROP_TEST_TENANTS = has('--drop-test-tenants');
 const CONFIRM = valueOf('--confirm');
 /** Each destructive scope is acknowledged by its own token in the comma-separated set. */
@@ -71,7 +75,11 @@ const SEED_PATIENT_IDS = [
   'a4000000-0000-4000-8000-000000000002',
   'a4000000-0000-4000-8000-000000000003',
 ];
-const SEED_STAFF_EMAILS = ['admin@demo-a.test', 'doctor@demo-a.test', 'nurse@demo-a.test'];
+const SEED_STAFF_EMAILS = [
+  'admin@demo-a.test', 'doctor@demo-a.test', 'nurse@demo-a.test',
+  'dispenser@demo-a.test', 'staff@demo-a.test', 'verifier@demo-a.test',
+  'labtech@demo-a.test', 'labverify@demo-a.test',
+];
 
 /** Kept whole. Tenancy, access control, reference data and the seed's master catalogue. */
 const PRESERVE = new Set([
@@ -632,6 +640,176 @@ async function dropLeakedTestTenants(client, tables, fkRows) {
   console.log(`  COMMITTED — ${res.rowCount} leaked tenant(s) removed.\n`);
 }
 
+/**
+ * Transactional tables that reference items. An item appearing in ANY of these
+ * has history (draft or posted) and is never a prune candidate, even if the
+ * stock ledger itself is empty — pruning it would orphan business records.
+ */
+const ITEM_TXN_TABLES = [
+  'consumption_logs', 'dispense_items', 'disposal_items', 'goods_receipt_items',
+  'physical_count_items', 'purchase_order_items', 'purchase_request_items',
+  'recall_batches', 'requisition_items', 'stock_adjustment_items', 'stock_issue_items',
+  'stock_transfer_items', 'supplier_return_items', 'valuation_snapshots',
+];
+
+/**
+ * Master-data companions of an item. These are deleted WITH a doomed item: they
+ * are the import's own rows for an item that never existed operationally.
+ */
+const ITEM_MASTER_COMPANIONS = [
+  'pharmacy_price_rules', 'location_item_params', 'supplier_items',
+  'uom_conversions', 'item_barcodes', 'lab_test_reagents',
+];
+
+/**
+ * --prune-items: remove never-stocked items left by an old bulk import, together
+ * with their dead companion master rows. An item is DOOMED only when:
+ *   - no stock_batches row points at it (never received),
+ *   - no stock_movements row references it (never moved),
+ *   - no transactional table references it (no draft PO/PR/dispense/etc.).
+ *
+ * Deletion then cascades through the import's own master graph in child-first
+ * order: companion master rows -> price_lists on doomed RX- services ->
+ * drug_products -> the items -> RX- services that only doomed items priced ->
+ * generic_names with no remaining product -> drug_interactions with a dangling
+ * generic. User-created reference data (categories, suppliers, uoms) is kept.
+ *
+ * One transaction, post-conditions verified before COMMIT, audit_log row
+ * (action=tenant.item_prune) records what was removed.
+ */
+async function runPruneItems(client, { slug }) {
+  if (!APPLY) {
+    // Dry run reads through RLS like every other mode.
+    await client.query('BEGIN');
+    await client.query(`SELECT set_config('app.tenant_id', $1, true)`, [TENANT_ID]);
+  }
+
+  const txnChecks = ITEM_TXN_TABLES
+    .map((t) => `NOT EXISTS (SELECT 1 FROM "${t}" x WHERE x.tenant_id = i.tenant_id AND x.item_id = i.id)`)
+    .join('\n      AND ');
+  const doomedSql = `
+    SELECT i.id, i.code, i.name
+    FROM items i
+    WHERE i.tenant_id = $1
+      AND NOT EXISTS (SELECT 1 FROM stock_batches sb WHERE sb.tenant_id = i.tenant_id AND sb.item_id = i.id)
+      AND NOT EXISTS (SELECT 1 FROM stock_movements sm WHERE sm.tenant_id = i.tenant_id AND sm.item_id = i.id)
+      AND ${txnChecks}`;
+
+  const { rows: doomed } = await client.query(doomedSql, [TENANT_ID]);
+  if (doomed.length === 0) {
+    console.log(`\nclean-demo-tenant --prune-items: tenant ${slug} — nothing to prune.`);
+    if (!APPLY) await client.query('ROLLBACK');
+    return;
+  }
+
+  const doomedIds = doomed.map((r) => r.id);
+  const byPrefix = {};
+  for (const r of doomed) {
+    const prefix = (r.code ?? '').split('-')[0] || 'OTHER';
+    byPrefix[prefix] = (byPrefix[prefix] ?? 0) + 1;
+  }
+
+  console.log(`\nclean-demo-tenant --prune-items: tenant ${slug} (${TENANT_ID})`);
+  console.log(`  candidate items: ${doomed.length}`);
+  for (const [prefix, n] of Object.entries(byPrefix).sort()) console.log(`    ${String(n).padStart(8)}  ${prefix}-*`);
+
+  // Companion rows that will go with them.
+  const companionCounts = [];
+  for (const t of ITEM_MASTER_COMPANIONS) {
+    const n = await count(client, `SELECT count(*)::int AS n FROM "${t}" WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`, [TENANT_ID, doomedIds]);
+    if (n > 0) companionCounts.push([t, n]);
+  }
+  const svcRows = await client.query(`
+    SELECT s.id, s.code FROM service_catalog s
+    WHERE s.tenant_id = $1
+      AND NOT EXISTS (
+        SELECT 1 FROM items i WHERE i.tenant_id = s.tenant_id AND i.service_id = s.id
+          AND i.id <> ALL($2::uuid[]))
+      AND EXISTS (
+        SELECT 1 FROM items i WHERE i.tenant_id = s.tenant_id AND i.service_id = s.id
+          AND i.id = ANY($2::uuid[]))`, [TENANT_ID, doomedIds]);
+  const doomedServices = svcRows.rows;
+  const svcIds = doomedServices.map((r) => r.id);
+  const plCount = svcIds.length
+    ? await count(client, `SELECT count(*)::int AS n FROM price_lists WHERE tenant_id = $1 AND service_id = ANY($2::uuid[])`, [TENANT_ID, svcIds])
+    : 0;
+  const dpCount = await count(client, `SELECT count(*)::int AS n FROM drug_products WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`, [TENANT_ID, doomedIds]);
+
+  const genRows = await client.query(`
+    SELECT g.id FROM generic_names g
+    WHERE g.tenant_id = $1
+      AND NOT EXISTS (
+        SELECT 1 FROM drug_products d WHERE d.tenant_id = g.tenant_id AND d.generic_id = g.id
+          AND d.item_id <> ALL($2::uuid[]))`, [TENANT_ID, doomedIds]);
+  const doomedGenerics = genRows.rows.map((r) => r.id);
+  const diCount = doomedGenerics.length
+    ? await count(client, `SELECT count(*)::int AS n FROM drug_interactions WHERE tenant_id = $1 AND (generic_a_id = ANY($2::uuid[]) OR generic_b_id = ANY($2::uuid[]))`, [TENANT_ID, doomedGenerics])
+    : 0;
+
+  console.log(`\n  WILL DELETE (children first):`);
+  for (const [t, n] of companionCounts) console.log(`    ${String(n).padStart(8)}  ${t}`);
+  console.log(`    ${String(plCount).padStart(8)}  price_lists (on ${doomedServices.length} doomed RX- services)`);
+  console.log(`    ${String(dpCount).padStart(8)}  drug_products`);
+  console.log(`    ${String(doomed.length).padStart(8)}  items`);
+  console.log(`    ${String(doomedServices.length).padStart(8)}  service_catalog (RX- priced only by doomed items)`);
+  console.log(`    ${String(doomedGenerics.length).padStart(8)}  generic_names (no remaining product)`);
+  console.log(`    ${String(diCount).padStart(8)}  drug_interactions (dangling generic)`);
+
+  if (!APPLY) {
+    await client.query('ROLLBACK');
+    console.log(`\n  DRY RUN — nothing was written. Add --apply --confirm ${slug} to execute.`);
+    return;
+  }
+  if (!CONFIRM_TOKENS.has(slug)) {
+    fail('refusing to apply:', `--prune-items requires --confirm ${slug} (you passed ${JSON.stringify(CONFIRM)})`);
+  }
+
+  await client.query('BEGIN');
+  await client.query(`SELECT set_config('app.tenant_id', $1, true)`, [TENANT_ID]);
+  let deleted = 0;
+  const step = async (label, sql, params) => {
+    const res = await client.query(sql, params);
+    deleted += res.rowCount;
+    console.log(`    deleted ${String(res.rowCount).padStart(8)}  ${label}`);
+  };
+
+  for (const t of ITEM_MASTER_COMPANIONS) {
+    await step(t, `DELETE FROM "${t}" WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`, [TENANT_ID, doomedIds]);
+  }
+  if (svcIds.length) {
+    await step('price_lists', `DELETE FROM price_lists WHERE tenant_id = $1 AND service_id = ANY($2::uuid[])`, [TENANT_ID, svcIds]);
+  }
+  await step('drug_products', `DELETE FROM drug_products WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`, [TENANT_ID, doomedIds]);
+  await step('items', `DELETE FROM items WHERE tenant_id = $1 AND id = ANY($2::uuid[])`, [TENANT_ID, doomedIds]);
+  if (svcIds.length) {
+    await step('service_catalog', `DELETE FROM service_catalog WHERE tenant_id = $1 AND id = ANY($2::uuid[])`, [TENANT_ID, svcIds]);
+  }
+  if (doomedGenerics.length) {
+    // Interactions first: drug_interactions.generic_{a,b}_id -> generic_names,
+    // so removing the generics while rows still reference them violates the FK.
+    await step('drug_interactions', `DELETE FROM drug_interactions WHERE tenant_id = $1 AND (generic_a_id = ANY($2::uuid[]) OR generic_b_id = ANY($2::uuid[]))`, [TENANT_ID, doomedGenerics]);
+    await step('generic_names', `DELETE FROM generic_names WHERE tenant_id = $1 AND id = ANY($2::uuid[])`, [TENANT_ID, doomedGenerics]);
+  }
+
+  // Post-conditions: nothing doomed may survive, and no companion row may dangle.
+  const violations = [];
+  const left = await count(client, `SELECT count(*)::int AS n FROM items WHERE tenant_id = $1 AND id = ANY($2::uuid[])`, [TENANT_ID, doomedIds]);
+  if (left > 0) violations.push(`${left} doomed item(s) still present`);
+  for (const t of [...ITEM_MASTER_COMPANIONS, 'drug_products']) {
+    const n = await count(client, `SELECT count(*)::int AS n FROM "${t}" WHERE tenant_id = $1 AND item_id = ANY($2::uuid[])`, [TENANT_ID, doomedIds]);
+    if (n > 0) violations.push(`${t} still references doomed items`);
+  }
+  if (violations.length > 0) throw new Error(`post-conditions not met, rolling back:\n    - ${violations.join('\n    - ')}`);
+
+  await client.query(
+    `INSERT INTO audit_log (tenant_id, action, entity_type, entity_id, before_state, after_state, request_id)
+     VALUES ($1, 'tenant.item_prune', 'tenant', $1, $2::jsonb, '{}'::jsonb, $3)`,
+    [TENANT_ID, JSON.stringify({ items: doomed.length, byPrefix, drug_products: dpCount, services: doomedServices.length, generic_names: doomedGenerics.length, drug_interactions: diCount, price_lists: plCount, rows_deleted: deleted }), `clean-demo-tenant:prune:${TENANT_ID}`],
+  );
+  await client.query('COMMIT');
+  console.log(`\n  COMMITTED — ${deleted} master rows pruned from ${slug}.\n  An audit_log row (action=tenant.item_prune) records the prune.`);
+}
+
 async function main() {
   const connectionString = process.env.CLINIC_DATABASE_URL;
   if (!connectionString) {
@@ -668,9 +846,10 @@ async function main() {
         AND c.conrelid <> c.confrelid`);
     const fkRows = fkDetail.map((f) => ({ child: f.child, parent: f.parent }));
 
-    if (WIPE || DROP_TEST_TENANTS) {
+    if (WIPE || DROP_TEST_TENANTS || PRUNE_ITEMS) {
       if (DROP_TEST_TENANTS) await dropLeakedTestTenants(client, tables, fkRows);
       if (WIPE) await runWipe(client, { slug, tables, fkRows });
+      if (PRUNE_ITEMS) await runPruneItems(client, { slug });
       return;
     }
 

@@ -220,7 +220,7 @@ describe("CashierPosPage (todo.md §7.2, BIL-T2, BIL-T3)", () => {
     renderWithProviders(<CashierPosPage />);
 
     await waitFor(() => {
-      expect(billingApi.fetchInvoices).toHaveBeenCalled();
+      expect(screen.getByText(SHIFT.shift_no)).toBeInTheDocument();
     });
 
     const payBtn = await screen.findByRole("button", { name: /Complete Payment/i });

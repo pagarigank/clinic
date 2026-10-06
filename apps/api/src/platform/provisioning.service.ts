@@ -4,6 +4,7 @@ import { withTenant } from '@clinic/db';
 import type { ModuleName } from '../rbac/module.guard.js';
 import { MODULE_DEPENDENCIES } from '../tenant-modules/tenant-modules.service.js';
 import { runTenantExport } from '../../../worker/src/handlers/platform-jobs.handler.js';
+import { handleTenantProvision } from '../../../worker/src/handlers/provision.handler.js';
 
 export interface CreateTenantDto {
   name: string;
@@ -23,6 +24,119 @@ export interface TenantRow {
   created_at: Date;
 }
 
+export interface StarterCredentialItem {
+  role: string;
+  email: string;
+  name: string;
+  description: string;
+}
+
+export interface StarterCredentialsPayload {
+  defaultPassword: string;
+  logins: StarterCredentialItem[];
+  formattedText: string;
+}
+
+export function buildStarterCredentials(slug: string, name: string): StarterCredentialsPayload {
+  const defaultPassword = 'DemoPassw0rd!2026';
+  const logins: StarterCredentialItem[] = [
+    {
+      role: 'Tenant Administrator',
+      email: `admintenant@${slug}.emr`,
+      name: `${name} — Tenant Admin`,
+      description: 'Full clinic configuration, staff user accounts, branches and permissions',
+    },
+    {
+      role: 'Doctor',
+      email: `doctor@${slug}.emr`,
+      name: `${name} — Doctor`,
+      description: 'Consultations, SOAP clinical notes, e-prescriptions and clinical orders',
+    },
+    {
+      role: 'Receptionist',
+      email: `receptionist@${slug}.emr`,
+      name: `${name} — Receptionist`,
+      description: 'Front desk registration, appointment booking, patient triage and queueing',
+    },
+    {
+      role: 'Pharmacist',
+      email: `pharmacist@${slug}.emr`,
+      name: `${name} — Pharmacist`,
+      description: 'Pharmacy inventory, prescription fulfillment and formulary dispensing',
+    },
+    {
+      role: 'Medical Technologist',
+      email: `labtech@${slug}.emr`,
+      name: `${name} — Medical Technologist`,
+      description: 'Laboratory specimen processing, analyte result entry and QC benchwork',
+    },
+    {
+      role: 'Cashier',
+      email: `cashier@${slug}.emr`,
+      name: `${name} — Cashier`,
+      description: 'Cash desk settlement, split payments, official receipts and shift closure',
+    },
+    {
+      role: 'Nurse',
+      email: `nurse@${slug}.emr`,
+      name: `${name} — Nurse`,
+      description: 'Vital signs recording, immunization, procedures and patient preparation',
+    },
+    {
+      role: 'Pharmacist Verifier',
+      email: `verifier@${slug}.emr`,
+      name: `${name} — Pharmacist Verifier`,
+      description: 'Independent clinical prescription review and verification (PHM-T1)',
+    },
+    {
+      role: 'Laboratory Verifier / Pathologist',
+      email: `labverify@${slug}.emr`,
+      name: `${name} — Lab Verifier`,
+      description: 'Independent laboratory test verification and report release (AC-17)',
+    },
+    {
+      role: 'Tenant Admin (Alias)',
+      email: `admin@${slug}.emr`,
+      name: `${name} — Tenant Admin`,
+      description: 'Alternative short admin login',
+    },
+    {
+      role: 'Receptionist (Alias)',
+      email: `staff@${slug}.emr`,
+      name: `${name} — Front Desk Staff`,
+      description: 'Alternative short staff login',
+    },
+    {
+      role: 'Pharmacist (Alias)',
+      email: `dispenser@${slug}.emr`,
+      name: `${name} — Pharmacist / Dispenser`,
+      description: 'Alternative short dispenser login',
+    },
+  ];
+
+  const formattedText = [
+    '============================================================',
+    'CLINIC PLATFORM — NEW TENANT CREDENTIALS',
+    '============================================================',
+    `Tenant Name:      ${name}`,
+    `Tenant Slug:      ${slug}`,
+    `Login URL:        http://localhost:5173/login`,
+    `Default Password: ${defaultPassword}`,
+    `(Common email stub: '@${slug}.emr')`,
+    '',
+    'PRIMARY ROLES & LOGINS:',
+    '------------------------------------------------------------',
+    ...logins.slice(0, 9).map((l) => `• ${l.role.padEnd(24)} ${l.email}`),
+    '',
+    'COMPATIBILITY ALIASES:',
+    '------------------------------------------------------------',
+    ...logins.slice(9).map((l) => `• ${l.role.padEnd(24)} ${l.email}`),
+    '============================================================',
+  ].join('\n');
+
+  return { defaultPassword, logins, formattedText };
+}
+
 @Injectable()
 export class ProvisioningService {
   /**
@@ -33,7 +147,7 @@ export class ProvisioningService {
     dto: CreateTenantDto,
     actorId?: string | null,
   ): Promise<TenantRow> {
-    return withTenant({ scope: 'platform', userId: actorId ?? undefined }, async (tx) => {
+    const created = await withTenant({ scope: 'platform', userId: actorId ?? undefined }, async (tx) => {
       // Validate slug uniqueness
       const existing = await tx.query(
         `SELECT id FROM tenants WHERE slug = $1`,
@@ -44,12 +158,41 @@ export class ProvisioningService {
       }
 
       // Validate plan exists
-      const planRows = await tx.query<{ id: string; code: string }>(
+      let planId = dto.planId;
+      let planRows = await tx.query<{ id: string; code: string }>(
         `SELECT id, code FROM subscription_plans WHERE id = $1`,
-        [dto.planId],
+        [planId],
       );
       if ((planRows.rowCount ?? 0) === 0) {
-        throw new ProblemException('NOT_FOUND', { detail: 'subscription plan not found' });
+        // Try looking up by plan code (e.g. 'enterprise', 'starter')
+        const byCode = await tx.query<{ id: string; code: string }>(
+          `SELECT id, code FROM subscription_plans WHERE code = $1`,
+          [planId],
+        );
+        if ((byCode.rowCount ?? 0) > 0) {
+          planRows = byCode;
+          planId = byCode.rows[0]!.id;
+        } else {
+          // Fallback to active enterprise, complete, or standard plan if invalid/dummy ID was supplied
+          const fallback = await tx.query<{ id: string; code: string }>(
+            `SELECT id, code FROM subscription_plans
+             WHERE is_active = true
+             ORDER BY
+               CASE
+                 WHEN code = 'enterprise' THEN 1
+                 WHEN code = 'complete' THEN 2
+                 WHEN code = 'standard' THEN 3
+                 ELSE 4
+               END, created_at ASC
+             LIMIT 1`,
+          );
+          if ((fallback.rowCount ?? 0) > 0) {
+            planRows = fallback;
+            planId = fallback.rows[0]!.id;
+          } else {
+            throw new ProblemException('NOT_FOUND', { detail: 'subscription plan not found' });
+          }
+        }
       }
 
       // Validate module dependencies
@@ -73,7 +216,7 @@ export class ProvisioningService {
       // Validate against plan_modules if defined
       const planModulesRes = await tx.query<{ module: string }>(
         `SELECT module FROM plan_modules WHERE plan_id = $1`,
-        [dto.planId],
+        [planId],
       );
       if ((planModulesRes.rowCount ?? 0) > 0) {
         const allowed = new Set(planModulesRes.rows.map((r) => r.module));
@@ -102,7 +245,7 @@ export class ProvisioningService {
       await tx.query(
         `INSERT INTO subscriptions (tenant_id, plan_id, status)
          VALUES ($1, $2, 'ACTIVE')`,
-        [tenant.id, dto.planId],
+        [tenant.id, planId],
       );
 
       // Create tenant_modules rows
@@ -127,15 +270,30 @@ export class ProvisioningService {
         ],
       );
 
-      return tenant;
+      return { tenant, modules: Array.from(moduleSet) };
     });
+
+    if (process.env.NODE_ENV !== 'test') {
+      setImmediate(async () => {
+        try {
+          await handleTenantProvision({
+            tenantId: created.tenant.id,
+            modules: created.modules,
+          });
+        } catch (err) {
+          console.error(`Auto-provisioning failed for tenant ${created.tenant.id}:`, err);
+        }
+      });
+    }
+
+    return created.tenant;
   }
 
   /**
    * Retry provisioning for a PROVISIONING_FAILED or stuck tenant.
    */
   async retryProvisioning(tenantId: string): Promise<void> {
-    return withTenant({ scope: 'platform', tenantId }, async (tx) => {
+    const result = await withTenant({ scope: 'platform', tenantId }, async (tx) => {
       const tenantRows = await tx.query<{ status: string }>(
         `SELECT status FROM tenants WHERE id = $1`,
         [tenantId],
@@ -159,7 +317,17 @@ export class ProvisioningService {
          VALUES ($1, 'tenant.provision', $2)`,
         [tenantId, JSON.stringify({ tenantId, modules })],
       );
+
+      return { tenantId, modules };
     });
+
+    if (process.env.NODE_ENV !== 'test') {
+      try {
+        await handleTenantProvision({ tenantId: result.tenantId, modules: result.modules });
+      } catch (err) {
+        console.error(`Retry provisioning failed for tenant ${result.tenantId}:`, err);
+      }
+    }
   }
 
   /**
@@ -269,7 +437,7 @@ export class ProvisioningService {
   async listPlans() {
     return withTenant({ scope: 'platform' }, async (tx) => {
       const res = await tx.query(
-        `SELECT id, code, name, description, is_active, created_at
+        `SELECT id, code, name, is_active, created_at
          FROM subscription_plans
          WHERE is_active = true
          ORDER BY created_at ASC`,

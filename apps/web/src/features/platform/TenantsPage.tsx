@@ -118,7 +118,7 @@ export function TenantsPage() {
       {loadError ? (
         <div className="mb-3">
           <AlertBanner severity="warning" title="Live tenant list unavailable">
-            Showing the local demonstration set. The platform API did not respond.
+            The platform API did not respond.
           </AlertBanner>
         </div>
       ) : null}

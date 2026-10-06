@@ -102,7 +102,8 @@ export function LabWorklistPage() {
       const q = searchFilter.toLowerCase();
       const matchNo = item.order_no.toLowerCase().includes(q);
       const matchAcc = item.accession_no?.toLowerCase().includes(q) ?? false;
-      const matchPatient = `${item.given_name} ${item.family_name}`.toLowerCase().includes(q);
+      const patientName = `${item.given_name || (item as any).first_name || ""} ${item.family_name || (item as any).last_name || ""}`;
+      const matchPatient = patientName.toLowerCase().includes(q);
       const matchMrn = item.mrn?.toLowerCase().includes(q) ?? false;
       const matchTest = item.test_name.toLowerCase().includes(q) || item.test_code.toLowerCase().includes(q);
       return matchNo || matchAcc || matchPatient || matchMrn || matchTest;
@@ -413,10 +414,10 @@ export function LabWorklistPage() {
                       {/* Patient */}
                       <td>
                         <div className="fw-semibold">
-                          {item.family_name}, {item.given_name}
+                          {item.family_name || (item as any).last_name || "—"}, {item.given_name || (item as any).first_name || ""}
                         </div>
                         <div className="small text-muted">
-                          MRN: {item.mrn || "Walk-In"} • {item.sex}
+                          MRN: {item.mrn || "Walk-In"} • {item.sex || (item as any).gender || ""}
                         </div>
                       </td>
 

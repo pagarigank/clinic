@@ -108,6 +108,9 @@ export interface PrescriptionPrintModalProps {
     severity?: string;
   }>;
   practitionerName?: string;
+  diagnosis?: string;
+  diagnosisDescription?: string;
+  specialInstruction?: string;
 }
 
 export function PrescriptionPrintModal({
@@ -122,16 +125,14 @@ export function PrescriptionPrintModal({
   labOrders = [],
   allergies = [],
   practitionerName,
+  diagnosis,
+  diagnosisDescription,
+  specialInstruction,
 }: PrescriptionPrintModalProps) {
   const [activeTab, setActiveTab] = useState<"RX" | "LAB" | "ALL">(defaultTab);
   const [showConfig, setShowConfig] = useState(false);
 
   // ── Doctor & clinic header ────────────────────────────────────────────────
-  // Hydrated from GET /clinical/visits/:id/print-profile (users.name × the
-  // employees record: PRC / PTR / S2, specialization) — never from fabricated
-  // placeholder licence numbers. Fields the user edits in the settings drawer
-  // are tracked and become the ONLY overrides sent to the PDF endpoint, so an
-  // untouched blank licence prints as "N/A" instead of a made-up number.
   const [doctorName, setDoctorName] = useState(practitionerName || "");
   const [doctorTitle, setDoctorTitle] = useState("");
   const [doctorSpecialty, setDoctorSpecialty] = useState("");
@@ -142,7 +143,28 @@ export function PrescriptionPrintModal({
   const [clinicSubtitle, setClinicSubtitle] = useState("");
   const [clinicAddress, setClinicAddress] = useState("");
   const [clinicContact, setClinicContact] = useState("");
-  const [rxNotesAdvice, setRxNotesAdvice] = useState("");
+
+  const defaultDx =
+    diagnosis ||
+    (diagnoses.length > 0
+      ? diagnoses
+          .map((d: any) => {
+            const code = (d.icd10Code || d.icd10_code || "").trim();
+            const desc = (d.description || d.icd10_description || "").trim();
+            if (desc && code && desc.toLowerCase() !== code.toLowerCase()) {
+              return `${desc} (${code})`;
+            }
+            return desc || code;
+          })
+          .join("; ")
+      : diagnosisDescription || (notes.length > 0 && notes[0]?.assessment ? notes[0].assessment : ""));
+
+  const defaultAdvice =
+    specialInstruction ||
+    (notes.length > 0 && notes[0]?.plan ? notes[0].plan : "");
+
+  const [rxDiagnosis, setRxDiagnosis] = useState(defaultDx);
+  const [rxNotesAdvice, setRxNotesAdvice] = useState(defaultAdvice);
   const touched = useRef<Set<string>>(new Set());
   const markTouched = (key: string) => touched.current.add(key);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -255,6 +277,7 @@ export function PrescriptionPrintModal({
       if (touched.current.has("clinicTitle") && clinicTitle.trim()) override.clinicName = clinicTitle.trim();
       if (touched.current.has("clinicAddress") && clinicAddress.trim()) override.clinicAddress = clinicAddress.trim();
       if (touched.current.has("clinicContact") && clinicContact.trim()) override.clinicPhone = clinicContact.trim();
+      if (touched.current.has("rxDiagnosis") && rxDiagnosis.trim()) override.diagnosis = rxDiagnosis.trim();
       if (touched.current.has("rxNotesAdvice") && rxNotesAdvice.trim()) override.advice = rxNotesAdvice.trim();
       const params = new URLSearchParams(override);
       // apiGetBlob prepends /api/v1 and attaches the Bearer token automatically
@@ -283,9 +306,6 @@ export function PrescriptionPrintModal({
   useEffect(() => {
     void fetchPdfPreview();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  // Every override the PDF is rendered from must retrigger the fetch — editing a
-// licence or the professional title has to re-request the document, otherwise
-// the preview silently keeps showing the previous override set.
 }, [
     activeTab,
     visit.id,
@@ -298,6 +318,7 @@ export function PrescriptionPrintModal({
     clinicTitle,
     clinicAddress,
     clinicContact,
+    rxDiagnosis,
     rxNotesAdvice,
   ]);
 
@@ -532,6 +553,38 @@ export function PrescriptionPrintModal({
                     }}
                   />
                 </div>
+                <div className="col-md-6">
+                  <label className="form-label mb-0 fw-semibold text-success" htmlFor="pp-rx-diagnosis">
+                    Clinical Diagnosis / Impression (Printed on Rx Pad)
+                  </label>
+                  <input
+                    type="text"
+                    className="form-control form-control-sm"
+                    id="pp-rx-diagnosis"
+                    placeholder="e.g. Acute Bronchitis (J20.9)"
+                    value={rxDiagnosis}
+                    onChange={(e) => {
+                      markTouched("rxDiagnosis");
+                      setRxDiagnosis(e.target.value);
+                    }}
+                  />
+                </div>
+                <div className="col-md-6">
+                  <label className="form-label mb-0 fw-semibold text-primary" htmlFor="pp-rx-advice">
+                    Physician's Instructions & Care Advice (Printed on Rx Pad)
+                  </label>
+                  <input
+                    type="text"
+                    className="form-control form-control-sm"
+                    id="pp-rx-advice"
+                    placeholder="e.g. Take with meals. Increase water intake. Follow up in 3 days."
+                    value={rxNotesAdvice}
+                    onChange={(e) => {
+                      markTouched("rxNotesAdvice");
+                      setRxNotesAdvice(e.target.value);
+                    }}
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -571,6 +624,49 @@ export function PrescriptionPrintModal({
             <div className="text-muted small">
               Print format: <strong>Standard 8.5" x 11" / Half-Sheet Clean Monochrome</strong>
             </div>
+          </div>
+
+          {/* Quick Doctor's Notes & Diagnosis Bar (Screen-only, instantly updates print preview) */}
+          <div className="clinic-no-print bg-light px-3 py-2 border-bottom d-flex align-items-center gap-2 flex-wrap">
+            <div className="d-flex align-items-center gap-1 flex-grow-1" style={{ minWidth: "260px" }}>
+              <span className="badge bg-success-subtle text-success border border-success-subtle small text-nowrap">
+                🩺 Diagnosis on Rx
+              </span>
+              <input
+                type="text"
+                className="form-control form-control-sm bg-white"
+                placeholder="Clinical diagnosis / impression..."
+                value={rxDiagnosis}
+                onChange={(e) => {
+                  markTouched("rxDiagnosis");
+                  setRxDiagnosis(e.target.value);
+                }}
+              />
+            </div>
+            <div className="d-flex align-items-center gap-1 flex-grow-1" style={{ minWidth: "280px" }}>
+              <span className="badge bg-primary-subtle text-primary border border-primary-subtle small text-nowrap">
+                📝 Notes / Instructions on Rx
+              </span>
+              <input
+                type="text"
+                className="form-control form-control-sm bg-white"
+                placeholder="Doctor's instructions / advice for patient..."
+                value={rxNotesAdvice}
+                onChange={(e) => {
+                  markTouched("rxNotesAdvice");
+                  setRxNotesAdvice(e.target.value);
+                }}
+              />
+            </div>
+            <button
+              type="button"
+              className="btn btn-outline-primary btn-sm py-0 px-2 text-nowrap"
+              style={{ fontSize: "0.8rem", height: "30px" }}
+              onClick={() => void fetchPdfPreview()}
+              title="Apply edits to PDF preview"
+            >
+              🔄 Refresh Preview
+            </button>
           </div>
 
           {/* Document Preview & Printable Area */}

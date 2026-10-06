@@ -781,7 +781,7 @@ export function DashboardPage() {
             </div>
             <ul className="list-unstyled small mb-0 p-3 pt-1">
               {[
-                { label: "Tenant Organization", value: session?.tenantSlug || "demo-a", mono: true },
+                { label: "Tenant Organization", value: session?.tenantSlug || "—", mono: true },
                 { label: "Operating Branch", value: session?.branchName || "Main Branch", mono: false },
                 { label: "Multi-Tenancy", value: "PostgreSQL 18 RLS", badge: true },
                 { label: "PhilHealth Status", value: "Konsulta Package Capitation", mono: false },

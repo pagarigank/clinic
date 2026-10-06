@@ -107,6 +107,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/admin/roles", icon: "🛡️", label: "Roles & Permissions" },
       { to: "/admin/branches", icon: "🏢", label: "Branches & Units" },
       { to: "/admin/service-catalog", icon: "💰", label: "Services & Prices" },
+      { to: "/admin/icd10", icon: "🩺", label: "ICD-10 Diagnoses" },
       { to: "/admin/settings", icon: "⚙️", label: "Settings" },
     ],
   },

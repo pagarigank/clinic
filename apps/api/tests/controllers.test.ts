@@ -288,5 +288,41 @@ describe('Phase 2 Controllers unit & delegation coverage', () => {
       const drugs = await ctrl.listDrugSchedules();
       expect(drugs.data).toBeDefined();
     });
+
+    it('supports full ICD-10 CRUD lifecycle and duplicate prevention', async () => {
+      const testCode = 'T99.9';
+      try { await ctrl.deleteIcd10(testCode); } catch {}
+
+      // Create
+      const created = await ctrl.createIcd10({ code: testCode, description: 'Test condition for automated check' });
+      expect(created.code).toBe(testCode);
+      expect(created.description).toBe('Test condition for automated check');
+
+      // Duplicate rejection
+      await expect(ctrl.createIcd10({ code: testCode, description: 'Duplicate test' })).rejects.toThrow();
+
+      // Read single
+      const fetched = await ctrl.getIcd10(testCode);
+      expect(fetched.code).toBe(testCode);
+
+      // Update
+      const updated = await ctrl.updateIcd10(testCode, { description: 'Updated test condition' });
+      expect(updated.description).toBe('Updated test condition');
+
+      // List with query filter
+      const list = await ctrl.listIcd10('Updated test condition');
+      expect(list.data.some((d: any) => d.code === testCode)).toBe(true);
+
+      // Seed common (idempotent)
+      const seedRes = await ctrl.seedCommonIcd10();
+      expect(seedRes.success).toBe(true);
+
+      // Delete
+      const deleted = await ctrl.deleteIcd10(testCode);
+      expect(deleted.success).toBe(true);
+
+      // Delete again -> 404
+      await expect(ctrl.deleteIcd10(testCode)).rejects.toThrow();
+    });
   });
 });

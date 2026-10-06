@@ -147,7 +147,7 @@ export function RegisterPage() {
                   Back to Sign In
                 </Link>
                 <Link to="/admin/approvals" className="btn btn-outline-secondary">
-                  View Admin Queue (Demo)
+                  View Admin Queue
                 </Link>
               </div>
             </div>

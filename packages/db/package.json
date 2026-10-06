@@ -8,6 +8,7 @@
   "scripts": {
     "migrate": "node scripts/migrate.mjs up",
     "seed:demo": "node scripts/seed-demo-clean.mjs",
+    "seed:bootstrap": "node scripts/seed-bootstrap.mjs",
     "purge:demo": "node scripts/purge-and-seed.mjs",
     "test": "vitest run"
   },

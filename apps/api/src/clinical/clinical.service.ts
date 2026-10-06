@@ -18,6 +18,7 @@ import {
 } from '@clinic/print';
 import type {
   BookAppointmentRequest,
+  PublicBookAppointmentRequest,
   RescheduleAppointmentRequest,
   CancelAppointmentRequest,
   ConfirmAppointmentRequest,
@@ -152,8 +153,8 @@ export class ClinicalService {
   }
 
   /** Availability = schedule slots − booked appointments − exceptions (CLN-T1). */
-  async getAvailability(tenantId: string, userId: string, branchId: string, practitionerId: string, date: string) {
-    return withTenant({ tenantId, userId }, async (tx) => {
+  async getAvailability(tenantId: string, userId: string | undefined, branchId: string, practitionerId: string, date: string) {
+    return withTenant({ tenantId, userId: userId || undefined }, async (tx) => {
       const holiday = await tx.query(
         `SELECT name FROM holidays WHERE tenant_id = $1 AND date = $2::date`,
         [tenantId, date],
@@ -169,7 +170,16 @@ export class ClinicalService {
            AND valid_from <= $5::date AND (valid_to IS NULL OR valid_to >= $5::date)`,
         [tenantId, branchId, practitionerId, weekday, date],
       );
-      if (sched.rowCount === 0) return { date, slots: [] };
+
+      let scheduleRows = sched.rows;
+      if (sched.rowCount === 0) {
+        // Fallback default: Monday-Saturday (weekday 1-6) 09:00 - 17:00, 30m slots
+        if (weekday >= 1 && weekday <= 6) {
+          scheduleRows = [{ start_time: '09:00:00', end_time: '17:00:00', slot_minutes: 30 }];
+        } else {
+          return { date, slots: [] };
+        }
+      }
 
       const exc = await tx.query(
         `SELECT * FROM practitioner_schedule_exceptions
@@ -188,7 +198,7 @@ export class ClinicalService {
 
       const slots: Array<{ startsAt: string; endsAt: string; available: boolean }> = [];
       const dayStart = new Date(`${date}T00:00:00Z`);
-      for (const s of sched.rows) {
+      for (const s of scheduleRows) {
         const timeParts = (v: string) => String(v).split(':').map(Number);
         const [sh = 0, sm = 0] = timeParts(String(s.start_time));
         const [eh = 0, em = 0] = timeParts(String(s.end_time));
@@ -255,6 +265,177 @@ export class ClinicalService {
         [tenantId],
       );
       return { data: res.rows };
+    });
+  }
+
+  async listPractitioners(tenantId: string, userId?: string) {
+    return withTenant({ tenantId, userId: userId || undefined }, async (tx) => {
+      const res = await tx.query(
+        `SELECT u.id, u.name, u.email,
+                COALESCE(e.job_title, 'Physician') AS title,
+                COALESCE(e.specialization, 'General Practice') AS specialization
+         FROM users u
+         LEFT JOIN employees e ON e.user_id = u.id AND e.tenant_id = u.tenant_id
+         LEFT JOIN user_roles ur ON ur.user_id = u.id AND ur.tenant_id = u.tenant_id
+         LEFT JOIN roles r ON r.id = ur.role_id AND r.tenant_id = u.tenant_id
+         WHERE u.tenant_id = $1 AND u.status = 'ACTIVE'
+           AND (r.code IN ('doctor', 'tenant_admin') OR e.job_title ILIKE '%doctor%' OR e.job_title ILIKE '%physician%' OR u.name ILIKE 'Dr.%')
+         GROUP BY u.id, u.name, u.email, e.job_title, e.specialization
+         ORDER BY u.name`,
+        [tenantId],
+      );
+      if (res.rows.length === 0) {
+        const fallback = await tx.query(
+          `SELECT u.id, u.name, u.email,
+                  'Physician' AS title,
+                  'General Practice' AS specialization
+           FROM users u WHERE u.tenant_id = $1 AND u.status = 'ACTIVE' ORDER BY u.name`,
+          [tenantId],
+        );
+        return { data: fallback.rows };
+      }
+      return { data: res.rows };
+    });
+  }
+
+  async getPublicBookingConfig(tenantId: string) {
+    return withTenant({ tenantId }, async (tx) => {
+      const tenantRes = await tx.query(
+        `SELECT id, name, slug FROM tenants WHERE id = $1`,
+        [tenantId],
+      );
+      const clinic = tenantRes.rows[0];
+
+      const branchesRes = await tx.query(
+        `SELECT id, name, code, service_profile FROM branches WHERE tenant_id = $1 ORDER BY name`,
+        [tenantId],
+      );
+
+      const practRes = await tx.query(
+        `SELECT u.id, u.name, u.email,
+                COALESCE(e.job_title, 'Physician') AS title,
+                COALESCE(e.specialization, 'General Practice') AS specialization
+         FROM users u
+         LEFT JOIN employees e ON e.user_id = u.id AND e.tenant_id = u.tenant_id
+         LEFT JOIN user_roles ur ON ur.user_id = u.id AND ur.tenant_id = u.tenant_id
+         LEFT JOIN roles r ON r.id = ur.role_id AND r.tenant_id = u.tenant_id
+         WHERE u.tenant_id = $1 AND u.status = 'ACTIVE'
+           AND (r.code IN ('doctor', 'tenant_admin') OR e.job_title ILIKE '%doctor%' OR e.job_title ILIKE '%physician%' OR u.name ILIKE 'Dr.%')
+         GROUP BY u.id, u.name, u.email, e.job_title, e.specialization
+         ORDER BY u.name`,
+        [tenantId],
+      );
+
+      const practitioners = practRes.rows.length > 0
+        ? practRes.rows
+        : (await tx.query(
+            `SELECT u.id, u.name, u.email, 'Physician' AS title, 'General Practice' AS specialization
+             FROM users u WHERE u.tenant_id = $1 AND u.status = 'ACTIVE' ORDER BY u.name`,
+            [tenantId],
+          )).rows;
+
+      return {
+        clinic,
+        branches: branchesRes.rows,
+        practitioners,
+      };
+    });
+  }
+
+  async bookPublicAppointment(tenantId: string, dto: PublicBookAppointmentRequest) {
+    return withTenant({ tenantId, userId: dto.practitionerId }, async (tx) => {
+      // 1. Conflict check
+      const conflict = await tx.query(
+        `SELECT id FROM appointments
+         WHERE tenant_id = $1 AND practitioner_id = $2
+           AND status IN ('BOOKED','CONFIRMED','CHECKED_IN','IN_CONSULT')
+           AND tstzrange(starts_at, ends_at) && tstzrange($3::timestamptz, $4::timestamptz)`,
+        [tenantId, dto.practitionerId, dto.startsAt, dto.endsAt],
+      );
+      if ((conflict.rowCount ?? 0) > 0) {
+        throw new ProblemException('APPOINTMENT_CONFLICT', {
+          detail: 'That slot is already booked. Please choose another time slot.',
+        });
+      }
+
+      // 2. Patient lookup or registration
+      let patientId: string;
+      const existingPatient = await tx.query(
+        `SELECT id FROM patients
+         WHERE tenant_id = $1
+           AND lower(first_name) = lower($2)
+           AND lower(last_name) = lower($3)
+           AND date_of_birth = $4::date
+           AND status != 'MERGED'
+         LIMIT 1`,
+        [tenantId, dto.firstName.trim(), dto.lastName.trim(), dto.dateOfBirth],
+      );
+
+      if ((existingPatient.rowCount ?? 0) > 0) {
+        patientId = existingPatient.rows[0].id;
+      } else {
+        const seq = await tx.query(`SELECT app.next_doc_no($1::uuid, 'PAT-2026') AS n`, [tenantId]);
+        const patientNo = `PAT-2026-${String(seq.rows[0].n).padStart(4, '0')}`;
+
+        const newPatient = await tx.query(
+          `INSERT INTO patients (tenant_id, first_name, last_name, middle_name, date_of_birth, gender, status)
+           VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE')
+           RETURNING id`,
+          [tenantId, dto.firstName.trim(), dto.lastName.trim(), dto.middleName?.trim() ?? null, dto.dateOfBirth, dto.gender],
+        );
+        patientId = newPatient.rows[0].id;
+
+        await tx.query(
+          `INSERT INTO patient_identifiers (tenant_id, patient_id, type, value)
+           VALUES ($1, $2, 'MRN', $3), ($1, $2, 'PATIENT_NO', $3)`,
+          [tenantId, patientId, patientNo],
+        );
+
+        if (dto.phone?.trim()) {
+          await tx.query(
+            `INSERT INTO patient_contacts (tenant_id, patient_id, type, value, is_primary)
+             VALUES ($1, $2, 'MOBILE', $3, true)`,
+            [tenantId, patientId, dto.phone.trim()],
+          );
+        }
+        if (dto.email?.trim()) {
+          await tx.query(
+            `INSERT INTO patient_contacts (tenant_id, patient_id, type, value, is_primary)
+             VALUES ($1, $2, 'EMAIL', $3, false)`,
+            [tenantId, patientId, dto.email.trim()],
+          );
+        }
+      }
+
+      // 3. Insert Appointment with channel 'ONLINE'
+      const apt = await tx.query(
+        `INSERT INTO appointments
+           (tenant_id, branch_id, patient_id, practitioner_id, service_id, starts_at, ends_at, channel, notes, created_by)
+         VALUES ($1, $2, $3, $4, NULL, $5::timestamptz, $6::timestamptz, 'ONLINE', $7, $8)
+         RETURNING *`,
+        [tenantId, dto.branchId, patientId, dto.practitionerId, dto.startsAt, dto.endsAt, dto.notes ?? null, dto.practitionerId],
+      ).catch((err: { code?: string }) => {
+        if (err.code === '23P01') {
+          throw new ProblemException('APPOINTMENT_CONFLICT', {
+            detail: 'That slot was just taken by another patient.',
+          });
+        }
+        throw err;
+      });
+
+      const row = apt.rows[0];
+      return {
+        appointmentId: row.id,
+        referenceNo: row.id.slice(0, 8).toUpperCase(),
+        status: row.status,
+        channel: row.channel,
+        startsAt: row.starts_at,
+        endsAt: row.ends_at,
+        patientId,
+        patientName: `${dto.firstName} ${dto.lastName}`,
+        practitionerId: dto.practitionerId,
+        branchId: dto.branchId,
+      };
     });
   }
 
@@ -497,7 +678,14 @@ export class ClinicalService {
       const [vitalsRows, notes, dx, rx, procedures, charges, labOrders, supplies, allergies] = await Promise.all([
         tx.query(`SELECT * FROM vitals WHERE tenant_id = $1 AND visit_id = $2 AND voided_at IS NULL ORDER BY recorded_at DESC`, [tenantId, visitId]),
         tx.query(`SELECT * FROM clinical_notes WHERE tenant_id = $1 AND visit_id = $2 ORDER BY version DESC`, [tenantId, visitId]),
-        tx.query(`SELECT * FROM visit_diagnoses WHERE tenant_id = $1 AND visit_id = $2`, [tenantId, visitId]),
+        tx.query(
+          `SELECT vd.*, r.description as icd10_description, coalesce(vd.description, r.description, vd.icd10_code) as description
+           FROM visit_diagnoses vd
+           LEFT JOIN ref_icd10 r ON r.code = vd.icd10_code
+           WHERE vd.tenant_id = $1 AND vd.visit_id = $2
+           ORDER BY vd.created_at ASC`,
+          [tenantId, visitId],
+        ),
         tx.query(`
           SELECT rx.*,
                  u.name as prescriber_name,
@@ -547,6 +735,7 @@ export class ClinicalService {
         ...v.rows[0],
         vitals: vitalsRows.rows,
         notes: notes.rows,
+        clinical_note: notes.rows[0] ?? null,
         diagnoses: dx.rows,
         prescriptions: rx.rows,
         labOrders: labOrders.rows,
@@ -751,9 +940,9 @@ export class ClinicalService {
   async addDiagnosis(tenantId: string, userId: string, visitId: string, dto: AddDiagnosisRequest) {
     return withTenant({ tenantId, userId }, async (tx) => {
       const res = await tx.query(
-        `INSERT INTO visit_diagnoses (tenant_id, visit_id, icd10_code, dx_type, certainty, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-        [tenantId, visitId, dto.icd10Code.toUpperCase(), dto.dxType, dto.certainty, userId],
+        `INSERT INTO visit_diagnoses (tenant_id, visit_id, icd10_code, description, dx_type, certainty, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+        [tenantId, visitId, dto.icd10Code.toUpperCase(), dto.description?.trim() || null, dto.dxType, dto.certainty, userId],
       );
       return res.rows[0];
     });
@@ -1339,6 +1528,45 @@ export class ClinicalService {
       patientAge = Math.floor(diff / (365.25 * 24 * 3600 * 1000));
     }
 
+    const latestNote = (visit.notes || [])[0];
+    const dxList = (visit.diagnoses || [])
+      .map((d: any) => {
+        const code = (d.icd10_code || d.icd10Code || '').trim();
+        const desc = (d.description || d.icd10_description || '').trim();
+        if (desc && code && desc.toLowerCase() !== code.toLowerCase()) {
+          return `${desc} (${code})`;
+        }
+        return desc || code;
+      })
+      .filter(Boolean);
+
+    const primaryDx = (visit.diagnoses || [])[0];
+    const primaryDesc =
+      overrides?.diagnosisDescription ||
+      (primaryDx?.description && primaryDx.description !== primaryDx.icd10_code ? primaryDx.description : undefined) ||
+      primaryDx?.icd10_description ||
+      undefined;
+
+    const primaryDiagnosis =
+      overrides?.diagnosis ||
+      overrides?.clinicalImpression ||
+      (dxList.length > 0 ? dxList.join('; ') : undefined) ||
+      latestNote?.assessment ||
+      visit.chief_complaint ||
+      undefined;
+
+    const diagnosisDescription =
+      overrides?.diagnosisDescription ||
+      primaryDesc ||
+      undefined;
+
+    const specialInstruction =
+      overrides?.advice ||
+      overrides?.specialInstruction ||
+      activePrescriptions.map((r: any) => r.notes).filter(Boolean).join('. ') ||
+      latestNote?.plan ||
+      'Take medications strictly as directed. Keep all medicines out of reach of children. Follow up as scheduled.';
+
     const doc: PrescriptionDocument = {
       clinicName: overrides?.clinicName || visit.clinic_name || 'Clinic Medical Center',
       branchName: overrides?.branchName || visit.branch_name || 'Consultation & Specialty Services',
@@ -1355,6 +1583,9 @@ export class ClinicalService {
       patientAddress: visit.address,
       patientMrn: visit.patient_id ? String(visit.patient_id).slice(0, 8) : undefined,
       allergies: visit.allergies || [],
+      diagnosis: primaryDiagnosis,
+      diagnosisDescription,
+      clinicalImpression: primaryDiagnosis,
       prescriberName:
         overrides?.doctorName || visit.practitioner_name || 'Dr. Attending Physician, MD',
       prescriberTitle: overrides?.doctorTitle || visit.practitioner_job_title || 'Attending Physician',
@@ -1364,7 +1595,7 @@ export class ClinicalService {
       s2LicenseNo: overrides?.s2Number || visit.practitioner_s2_no || (s2SerialNo ? 'S2-DDB-2026-99' : undefined),
       s2SerialNo,
       s2QuantityInWords: s2SerialNo ? `${allItems.length} controlled medication items prescribed` : undefined,
-      specialInstruction: overrides?.advice || visit.clinical_note?.plan || 'Take medications strictly as directed. Keep all medicines out of reach of children. Follow up as scheduled.',
+      specialInstruction,
       items: allItems.length > 0 ? allItems : [
         {
           genericName: 'No active medications prescribed',
@@ -1430,7 +1661,8 @@ export class ClinicalService {
       patientSex: visit.gender,
       patientDob: visit.date_of_birth ? new Date(visit.date_of_birth).toISOString().slice(0, 10) : undefined,
       patientMrn: visit.patient_id ? String(visit.patient_id).slice(0, 8) : undefined,
-      clinicalImpression: overrides?.clinicalImpression || visit.diagnoses?.[0]?.description || visit.chief_complaint || 'Diagnostic workup and clinical evaluation',
+      clinicalImpression: overrides?.clinicalImpression || overrides?.diagnosis || (visit.diagnoses?.[0]?.description && visit.diagnoses?.[0]?.description !== visit.diagnoses?.[0]?.icd10_code ? `${visit.diagnoses[0].description} (${visit.diagnoses[0].icd10_code})` : visit.diagnoses?.[0]?.description) || visit.chief_complaint || 'Diagnostic workup and clinical evaluation',
+      diagnosisDescription: overrides?.diagnosisDescription || (visit.diagnoses?.[0]?.description && visit.diagnoses[0].description !== visit.diagnoses[0].icd10_code ? visit.diagnoses[0].description : undefined),
       orderingPhysician: overrides?.doctorName || visit.practitioner_name || 'Dr. Attending Physician, MD',
       physicianPrcNo: overrides?.prcNumber || visit.practitioner_prc_no || undefined,
       tests: allTests.length > 0 ? allTests : [
@@ -1503,7 +1735,8 @@ export class ClinicalService {
       patientDob: visit.date_of_birth ? new Date(visit.date_of_birth).toISOString().slice(0, 10) : undefined,
       patientMrn: visit.patient_id ? String(visit.patient_id).slice(0, 8) : undefined,
       allergies: visit.allergies || [],
-      clinicalImpression: overrides?.clinicalImpression || visit.diagnoses?.[0]?.description || visit.chief_complaint || 'Diagnostic workup and clinical management',
+      clinicalImpression: overrides?.clinicalImpression || overrides?.diagnosis || (visit.diagnoses?.[0]?.description && visit.diagnoses?.[0]?.description !== visit.diagnoses?.[0]?.icd10_code ? `${visit.diagnoses[0].description} (${visit.diagnoses[0].icd10_code})` : visit.diagnoses?.[0]?.description) || visit.chief_complaint || 'Diagnostic workup and clinical management',
+      diagnosisDescription: overrides?.diagnosisDescription || (visit.diagnoses?.[0]?.description && visit.diagnoses[0].description !== visit.diagnoses[0].icd10_code ? visit.diagnoses[0].description : undefined),
       planNotes: visit.clinical_note?.plan || undefined,
       prescriberName: overrides?.doctorName || visit.practitioner_name || 'Dr. Attending Physician, MD',
       prcLicenseNo: overrides?.prcNumber || visit.practitioner_prc_no || undefined,
@@ -1567,13 +1800,15 @@ export class ClinicalService {
       patientAge: rx.date_of_birth ? Math.floor((Date.now() - new Date(rx.date_of_birth).getTime()) / (365.25 * 24 * 3600 * 1000)) : undefined,
       patientSex: rx.gender,
       patientDob: rx.date_of_birth ? new Date(rx.date_of_birth).toISOString().slice(0, 10) : undefined,
+      diagnosis: overrides?.diagnosis || rx.notes || undefined,
+      clinicalImpression: overrides?.diagnosis || rx.notes || undefined,
       prescriberName: overrides?.doctorName || rx.prescriber_name || profile?.name || 'Dr. Attending Physician, MD',
       prescriberTitle: overrides?.doctorTitle || profile?.jobTitle || undefined,
       specialty: overrides?.specialty || profile?.specialization || undefined,
       prcLicenseNo: overrides?.prcNumber || profile?.prcLicenseNo || undefined,
       ptrNo: overrides?.ptrNumber || profile?.ptrNo || undefined,
       s2LicenseNo: overrides?.s2Number || profile?.s2LicenseNo || undefined,
-      specialInstruction: overrides?.advice || 'Take medications strictly as directed.',
+      specialInstruction: overrides?.advice || rx.notes || 'Take medications strictly as directed.',
       items: allItems,
       verificationHash: rxPrint.verificationHash,
     };

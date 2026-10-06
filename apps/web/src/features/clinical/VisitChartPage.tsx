@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { AlertBanner, StatusPill, PatientBanner, Timeline } from "@clinic/ui";
 import { apiGet, apiPost, apiGetBlob, ApiError } from "../../shared/api/client.js";
@@ -43,6 +43,7 @@ interface NoteRow {
 interface DiagnosisRow {
   id: string;
   icd10Code: string;
+  description?: string;
   dxType: string;
   certainty: string;
 }
@@ -182,6 +183,42 @@ export function VisitChartPage() {
 
   // Dx form
   const [icd10, setIcd10] = useState("");
+  const [dxDescription, setDxDescription] = useState("");
+  const [dxType, setDxType] = useState<"PRIMARY" | "SECONDARY">("PRIMARY");
+  const [dxCertainty, setDxCertainty] = useState<"CONFIRMED" | "PROVISIONAL">("CONFIRMED");
+  const [availableIcd10, setAvailableIcd10] = useState<Array<{ code: string; description: string }>>([]);
+  const [icd10Refreshing, setIcd10Refreshing] = useState(false);
+
+  const reloadIcd10Catalog = useCallback(async (q?: string) => {
+    setIcd10Refreshing(true);
+    try {
+      const url = q ? `/reference/icd10?q=${encodeURIComponent(q)}&limit=100` : `/reference/icd10?limit=500`;
+      const icd = await apiGet<any>(url);
+      const list = Array.isArray(icd) ? icd : Array.isArray(icd?.data) ? icd.data : [];
+      if (list.length > 0) {
+        setAvailableIcd10((prev) => {
+          const map = new Map<string, { code: string; description: string }>();
+          for (const item of prev) map.set(item.code, item);
+          for (const item of list) map.set(item.code, item);
+          return Array.from(map.values());
+        });
+      }
+    } catch { /* ignore offline fallback */ } finally {
+      setIcd10Refreshing(false);
+    }
+  }, []);
+
+  // Live query ICD-10 database when user types an uncommon or custom code
+  useEffect(() => {
+    if (!icd10 || icd10.trim().length < 2) return;
+    const timer = setTimeout(() => {
+      const found = availableIcd10.some((i) => i.code.toLowerCase() === icd10.trim().toLowerCase());
+      if (!found) {
+        void reloadIcd10Catalog(icd10.trim());
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [icd10, availableIcd10, reloadIcd10Catalog]);
 
   // Rx form
   const [rxGeneric, setRxGeneric] = useState("");
@@ -196,6 +233,7 @@ export function VisitChartPage() {
   const [rxControlled, setRxControlled] = useState(false);
   const [specialRxNo, setSpecialRxNo] = useState("");
   const [qtyWords, setQtyWords] = useState("");
+  const [rxNotes, setRxNotes] = useState("");
   const [signConfirm, setSignConfirm] = useState<{ open: boolean } | null>(null);
   const [signError, setSignError] = useState<string | null>(null);
 
@@ -226,6 +264,12 @@ export function VisitChartPage() {
       try {
         const drugs = await apiGet<any[]>("/pharmacy/products");
         if (Array.isArray(drugs)) setAvailableDrugs(drugs);
+      } catch { /* ignore offline fallback */ }
+
+      try {
+        const icd = await apiGet<any>("/reference/icd10?limit=500");
+        const list = Array.isArray(icd) ? icd : Array.isArray(icd?.data) ? icd.data : [];
+        if (list.length > 0) setAvailableIcd10(list);
       } catch { /* ignore offline fallback */ }
 
       try {
@@ -267,10 +311,34 @@ export function VisitChartPage() {
           } as any);
         }
         if (Array.isArray(v?.vitals) && v.vitals.length > 0) setVitals(v.vitals);
-        if (Array.isArray(v?.notes)) setNotes(v.notes);
-        if (Array.isArray(v?.diagnoses)) setDiagnoses(v.diagnoses);
+        if (Array.isArray(v?.notes)) {
+          setNotes(v.notes);
+          if (v.notes.length > 0) {
+            const latestNote = v.notes[0];
+            setNoteId(latestNote.id);
+            setNoteStatus(latestNote.status || "DRAFT");
+            setSubjective(latestNote.subjective || "");
+            setObjective(latestNote.objective || "");
+            setAssessment(latestNote.assessment || "");
+            setPlan(latestNote.plan || "");
+            if (latestNote.plan) {
+              setRxNotes((prev) => prev || latestNote.plan || "");
+            }
+          }
+        }
+        if (Array.isArray(v?.diagnoses)) {
+          setDiagnoses(
+            v.diagnoses.map((d: any) => ({
+              id: d.id,
+              icd10Code: d.icd10_code || d.icd10Code || "",
+              description: d.description || d.icd10_description || "",
+              dxType: d.dx_type || d.dxType || "PRIMARY",
+              certainty: d.certainty || d.certainty || "CONFIRMED",
+            })),
+          );
+        }
         if (Array.isArray(v?.prescriptions)) {
-          setPrescriptions(v.prescriptions.map((rx: any) => ({
+          const mappedRxs = v.prescriptions.map((rx: any) => ({
             id: rx.id,
             rxNo: rx.rx_no || rx.rxNo || "RX",
             status: rx.status || "ISSUED",
@@ -281,7 +349,12 @@ export function VisitChartPage() {
             prescriberName: rx.prescriber_name || rx.prescriberName,
             notes: rx.notes,
             items: rx.items,
-          })));
+          }));
+          setPrescriptions(mappedRxs);
+          const firstWithNotes = mappedRxs.find((r: any) => r.notes?.trim());
+          if (firstWithNotes?.notes) {
+            setRxNotes((prev) => prev || firstWithNotes.notes);
+          }
         }
         if (Array.isArray(v?.labOrders)) setLabOrders(v.labOrders);
         if (Array.isArray(v?.supplies)) setSupplies(v.supplies);
@@ -308,7 +381,7 @@ export function VisitChartPage() {
         ...(spo2 ? { spo2: Number(spo2) } : {}),
       });
       if (res?.flags && res.flags.length > 0) {
-        setNotice(`Abnormal flags: ${res.flags.join(", ")} — triage escalation may apply (CLN-T3).`);
+        setNotice(`Abnormal flags: ${res.flags.join(", ")} — triage escalation may apply.`);
       } else {
         setNotice("Vitals recorded.");
       }
@@ -327,7 +400,27 @@ export function VisitChartPage() {
     const body = { noteType: "SOAP", subjective, objective, assessment, plan };
     try {
       const res = await apiPost<NoteRow>(`/clinical/visits/${visitId}/notes`, body);
-      setNoteId(res?.id ?? noteId);
+      const newId = res?.id ?? noteId ?? `note-${Date.now()}`;
+      setNoteId(newId);
+      const updatedNote: NoteRow = {
+        id: newId,
+        noteType: "SOAP",
+        subjective,
+        objective,
+        assessment,
+        plan,
+        status: noteStatus,
+        version: res?.version ?? 1,
+      };
+      setNotes((prev) => {
+        const idx = prev.findIndex((n) => n.id === newId);
+        if (idx >= 0) {
+          const copy = [...prev];
+          copy[idx] = updatedNote;
+          return copy;
+        }
+        return [updatedNote, ...prev];
+      });
       setNotice("SOAP draft saved.");
     } catch (err) {
       setError(err instanceof ApiError ? err.problem.detail ?? err.problem.title : "Could not save the note.");
@@ -361,17 +454,39 @@ export function VisitChartPage() {
       }
     }
     setNoteStatus("SIGNED");
+    setNotes((prev) => prev.map((n) => (n.id === noteId ? { ...n, status: "SIGNED" } : n)));
     setSignConfirm(null);
-    setNotice("Note signed — it is now locked; later changes are addenda (CLN-T4).");
+    setNotice("Note signed — it is now locked; later changes are addenda.");
   };
 
   const addDiagnosis = async () => {
-    if (!icd10.trim()) return;
-    setDiagnoses((prev) => [...prev, { id: `dx-${Date.now()}`, icd10Code: icd10.trim().toUpperCase(), dxType: "PRIMARY", certainty: "CONFIRMED" }]);
-    const code = icd10.trim().toUpperCase();
+    const rawInput = icd10.trim();
+    if (!rawInput && !dxDescription.trim()) return;
+    let code = rawInput ? ((rawInput.split(" - ")[0] ?? "").split(" ")[0] ?? "").trim().toUpperCase() || "R69" : "R69";
+    let desc = dxDescription.trim();
+    const matched = availableIcd10.find(
+      (item) => item.code.toUpperCase() === code || (rawInput && rawInput.toUpperCase().includes(item.code.toUpperCase())),
+    );
+    if (matched) {
+      code = matched.code.toUpperCase();
+      if (!desc) desc = matched.description;
+    }
+    const newDx: DiagnosisRow = {
+      id: `dx-${Date.now()}`,
+      icd10Code: code,
+      description: desc || undefined,
+      dxType,
+      certainty: dxCertainty,
+    };
+    setDiagnoses((prev) => [...prev, newDx]);
     setIcd10("");
+    setDxDescription("");
     try {
-      await apiPost(`/clinical/visits/${visitId}/diagnoses`, { icd10Code: code, dxType: "PRIMARY", certainty: "CONFIRMED" });
+      await apiPost(`/clinical/visits/${visitId}/diagnoses`, {
+        icd10Code: code,
+        dxType,
+        certainty: dxCertainty,
+      });
     } catch { /* optimistic row stands */ }
   };
 
@@ -382,7 +497,7 @@ export function VisitChartPage() {
       return;
     }
     if (rxControlled && (!specialRxNo.trim() || !qtyWords.trim())) {
-      setError("Controlled Rx needs the special-Rx serial and the quantity in words (CLN-T5).");
+      setError("Controlled Rx needs the special-Rx serial and the quantity in words.");
       return;
     }
     try {
@@ -392,6 +507,7 @@ export function VisitChartPage() {
         visitId,
         patientId,
         isControlled: rxControlled,
+        notes: rxNotes.trim() || undefined,
         items: [{
           // drugProductId links the line to the formulary so the dispense
           // workbench can allocate stock against it. Omitted (not null) when
@@ -419,6 +535,7 @@ export function VisitChartPage() {
           specialRxNo: rxControlled ? specialRxNo.trim() : undefined,
           qtyWords: rxControlled ? qtyWords.trim() : undefined,
           prescriberName: visit.practitionerName || "Attending Physician",
+          notes: rxNotes.trim() || undefined,
           items: [{
             generic_name: rxGeneric.trim(),
             sig_dose: rxSigDose.trim(),
@@ -428,7 +545,7 @@ export function VisitChartPage() {
         },
         ...prev,
       ]);
-      setNotice(`Prescription ${rx?.rxNo ?? rx?.rx_no ?? ""} issued — it is now in the pharmacy queue (JOB-02).`);
+      setNotice(`Prescription ${rx?.rxNo ?? rx?.rx_no ?? ""} issued — it is now in the pharmacy queue.`);
       setRxGeneric(""); setRxSigDose(""); setRxFrequency(""); setRxQty(""); setRxControlled(false); setSpecialRxNo(""); setQtyWords("");
     } catch (err) {
       setError(err instanceof ApiError ? err.problem.detail ?? err.problem.title : "Prescription failed.");
@@ -661,7 +778,7 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
             <Link to="/clinical/visits">Consultations</Link> <span aria-hidden="true">/</span> {visit.visitNo}
           </nav>
           <h1 className="page-title">Visit chart</h1>
-          <div className="page-subtitle">CLN-T4 consultation workflow — sign locks the note</div>
+          <div className="page-subtitle">Consultation workflow — sign locks the note</div>
         </div>
         <div className="d-flex align-items-center gap-2">
           <button
@@ -696,7 +813,7 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
         <div className="col-lg-8">
           {/* ── Vitals ──────────────────────────────────────────────────── */}
           <div className="clinic-card mb-4">
-            <div className="clinic-card-header"><span className="fw-bold">Vitals</span><span className="small text-muted">auto-flags per CLN-T3</span></div>
+            <div className="clinic-card-header"><span className="fw-bold">Vitals</span><span className="small text-muted">Triage alerts enabled</span></div>
             <div className="p-3">
               <div className="row g-2 mb-3">
                 <div className="col-6 col-md-3"><label className="form-label small" htmlFor="vt-bps">BP systolic</label><input id="vt-bps" type="number" className="form-control form-control-sm" value={bpSys} onChange={(e) => setBpSys(e.target.value)} /></div>
@@ -749,28 +866,148 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
 
           {/* ── Diagnoses ───────────────────────────────────────────────── */}
           <div className="clinic-card mb-4">
-            <div className="clinic-card-header"><span className="fw-bold">Diagnoses (ICD-10)</span></div>
+            <div className="clinic-card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+              <div className="d-flex align-items-center gap-2 flex-wrap">
+                <span className="fw-bold">Diagnoses (ICD-10)</span>
+                <span className="small text-muted">clinical impression &amp; Rx pad</span>
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm py-0 px-2"
+                  style={{ fontSize: "0.75rem" }}
+                  title="Reload latest ICD-10 codes from master catalogue"
+                  onClick={() => void reloadIcd10Catalog()}
+                  disabled={icd10Refreshing}
+                >
+                  {icd10Refreshing ? "Syncing..." : `🔄 Refresh (${availableIcd10.length})`}
+                </button>
+                <a
+                  href="/admin/icd10"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="badge bg-light text-primary border text-decoration-none"
+                  style={{ fontSize: "0.75rem", padding: "4px 8px" }}
+                  title="Manage ICD-10 Codes in Admin Settings (opens in new tab)"
+                >
+                  ⚙️ ICD-10 Catalogue ↗
+                </a>
+              </div>
+              {assessment ? (
+                <button
+                  type="button"
+                  className="btn btn-link btn-sm p-0 text-decoration-none"
+                  style={{ fontSize: "0.8rem" }}
+                  onClick={() => {
+                    setDxDescription(assessment);
+                    const match = availableIcd10.find(
+                      (i) =>
+                        i.description.toLowerCase().includes(assessment.toLowerCase()) ||
+                        assessment.toLowerCase().includes(i.description.toLowerCase()),
+                    );
+                    if (match) {
+                      setIcd10(match.code);
+                      setDxDescription(match.description);
+                    } else {
+                      void reloadIcd10Catalog(assessment);
+                    }
+                  }}
+                >
+                  📋 Use SOAP Assessment ({assessment.length > 25 ? assessment.slice(0, 25) + "…" : assessment})
+                </button>
+              ) : null}
+            </div>
             <div className="p-3">
-              <div className="d-flex gap-2 mb-2">
-                <input
-                  className="form-control form-control-sm clinic-mono"
-                  placeholder="e.g. J06.9"
-                  aria-label="ICD-10 code"
-                  value={icd10}
-                  onChange={(e) => setIcd10(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") void addDiagnosis(); }}
-                />
-                <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => void addDiagnosis()}>Add</button>
+              <div className="row g-2 mb-2">
+                <div className="col-md-3">
+                  <label className="form-label small mb-1" htmlFor="dx-icd10">ICD-10 Code *</label>
+                  <input
+                    id="dx-icd10"
+                    list="ref-icd10-list"
+                    className="form-control form-control-sm clinic-mono"
+                    placeholder="e.g. J06.9"
+                    aria-label="ICD-10 code"
+                    value={icd10}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setIcd10(val);
+                      const matched = availableIcd10.find(
+                        (item) => item.code.toLowerCase() === val.trim().toLowerCase(),
+                      );
+                      if (matched && !dxDescription) {
+                        setDxDescription(matched.description);
+                      }
+                    }}
+                    onKeyDown={(e) => { if (e.key === "Enter") void addDiagnosis(); }}
+                  />
+                  <datalist id="ref-icd10-list">
+                    {availableIcd10.map((item) => (
+                      <option key={item.code} value={item.code}>
+                        {item.code} — {item.description}
+                      </option>
+                    ))}
+                  </datalist>
+                </div>
+                <div className="col-md-5">
+                  <label className="form-label small mb-1" htmlFor="dx-desc">Diagnosis / Impression Description</label>
+                  <input
+                    id="dx-desc"
+                    list="ref-icd10-desc-list"
+                    className="form-control form-control-sm"
+                    placeholder="e.g. Acute upper respiratory tract infection"
+                    value={dxDescription}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setDxDescription(val);
+                      const matched = availableIcd10.find(
+                        (item) => item.description.toLowerCase() === val.trim().toLowerCase(),
+                      );
+                      if (matched && !icd10) {
+                        setIcd10(matched.code);
+                      }
+                    }}
+                    onKeyDown={(e) => { if (e.key === "Enter") void addDiagnosis(); }}
+                  />
+                  <datalist id="ref-icd10-desc-list">
+                    {availableIcd10.map((item) => (
+                      <option key={`desc-${item.code}`} value={item.description}>
+                        [{item.code}] {item.description}
+                      </option>
+                    ))}
+                  </datalist>
+                </div>
+                <div className="col-md-2">
+                  <label className="form-label small mb-1" htmlFor="dx-type">Type</label>
+                  <select
+                    id="dx-type"
+                    className="form-select form-select-sm"
+                    value={dxType}
+                    onChange={(e) => setDxType(e.target.value as any)}
+                  >
+                    <option value="PRIMARY">Primary</option>
+                    <option value="SECONDARY">Secondary</option>
+                  </select>
+                </div>
+                <div className="col-md-2 d-flex align-items-end">
+                  <button type="button" className="btn btn-sm btn-outline-primary w-100" onClick={() => void addDiagnosis()}>
+                    Add
+                  </button>
+                </div>
               </div>
               {diagnoses.length === 0 ? (
                 <p className="small text-muted mb-0">No diagnoses recorded yet.</p>
               ) : (
-                diagnoses.map((d) => (
-                  <div key={d.id} className="d-flex align-items-center gap-2 py-1">
-                    <span className="badge bg-primary-subtle text-primary border border-primary-subtle clinic-mono">{d.icd10Code}</span>
-                    <span className="small text-muted">{d.dxType.toLowerCase()} · {d.certainty.toLowerCase()}</span>
-                  </div>
-                ))
+                <div className="mt-2 border-top pt-2">
+                  {diagnoses.map((d) => (
+                    <div key={d.id} className="d-flex align-items-center justify-content-between py-1 border-bottom small flex-wrap gap-2">
+                      <div className="d-flex align-items-center gap-2">
+                        <span className="badge bg-primary-subtle text-primary border border-primary-subtle clinic-mono fw-bold">{d.icd10Code}</span>
+                        {d.description && d.description !== d.icd10Code ? (
+                          <span className="fw-semibold text-dark">{d.description}</span>
+                        ) : null}
+                        <span className="badge bg-light text-muted border">{d.dxType.toLowerCase()} · {d.certainty.toLowerCase()}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </div>
@@ -780,7 +1017,7 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
             <div className="clinic-card-header d-flex justify-content-between align-items-center">
               <div>
                 <span className="fw-bold">Prescribe</span>
-                <span className="small text-muted ms-2">issue → pharmacy queue (JOB-02)</span>
+                <span className="small text-muted ms-2">issue → pharmacy queue</span>
               </div>
               <div className="d-flex align-items-center gap-2">
                 <button
@@ -900,6 +1137,32 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
                   </div>
                 </div>
               ) : null}
+              <div className="mb-3">
+                <div className="d-flex justify-content-between align-items-center mb-1">
+                  <label className="form-label small mb-0" htmlFor="rx-notes">
+                    <strong>Physician's Instructions &amp; Notes for Prescription</strong>
+                    <span className="text-muted fw-normal ms-1">(printed on official Rx pad)</span>
+                  </label>
+                  {plan ? (
+                    <button
+                      type="button"
+                      className="btn btn-link btn-sm p-0 text-decoration-none"
+                      style={{ fontSize: "0.78rem" }}
+                      onClick={() => setRxNotes(plan)}
+                    >
+                      📋 Copy from SOAP Plan
+                    </button>
+                  ) : null}
+                </div>
+                <textarea
+                  id="rx-notes"
+                  className="form-control form-control-sm"
+                  rows={2}
+                  placeholder="e.g. Take after meals. Increase oral fluid intake. Complete 7-day course. Return for follow-up if symptoms persist."
+                  value={rxNotes}
+                  onChange={(e) => setRxNotes(e.target.value)}
+                />
+              </div>
               <button type="button" className="btn btn-sm btn-cerulean" onClick={() => void createAndIssueRx()}>
                 Create & issue
               </button>
@@ -907,34 +1170,41 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
                 <div className="mt-3">
                   <div className="small fw-semibold text-muted mb-1">Prescriptions issued for this encounter:</div>
                   {prescriptions.map((rx) => (
-                    <div key={rx.id} className="d-flex align-items-center justify-content-between py-2 border-bottom small flex-wrap gap-2">
-                      <div className="d-flex align-items-center gap-2">
-                        <span className="clinic-mono fw-semibold text-primary">{rx.rxNo}</span>
-                        <StatusPill tone={rx.status === "ISSUED" ? "low" : rx.status === "DISPENSED" ? "normal" : "pending"} label={rx.status} />
-                        {rx.isControlled ? <span className="badge bg-danger-subtle text-danger border border-danger-subtle">CONTROLLED</span> : null}
-                        {rx.items && rx.items.length > 0 ? (
-                          <span className="text-muted">
-                            ({rx.items.map((i: any) => `${i.generic_name || i.genericName || ""} ${i.sig_dose || ""} x${i.qty_prescribed || ""}`).join(", ")})
-                          </span>
-                        ) : null}
+                    <div key={rx.id} className="py-2 border-bottom small">
+                      <div className="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                        <div className="d-flex align-items-center gap-2">
+                          <span className="clinic-mono fw-semibold text-primary">{rx.rxNo}</span>
+                          <StatusPill tone={rx.status === "ISSUED" ? "low" : rx.status === "DISPENSED" ? "normal" : "pending"} label={rx.status} />
+                          {rx.isControlled ? <span className="badge bg-danger-subtle text-danger border border-danger-subtle">CONTROLLED</span> : null}
+                          {rx.items && rx.items.length > 0 ? (
+                            <span className="text-muted">
+                              ({rx.items.map((i: any) => `${i.generic_name || i.genericName || ""} ${i.sig_dose || ""} x${i.qty_prescribed || ""}`).join(", ")})
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="d-flex align-items-center gap-2">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-secondary py-0 px-2"
+                            style={{ fontSize: "0.78rem" }}
+                            onClick={() => setPrintModal({ open: true, tab: "RX" })}
+                          >
+                            🖨️ Print Rx
+                          </button>
+                          <Link
+                            to={`/pharmacy/dispense/${rx.id}`}
+                            className="btn btn-sm btn-outline-success py-0 px-2"
+                            style={{ fontSize: "0.78rem" }}
+                          >
+                            Dispense in Pharmacy &rarr;
+                          </Link>
+                        </div>
                       </div>
-                      <div className="d-flex align-items-center gap-2">
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-secondary py-0 px-2"
-                          style={{ fontSize: "0.78rem" }}
-                          onClick={() => setPrintModal({ open: true, tab: "RX" })}
-                        >
-                          🖨️ Print Rx
-                        </button>
-                        <Link
-                          to={`/pharmacy/dispense/${rx.id}`}
-                          className="btn btn-sm btn-outline-success py-0 px-2"
-                          style={{ fontSize: "0.78rem" }}
-                        >
-                          Dispense in Pharmacy &rarr;
-                        </Link>
-                      </div>
+                      {rx.notes ? (
+                        <div className="text-muted small ps-2 pt-1 border-top mt-1 fst-italic">
+                          📝 Instructions: {rx.notes}
+                        </div>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -1311,6 +1581,24 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
           labOrders={labOrders as any}
           allergies={visit.allergies || []}
           practitionerName={visit.practitionerName}
+          diagnosis={
+            diagnoses.length > 0
+              ? diagnoses
+                  .map((d) => (d.description && d.description !== d.icd10Code ? `${d.description} (${d.icd10Code})` : d.description || d.icd10Code))
+                  .join("; ")
+              : assessment || visit.chiefComplaint || undefined
+          }
+          diagnosisDescription={
+            diagnoses.length > 0
+              ? diagnoses.find((d) => d.description && d.description !== d.icd10Code)?.description || undefined
+              : assessment || undefined
+          }
+          specialInstruction={
+            rxNotes ||
+            prescriptions.map((r) => r.notes).filter(Boolean).join("\n") ||
+            plan ||
+            undefined
+          }
         />
       ) : null}
     </div>

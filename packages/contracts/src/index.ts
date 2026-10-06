@@ -702,6 +702,14 @@ export const AvailabilityQuerySchema = z.object({
 });
 export type AvailabilityQueryRequest = z.infer<typeof AvailabilityQuerySchema>;
 
+export const PublicAvailabilityQuerySchema = z.object({
+  slug: z.string().min(1),
+  branchId: z.string().uuid(),
+  practitionerId: z.string().uuid(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+export type PublicAvailabilityQueryRequest = z.infer<typeof PublicAvailabilityQuerySchema>;
+
 // ── Appointments (CLN-T1) ─────────────────────────────────────────────────
 export const AppointmentStatusSchema = z.enum([
   'BOOKED', 'CONFIRMED', 'CHECKED_IN', 'IN_CONSULT', 'COMPLETED', 'CANCELLED', 'NO_SHOW',
@@ -723,6 +731,27 @@ export const BookAppointmentSchema = z
     message: 'startsAt must be before endsAt',
   });
 export type BookAppointmentRequest = z.infer<typeof BookAppointmentSchema>;
+
+export const PublicBookAppointmentSchema = z
+  .object({
+    slug: z.string().min(1).max(100),
+    branchId: z.string().uuid(),
+    practitionerId: z.string().uuid(),
+    startsAt: z.string(), // ISO 8601
+    endsAt: z.string(),
+    firstName: z.string().min(1).max(100),
+    lastName: z.string().min(1).max(100),
+    middleName: z.string().max(100).optional(),
+    dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    gender: z.enum(['M', 'F', 'OTHER']),
+    phone: z.string().min(5).max(30),
+    email: z.string().email().optional().or(z.literal('')),
+    notes: z.string().max(1000).optional(),
+  })
+  .refine((v) => new Date(v.startsAt) < new Date(v.endsAt), {
+    message: 'startsAt must be before endsAt',
+  });
+export type PublicBookAppointmentRequest = z.infer<typeof PublicBookAppointmentSchema>;
 
 export const RescheduleAppointmentSchema = z
   .object({
@@ -827,6 +856,7 @@ export type AmendNoteRequest = z.infer<typeof AmendNoteSchema>;
 // ── Diagnoses / problems ──────────────────────────────────────────────────
 export const AddDiagnosisSchema = z.object({
   icd10Code: z.string().min(3).max(8).regex(/^[A-TV-Z][0-9][0-9AB](\.[0-9A-TV-Z]{1,4})?$/i, 'ICD-10 code format'),
+  description: z.string().max(500).optional(),
   dxType: z.enum(['PRIMARY', 'SECONDARY']).default('PRIMARY'),
   certainty: z.enum(['CONFIRMED', 'PROVISIONAL']).default('CONFIRMED'),
 });
@@ -838,6 +868,30 @@ export const AddProblemSchema = z.object({
   onsetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 export type AddProblemRequest = z.infer<typeof AddProblemSchema>;
+
+export const CreateIcd10Schema = z.object({
+  code: z
+    .string()
+    .trim()
+    .min(2, 'Code must be at least 2 characters')
+    .max(10, 'Code must be at most 10 characters')
+    .regex(/^[A-Za-z0-9.]+$/, 'Code must contain only alphanumeric characters and periods'),
+  description: z
+    .string()
+    .trim()
+    .min(2, 'Description must be at least 2 characters')
+    .max(500, 'Description must be at most 500 characters'),
+});
+export type CreateIcd10Request = z.infer<typeof CreateIcd10Schema>;
+
+export const UpdateIcd10Schema = z.object({
+  description: z
+    .string()
+    .trim()
+    .min(2, 'Description must be at least 2 characters')
+    .max(500, 'Description must be at most 500 characters'),
+});
+export type UpdateIcd10Request = z.infer<typeof UpdateIcd10Schema>;
 
 // ── Prescriptions (CLN-T5) ────────────────────────────────────────────────
 export const PrescriptionStatusSchema = z.enum([

@@ -508,7 +508,7 @@ export function CreateUserPage() {
                         type="email"
                         id="userEmail"
                         className="form-control"
-                        placeholder="e.g. m.santos@demo-a.test"
+                        placeholder="e.g. m.santos@clinic.ph"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         required

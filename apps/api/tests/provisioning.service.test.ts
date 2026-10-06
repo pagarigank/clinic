@@ -109,6 +109,37 @@ describe.skipIf(!hasDb)('ProvisioningService (todo 1.7)', () => {
         }),
       ).rejects.toThrow(ProblemException);
     });
+
+    it('falls back gracefully to an active plan when a non-existent dummy planId is passed', async () => {
+      const slug = `test-fallback-plan-${Date.now()}`;
+      const tenant = await service.createTenant({
+        name: 'Fallback Plan Test',
+        slug,
+        planId: '00000000-0000-4000-8000-000000000001',
+        modules: ['admin', 'patients', 'clinical'],
+      });
+      expect(tenant.status).toBe('PROVISIONING');
+
+      // Cleanup
+      const { getAppPool, withTenantOnPool } = await import('@clinic/db');
+      const pool = getAppPool();
+      await withTenantOnPool(pool, { scope: 'platform', tenantId: tenant.id }, async (tx) => {
+        await tx.query(`DELETE FROM outbox WHERE tenant_id = $1`, [tenant.id]);
+        await tx.query(`DELETE FROM tenant_modules WHERE tenant_id = $1`, [tenant.id]);
+        await tx.query(`DELETE FROM subscriptions WHERE tenant_id = $1`, [tenant.id]);
+        await tx.query(`DELETE FROM tenants WHERE id = $1`, [tenant.id]);
+      });
+    });
+  });
+
+  describe('listPlans', () => {
+    it('lists active subscription plans without database error', async () => {
+      const res = await service.listPlans();
+      expect(Array.isArray(res.plans)).toBe(true);
+      expect(res.plans.length).toBeGreaterThan(0);
+      expect(res.plans[0]).toHaveProperty('id');
+      expect(res.plans[0]).toHaveProperty('code');
+    });
   });
 
   describe('suspendTenant / reactivateTenant', () => {

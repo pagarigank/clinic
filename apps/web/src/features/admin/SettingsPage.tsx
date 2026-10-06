@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Link } from "react-router";
 import { AlertBanner, StatusPill } from "@clinic/ui";
 import { ThemeControls } from "../../shared/theme/ThemeControls.js";
 
@@ -62,6 +63,31 @@ export function SettingsPage() {
         </div>
         <div className="clinic-card-body">
           <ThemeControls />
+        </div>
+      </div>
+
+      {/* Clinical Master Data & ICD-10 */}
+      <div className="clinic-card mb-4">
+        <div className="clinic-card-header d-flex justify-content-between align-items-center">
+          <div>
+            <span className="fw-bold">Clinical Master Data &amp; ICD-10 Catalogue</span>
+            <div className="small text-muted">
+              Diagnostic reference database, standardized clinical impressions, and prescription pad coding
+            </div>
+          </div>
+          <Link to="/admin/icd10" className="btn btn-sm btn-cerulean text-decoration-none">
+            Manage ICD-10 Codes →
+          </Link>
+        </div>
+        <div className="p-3">
+          <div className="d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <div className="small text-secondary" style={{ maxWidth: "700px" }}>
+              The ICD-10 catalogue serves as the authoritative diagnostic terminology across all consultations. Codes configured here are dynamically queried in the clinical visit chart (SOAP notes, problem lists) and formatted on printed official prescription pads.
+            </div>
+            <Link to="/admin/icd10" className="btn btn-sm btn-outline-primary">
+              🩺 Open ICD-10 Registry
+            </Link>
+          </div>
         </div>
       </div>
 

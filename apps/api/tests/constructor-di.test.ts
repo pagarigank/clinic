@@ -32,7 +32,9 @@ import { join } from "node:path";
  * dependency MUST carry an explicit @Inject() token.
  */
 
-const SRC_ROOT = join(process.cwd(), "apps/api/src");
+const SRC_ROOT = process.cwd().endsWith("apps\\api") || process.cwd().endsWith("apps/api")
+  ? join(process.cwd(), "src")
+  : join(process.cwd(), "apps/api/src");
 
 function injectableFiles(dir: string): string[] {
   const out: string[] = [];

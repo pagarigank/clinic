@@ -157,7 +157,7 @@ export function DuplicateReviewPage() {
       {loadError ? (
         <div className="mb-3">
           <AlertBanner severity="warning" title="Live worklist unavailable">
-            Showing the local demonstration set. The patients API did not respond.
+            The patients API did not respond.
           </AlertBanner>
         </div>
       ) : null}
@@ -176,7 +176,7 @@ export function DuplicateReviewPage() {
           <div className="clinic-card p-3 mb-0">
             <p className="small text-body-secondary mb-0">
               Merging is a separate, audited flow with a field-by-field preview, a snapshot, and a
-              30-day unmerge window (todo §2.2). This screen only disposes of candidates; it never
+              30-day unmerge window. This screen only disposes of candidates; it never
               merges or deletes.
             </p>
           </div>

@@ -380,6 +380,9 @@ export interface PrescriptionDocument {
   ptrNo?: string;
   s2LicenseNo?: string;
 
+  diagnosis?: string;
+  diagnosisDescription?: string;
+  clinicalImpression?: string;
   specialInstruction?: string;
   items: PrescriptionItemDocument[];
 
@@ -499,6 +502,21 @@ export function renderPrescriptionHtml(doc: PrescriptionDocument): string {
       </table>
     </div>
 
+    <!-- Clinical Diagnosis / Impression -->
+    ${(doc.diagnosis || doc.clinicalImpression || doc.diagnosisDescription) ? `
+      <div style="background: #f0fdf4; border: 1pt solid #86efac; border-left: 3pt solid #16a34a; border-radius: 4px; padding: 2.2mm 3.5mm; margin-bottom: 3.5mm;">
+        <span style="font-size: 8pt; font-weight: 700; text-transform: uppercase; color: #15803d; letter-spacing: 0.3pt;">Clinical Diagnosis / Impression:</span>
+        <div style="font-size: 10pt; font-weight: 700; color: #14532d; margin-top: 0.5mm;">
+          ${escapeHtml(doc.diagnosis || doc.clinicalImpression || doc.diagnosisDescription || '')}
+        </div>
+        ${doc.diagnosisDescription && doc.diagnosisDescription !== doc.diagnosis && !doc.diagnosis?.includes(doc.diagnosisDescription) ? `
+          <div style="font-size: 9pt; color: #166534; margin-top: 0.8mm; line-height: 1.35;">
+            <strong style="color: #15803d; font-size: 8pt; text-transform: uppercase;">Diagnosis Description:</strong> ${escapeHtml(doc.diagnosisDescription)}
+          </div>
+        ` : ''}
+      </div>
+    ` : ''}
+
     <!-- Allergy Strip -->
     ${allergyList ? `
       <div style="background: #fff1f2; border: 1pt solid #f43f5e; color: #9f1239; border-radius: 4px; padding: 1.8mm 3mm; margin-bottom: 4mm; font-size: 8.5pt;">
@@ -539,8 +557,13 @@ export function renderPrescriptionHtml(doc: PrescriptionDocument): string {
 
     <!-- Physician's Care Instructions & Advice -->
     ${doc.specialInstruction ? `
-      <div style="background: #f1f5f9; border-left: 3pt solid #475569; padding: 2mm 3.5mm; border-radius: 2px; margin-top: 3mm; font-size: 9pt; color: #334155;">
-        <strong>Physician's Instructions:</strong> ${escapeHtml(doc.specialInstruction)}
+      <div style="background: #f8fafc; border: 1pt solid #cbd5e1; border-left: 3pt solid #0284c7; padding: 2.5mm 3.5mm; border-radius: 4px; margin-top: 3.5mm; font-size: 9pt; color: #1e293b;">
+        <div style="font-size: 8pt; font-weight: 700; text-transform: uppercase; color: #0284c7; letter-spacing: 0.3pt; margin-bottom: 0.8mm;">
+          Physician's Instructions &amp; Notes:
+        </div>
+        <div style="font-size: 9.5pt; color: #334155; line-height: 1.4;">
+          ${escapeHtml(doc.specialInstruction)}
+        </div>
       </div>
     ` : ''}
 
@@ -614,6 +637,7 @@ export interface LabRequisitionDocument {
   patientMrn?: string;
 
   clinicalImpression?: string;
+  diagnosisDescription?: string;
   orderingPhysician: string;
   physicianPrcNo?: string;
 
@@ -706,8 +730,13 @@ export function renderLabRequisitionHtml(doc: LabRequisitionDocument): string {
     <div style="margin-bottom: 4mm; padding: 2mm 3.5mm; border-left: 3pt solid #0284c7; background: #f0f9ff; border-radius: 2px;">
       <span style="font-size: 8pt; font-weight: 700; text-transform: uppercase; color: #0369a1; letter-spacing: 0.4pt;">Clinical Impression / ICD-10 Diagnosis:</span>
       <div style="font-size: 10pt; font-weight: 600; color: #0c4a6e; margin-top: 0.5mm;">
-        ${escapeHtml(doc.clinicalImpression || 'Diagnostic evaluation and clinical monitoring')}
+        ${escapeHtml(doc.clinicalImpression || doc.diagnosisDescription || 'Diagnostic evaluation and clinical monitoring')}
       </div>
+      ${doc.diagnosisDescription && doc.diagnosisDescription !== doc.clinicalImpression && !doc.clinicalImpression?.includes(doc.diagnosisDescription) ? `
+        <div style="font-size: 9pt; color: #0369a1; margin-top: 0.8mm;">
+          <strong>Diagnosis Description:</strong> ${escapeHtml(doc.diagnosisDescription)}
+        </div>
+      ` : ''}
     </div>
 
     <!-- Requisition Items Table -->
@@ -798,6 +827,7 @@ export interface EncounterOrdersDocument {
   allergies?: Array<{ substance: string; severity?: string }>;
 
   clinicalImpression?: string;
+  diagnosisDescription?: string;
   planNotes?: string;
 
   prescriberName: string;
@@ -879,12 +909,17 @@ export function renderEncounterOrdersHtml(doc: EncounterOrdersDocument): string 
     </div>
 
     <!-- Clinical Impression -->
-    ${doc.clinicalImpression ? `
+    ${(doc.clinicalImpression || doc.diagnosisDescription) ? `
       <div style="margin-bottom: 4mm; padding: 2mm 3.5mm; border-left: 3pt solid #0284c7; background: #f0f9ff; border-radius: 2px;">
         <span style="font-size: 8pt; font-weight: 700; text-transform: uppercase; color: #0369a1;">Clinical Impression & Working Diagnoses:</span>
         <div style="font-size: 10pt; font-weight: 600; color: #0c4a6e; margin-top: 0.5mm;">
-          ${escapeHtml(doc.clinicalImpression)}
+          ${escapeHtml(doc.clinicalImpression || doc.diagnosisDescription || '')}
         </div>
+        ${doc.diagnosisDescription && doc.diagnosisDescription !== doc.clinicalImpression && !doc.clinicalImpression?.includes(doc.diagnosisDescription) ? `
+          <div style="font-size: 9pt; color: #0369a1; margin-top: 0.8mm;">
+            <strong>Diagnosis Description:</strong> ${escapeHtml(doc.diagnosisDescription)}
+          </div>
+        ` : ''}
       </div>
     ` : ''}
 

@@ -70,6 +70,10 @@ async function bootstrap() {
     );
     for (const row of res.rows) {
       console.log(`Dispatched outbox event ${row.id} of type ${row.event_type}`);
+      if (row.event_type === 'tenant.provision') {
+        const payload = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload;
+        await boss.send('tenant.provision', payload);
+      }
     }
   });
 

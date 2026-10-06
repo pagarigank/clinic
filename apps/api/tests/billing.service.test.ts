@@ -456,6 +456,14 @@ describe.skipIf(!hasDb)('BillingService (Phase 7)', () => {
     });
 
     // JOB-50 has not swept this payment, so there is nothing to reissue.
+    await ownerPool.query(
+      `UPDATE payments SET receipt_file_id = NULL, receipt_sha256 = NULL, receipt_generated_at = NULL WHERE id = $1`,
+      [pay.payment.id],
+    );
+    await ownerPool.query(
+      `DELETE FROM files WHERE tenant_id = $1 AND (object_key LIKE $2 OR object_key LIKE $3)`,
+      [TENANT_A, `t/${TENANT_A}/receipt/${pay.payment.id}%`, `receipts/${pay.payment.payment_no}.pdf`],
+    );
     const before = await ownerPool.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM files WHERE tenant_id = $1 AND object_key LIKE $2`,
       [TENANT_A, `t/${TENANT_A}/receipt/${pay.payment.id}%`],
@@ -509,6 +517,15 @@ describe.skipIf(!hasDb)('BillingService (Phase 7)', () => {
       amount: 700,
       tenderedAmount: 700,
     });
+
+    await ownerPool.query(
+      `UPDATE payments SET receipt_file_id = NULL, receipt_sha256 = NULL, receipt_generated_at = NULL WHERE id = $1`,
+      [pay.payment.id],
+    );
+    await ownerPool.query(
+      `DELETE FROM files WHERE tenant_id = $1 AND (object_key LIKE $2 OR object_key LIKE $3)`,
+      [TENANT_A, `t/${TENANT_A}/receipt/${pay.payment.id}%`, `receipts/${pay.payment.payment_no}.pdf`],
+    );
 
     const res = await svc.reprintReceipt(TENANT_A, USER_A, pay.payment.id, { reason: 'Duplicate request' });
 

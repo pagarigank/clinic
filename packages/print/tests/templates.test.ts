@@ -429,6 +429,21 @@ describe("renderPrescriptionHtml", () => {
     expect(html).toContain("PDEA-S2-2026-001");
     expect(html).toContain("Twenty-one tablets");
   });
+
+  it("renders clinical diagnosis, diagnosis description, and physician instructions on the prescription", () => {
+    const html = renderPrescriptionHtml({
+      ...baseRx,
+      diagnosis: "J20.9",
+      diagnosisDescription: "Acute Bronchitis, unspecified with chest congestion",
+      specialInstruction: "Drink 2-3 liters of water daily. Return if symptoms worsen after 3 days.",
+    });
+    expect(html).toContain("Clinical Diagnosis / Impression:");
+    expect(html).toContain("J20.9");
+    expect(html).toContain("Diagnosis Description:");
+    expect(html).toContain("Acute Bronchitis, unspecified with chest congestion");
+    expect(html).toContain("Physician's Instructions &amp; Notes:");
+    expect(html).toContain("Drink 2-3 liters of water daily. Return if symptoms worsen after 3 days.");
+  });
 });
 
 describe("renderLabRequisitionHtml", () => {

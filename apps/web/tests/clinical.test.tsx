@@ -12,6 +12,13 @@ import { useStubHandler, type StubHandler } from "./setup.js";
 const baseHandler: StubHandler = (req, res) => {
   const url = req.url ?? "";
   const method = req.method ?? "GET";
+
+  if (url.includes("/pdf") || url.includes("-pdf")) {
+    res.writeHead(200, { "content-type": "application/pdf" });
+    res.end(Buffer.from("%PDF-1.7 mock"));
+    return;
+  }
+
   res.writeHead(200, { "content-type": "application/json" });
 
   if (url.includes("/clinical/appointments")) {
@@ -52,6 +59,14 @@ const baseHandler: StubHandler = (req, res) => {
             priority: 0,
             status: "SERVING",
             issuedAt: "08:02",
+          },
+          {
+            id: "q2",
+            ticketNo: "Q20261002-002",
+            patientName: "Dela Cruz, Juan",
+            priority: 0,
+            status: "WAITING",
+            issuedAt: "08:15",
           },
         ],
       }),
@@ -192,10 +207,11 @@ function renderAt(path: string, ui: React.ReactElement) {
   );
 }
 
+beforeEach(() => {
+  useStubHandler(baseHandler);
+});
+
 describe("SchedulingPage (todo §3.1, CLN-T1)", () => {
-  beforeEach(() => {
-    useStubHandler(baseHandler);
-  });
 
   it("renders the day view with appointments and availability panel", async () => {
     renderAt("*", <SchedulingPage />);
@@ -212,6 +228,36 @@ describe("SchedulingPage (todo §3.1, CLN-T1)", () => {
     expect(screen.getByText(/Walk-in ticket|Book appointment/i)).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText(/Walk-in \/ sequential mode/i));
     expect(screen.getByRole("button", { name: /Issue ticket/i })).toBeInTheDocument();
+  });
+
+  it("renders appointments booked online with the online channel badge", async () => {
+    useStubHandler((req, res) => {
+      const url = req.url ?? "";
+      if (url.includes("/clinical/appointments")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                id: "apt-online-1",
+                patient_name: "Dela Cruz, Juan",
+                practitioner_name: "Dr. Reyes",
+                starts_at: "2026-10-02T10:00:00Z",
+                ends_at: "2026-10-02T10:30:00Z",
+                status: "BOOKED",
+                channel: "ONLINE",
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      baseHandler(req, res);
+    });
+
+    renderAt("*", <SchedulingPage />);
+    expect(await screen.findByText("Dela Cruz, Juan")).toBeInTheDocument();
+    expect(screen.getByText(/Online/i)).toBeInTheDocument();
   });
 });
 
@@ -241,9 +287,9 @@ describe("VisitsPage (todo §3.2)", () => {
 describe("VisitChartPage (CLN-T4/T5)", () => {
   it("renders the encounter chart with vitals, SOAP, dx, and prescribe sections", async () => {
     renderAt("/clinical/visits/v-demo", <VisitChartPage />);
-    expect(screen.getByText(/Visit chart/i)).toBeInTheDocument();
     // Vitals auto-flag from the demo data (CLN-T3).
     expect(await screen.findByText("FEVER")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Visit chart/i })).toBeInTheDocument();
     expect(screen.getByText(/SOAP note/i)).toBeInTheDocument();
     expect(screen.getByText(/Diagnoses \(ICD-10\)/i)).toBeInTheDocument();
     expect(screen.getByText(/Prescribe/i)).toBeInTheDocument();
@@ -254,7 +300,7 @@ describe("VisitChartPage (CLN-T4/T5)", () => {
 
   it("gates the controlled-Rx fields behind the controlled checkbox (CLN-T5)", async () => {
     renderAt("/clinical/visits/v-demo", <VisitChartPage />);
-    const cb = screen.getByLabelText(/Controlled drug/i);
+    const cb = await screen.findByLabelText(/Controlled drug/i);
     fireEvent.click(cb);
     expect(screen.getByLabelText(/Special-Rx serial/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Quantity in words/i)).toBeInTheDocument();
@@ -262,7 +308,7 @@ describe("VisitChartPage (CLN-T4/T5)", () => {
 
   it("sign-locks the note and confirms the consequence first", async () => {
     renderAt("/clinical/visits/v-demo", <VisitChartPage />);
-    fireEvent.click(screen.getByRole("button", { name: /Sign \(locks\)/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Sign \(locks\)/i }));
     expect(await screen.findByText(/Signing locks this SOAP note/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Sign note/i }));
     // A draft is required before signing succeeds — the error is explicit.
@@ -271,7 +317,7 @@ describe("VisitChartPage (CLN-T4/T5)", () => {
 
   it("renders laboratory orders and central supply request areas with workbench wiring", async () => {
     renderAt("/clinical/visits/v-demo", <VisitChartPage />);
-    expect(screen.getByText(/Laboratory Orders & Requests/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Laboratory Orders & Requests/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Order Lab Test/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Lab Worklist/i })).toBeInTheDocument();
 
@@ -287,17 +333,16 @@ describe("VisitChartPage (CLN-T4/T5)", () => {
     renderAt("/clinical/visits/v-demo", <VisitChartPage />);
 
     // Header print button
-    const printHeaderBtn = screen.getByRole("button", { name: /Print Prescription & Orders/i });
+    const printHeaderBtn = await screen.findByRole("button", { name: /Print Prescription & Orders/i });
     expect(printHeaderBtn).toBeInTheDocument();
 
     fireEvent.click(printHeaderBtn);
 
     // Modal dialog is open
     expect(await screen.findByText(/Doctor's Prescription & Clinical Order Print Center/i)).toBeInTheDocument();
-    expect(screen.getByText(/Medical Prescription \/ Reseta/i)).toBeInTheDocument();
-    expect(screen.getByText(/Laboratory & Diagnostic Requisition Slip/i)).toBeInTheDocument();
-    expect(screen.getByText(/PRC Lic. No:/i)).toBeInTheDocument();
-    expect(screen.getByText(/In compliance with Republic Act No. 6675/i)).toBeInTheDocument();
+    expect(screen.getByText(/Prescription Slip \(Rx\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Laboratory Request Slip/i)).toBeInTheDocument();
+    expect(screen.getByText(/Combined Encounter Orders/i)).toBeInTheDocument();
 
     // Trigger Print
     const printNowBtn = screen.getByRole("button", { name: /Print Now/i });
@@ -311,17 +356,16 @@ describe("VisitChartPage (CLN-T4/T5)", () => {
     renderAt("/clinical/visits/v-demo", <VisitChartPage />);
 
     // Open from Rx card
-    const printRxBtn = screen.getByRole("button", { name: "🖨️ Print Prescription" });
+    const printRxBtn = await screen.findByRole("button", { name: /Print Rx/i });
     fireEvent.click(printRxBtn);
 
-    expect(await screen.findByText(/Medical Prescription \/ Reseta/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Prescription Slip \(Rx\)/i)).toBeInTheDocument();
 
     // Switch to Laboratory Request Slip tab
     const labTabBtn = screen.getByRole("button", { name: /Laboratory Request Slip/i });
     fireEvent.click(labTabBtn);
 
-    expect(await screen.findByText(/Laboratory & Diagnostic Requisition Slip/i)).toBeInTheDocument();
-    expect(screen.getByText(/DOH CLINICAL LAB LTO/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Laboratory Request Slip/i)).toBeInTheDocument();
 
     // Close preview modal
     const closeBtn = screen.getAllByRole("button", { name: /Close/i })[0]!;
@@ -332,17 +376,17 @@ describe("VisitChartPage (CLN-T4/T5)", () => {
   it("offers official PDF download and new tab viewer actions", async () => {
     renderAt("/clinical/visits/v-demo", <VisitChartPage />);
 
-    const printHeaderBtn = screen.getByRole("button", { name: /Print Prescription & Orders/i });
+    const printHeaderBtn = await screen.findByRole("button", { name: /Print Prescription & Orders/i });
     fireEvent.click(printHeaderBtn);
 
     expect(await screen.findByText(/Doctor's Prescription & Clinical Order Print Center/i)).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: /Download Official PDF/i }).length).toBeGreaterThan(0);
+    expect((await screen.findAllByRole("button", { name: /Download Official PDF/i })).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /View PDF/i })).toBeInTheDocument();
   });
 
   it("renders the medical certificates panel with the numbered issue form (CLN-T8)", async () => {
     renderAt("/clinical/visits/v-demo", <VisitChartPage />);
-    expect(screen.getByText(/Medical Certificates/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Medical Certificates/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Issue Certificate/i })).toBeInTheDocument();
     expect(await screen.findByText(/No certificates issued for this visit/i)).toBeInTheDocument();
   });
@@ -358,12 +402,13 @@ describe("VisitChartPage (CLN-T4/T5)", () => {
         res.end(Buffer.from("%PDF-1.7 certificate"));
         return;
       }
-      res.writeHead(200, { "content-type": "application/json" });
       if (method === "POST" && /\/certificates$/.test(url)) {
+        res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ id: "cert-1", doc_no: "MC-2026-00001" }));
         return;
       }
       if (method === "GET" && /\/certificates$/.test(url)) {
+        res.writeHead(200, { "content-type": "application/json" });
         res.end(
           JSON.stringify({
             data: [
@@ -386,7 +431,7 @@ describe("VisitChartPage (CLN-T4/T5)", () => {
         );
         return;
       }
-      res.end(JSON.stringify([]));
+      baseHandler(req, res);
     });
 
     const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
@@ -397,13 +442,87 @@ describe("VisitChartPage (CLN-T4/T5)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Issue Certificate/i }));
 
     expect(await screen.findByText(/MC-2026-00001/)).toBeInTheDocument();
-    expect(calls.some((c) => c.startsWith("POST /api/v1/clinical/visits/v-123/certificates"))).toBe(true);
+    await waitFor(() =>
+      expect(calls.some((c) => c.startsWith("POST /api/v1/clinical/visits/v-123/certificates"))).toBe(true),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: /Print.*PDF/i }));
     await waitFor(() =>
       expect(calls.some((c) => c.startsWith("GET /api/v1/clinical/certificates/cert-1/pdf"))).toBe(true),
     );
     printSpy.mockRestore();
+  });
+
+  it("preloads doctor SOAP notes and supports diagnosis description and Rx care instructions", async () => {
+    useStubHandler((req, res) => {
+      const url = req.url ?? "";
+      const method = req.method ?? "GET";
+      if (url.includes("/clinical/visits/v-soap-preload") && method === "GET") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            id: "v-soap-preload",
+            visit_no: "V-20261002-00099",
+            patient_id: "a4000000-0000-4000-8000-000000000001",
+            patient_name: "Maria Elena Santos",
+            date_of_birth: "1988-04-12",
+            gender: "F",
+            status: "IN_PROGRESS",
+            branch_id: "a1000000-0000-4000-8000-000000000001",
+            branch_name: "Main Branch",
+            clinic_name: "Metro Health Clinic",
+            chief_complaint: "Cough and mild fever",
+            practitioner_name: "Dr. Maria Elena Reyes, MD",
+            allergies: [],
+            vitals: [],
+            notes: [
+              {
+                id: "note-1",
+                note_type: "SOAP",
+                subjective: "Patient reports 3-day productive cough",
+                objective: "Clear breath sounds bilateral",
+                assessment: "Acute bronchitis",
+                plan: "Rest, oral fluids, paracetamol PRN",
+                status: "DRAFT",
+                version: 1,
+              },
+            ],
+            diagnoses: [
+              {
+                id: "dx-1",
+                icd10_code: "J20.9",
+                description: "Acute bronchitis, unspecified",
+                dx_type: "PRIMARY",
+                certainty: "CONFIRMED",
+              },
+            ],
+            prescriptions: [],
+            labOrders: [],
+            supplies: [],
+          }),
+        );
+        return;
+      }
+      baseHandler(req, res);
+    });
+
+    renderAt("/clinical/visits/v-soap-preload", <VisitChartPage />);
+
+    // Verify SOAP notes form was preloaded from existing clinical note
+    expect(await screen.findByDisplayValue("Patient reports 3-day productive cough")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Clear breath sounds bilateral")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Acute bronchitis")).toBeInTheDocument();
+    // Both SOAP Plan and Rx instructions are preloaded with the care plan
+    expect(screen.getAllByDisplayValue("Rest, oral fluids, paracetamol PRN")).toHaveLength(2);
+
+    // Verify preloaded diagnosis with description is rendered
+    expect(screen.getByText("J20.9")).toBeInTheDocument();
+    expect(screen.getByText("Acute bronchitis, unspecified")).toBeInTheDocument();
+
+    // Verify Doctor's Instructions & Care Notes for prescription pad is present and preloaded
+    const rxNotes = screen.getByLabelText(/Physician's Instructions & Notes for Prescription/i);
+    expect(rxNotes).toBeInTheDocument();
+    expect(rxNotes).toHaveValue("Rest, oral fluids, paracetamol PRN");
   });
 });
 

@@ -18,6 +18,7 @@ import { DashboardPage } from "./features/dashboard/DashboardPage.js";
 import { PatientsPage } from "./features/patients/PatientsPage.js";
 import { DuplicateReviewPage } from "./features/patients/DuplicateReviewPage.js";
 import { SchedulingPage } from "./features/clinical/SchedulingPage.js";
+import { PublicBookingPage } from "./features/clinical/PublicBookingPage.js";
 import { QueueBoardPage } from "./features/clinical/QueueBoardPage.js";
 import { VisitsPage } from "./features/clinical/VisitsPage.js";
 import { VisitChartPage } from "./features/clinical/VisitChartPage.js";
@@ -28,6 +29,7 @@ import { EmployeesPage } from "./features/admin/EmployeesPage.js";
 import { RolesPage } from "./features/admin/RolesPage.js";
 import { BranchesPage } from "./features/admin/BranchesPage.js";
 import { CatalogPage } from "./features/admin/CatalogPage.js";
+import { Icd10ManagementPage } from "./features/admin/Icd10ManagementPage.js";
 import { SettingsPage } from "./features/admin/SettingsPage.js";
 import { SupplyDashboardPage } from "./features/supply/SupplyDashboardPage.js";
 import { StockExplorerPage } from "./features/supply/StockExplorerPage.js";
@@ -71,6 +73,14 @@ const router = createBrowserRouter([
   {
     path: "/register",
     element: <RegisterPage />,
+  },
+  {
+    path: "/book",
+    element: <PublicBookingPage />,
+  },
+  {
+    path: "/schedule",
+    element: <PublicBookingPage />,
   },
 
   // Authenticated Main Menu Layout
@@ -151,6 +161,7 @@ const router = createBrowserRouter([
           { path: "roles", element: <RequirePermission module="admin" codes={["admin.role.read"]}><RolesPage /></RequirePermission> },
           { path: "branches", element: <RequirePermission module="admin" codes={["admin.branch.read"]}><BranchesPage /></RequirePermission> },
           { path: "service-catalog", element: <RequirePermission module="admin" codes={["admin.service.read", "admin.price.read"]}><CatalogPage /></RequirePermission> },
+          { path: "icd10", element: <RequirePermission module="admin" codes={["admin.settings.read", "reference.read"]}><Icd10ManagementPage /></RequirePermission> },
           { path: "settings", element: <RequirePermission module="admin" codes={["admin.settings.read"]}><SettingsPage /></RequirePermission> },
         ],
       },

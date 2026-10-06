@@ -10,11 +10,17 @@
 --                                   reference ranges, instruments)
 --     * all central-supply master data (UoM, categories, suppliers, locations,
 --                                   item catalogue)
---     * 3 staff accounts            (tenant admin, doctor, nurse)
+--     * 8 staff accounts            (tenant admin, doctor, nurse, pharmacist
+--                                   dispenser, pharmacist verifier, receptionist,
+--                                   lab technologist, lab verifier)
 --
---   It deliberately contains NO transactional/clinical history: no visits, no
---   orders, no results, no dispenses, no stock movements, no invoices. Every
---   walkthrough starts from a genuinely empty ledger.
+--   Transactional history is deliberately limited to the OPENING STOCK
+--   (section 9d): every seeded batch is born through one GRN receipt movement
+--   so stock_balances.qty_on_hand == SUM(stock_movements.qty) from row zero
+--   and the stock-reconciliation job (apps/worker supply-jobs.handler.ts) never
+--   holds demo stock. Apart from that there is no clinical history: no visits,
+--   no orders, no results, no dispenses, no invoices. Every walkthrough starts
+--   from a genuinely empty clinical ledger.
 --
 -- GUARANTEES
 --   * Transactional  — a single BEGIN/COMMIT. Any failure rolls back whole.
@@ -56,6 +62,15 @@
 --     C/R/U). Listing them explicitly keeps the seed auditable against the
 --     template; the `self`/`owner` markers in §18 enforce own-record scoping
 --     at request time, not by withholding permissions.
+--   pharmacist_verifier / lab_technologist / lab_verifier — byte-for-byte the
+--     grant sets shipped by `packages/db/migrations/0055_pharmacy_dispense_post_grant.migration.sql`
+--     (PHM-T1/T2) and `0056_lab_result_verify_roles.migration.sql` (AC-17), the
+--     migrations that created these roles so verification stays independent of
+--     dispensing (pharmacy.rx.verify × pharmacy.dispense.post) and of result
+--     entry (lab.result.enter × lab.result.verify) — both declared sod_conflicts
+--     pairs. Codes match those migrations, so ON CONFLICT (tenant_id, code)
+--     adopts rows a provisioning run already created instead of forking a
+--     second role under a different id.
 --
 -- SCOPE NOTES (deliberate, do not "fix" silently)
 --   1. SYSTEM_ROLE_TEMPLATES.tenant_admin is narrower than §2.2 (it omits
@@ -164,17 +179,23 @@ WHERE NOT EXISTS (
 
 
 -- ============================================================================
--- 3. Roles (specification §2.2)
---    tenant_admin, doctor, nurse, pharmacist_dispenser, receptionist.
---    Fixed UUIDs; receptionist is left untouched.
+-- 3. Roles (specification §2.2 + migrations 0055/0056)
+--    tenant_admin, doctor, nurse, pharmacist_dispenser, receptionist,
+--    pharmacist_verifier, lab_technologist, lab_verifier.
+--    Fixed UUIDs. Sequence note: …0003 is deliberately skipped — demo.sql,
+--    seed-permissions.mjs and the API integration tests already pin it to
+--    `receptionist`, so new roles continue at …0007.
 -- ============================================================================
 
 INSERT INTO roles (id, tenant_id, code, name, is_system) VALUES
   ('a2000000-0000-4000-8000-000000000001', '11111111-1111-4111-8111-111111111111', 'tenant_admin',          'Tenant Administrator',   true),
   ('a2000000-0000-4000-8000-000000000002', '11111111-1111-4111-8111-111111111111', 'doctor',                'Doctor',                  true),
   ('a2000000-0000-4000-8000-000000000004', '11111111-1111-4111-8111-111111111111', 'nurse',                 'Nurse',                   true),
-  ('a2000000-0000-4000-8000-000000000005', '11111111-1111-4111-8111-111111111111', 'pharmacist_dispenser',  'Pharmacist / Dispenser',  true),
-  ('a2000000-0000-4000-8000-000000000006', '11111111-1111-4111-8111-111111111111', 'receptionist',          'Receptionist',            true)
+  ('a2000000-0000-4000-8000-000000000005', '11111111-1111-4111-8111-111111111111', 'pharmacist_dispenser',  'Pharmacist / Dispenser',    true),
+  ('a2000000-0000-4000-8000-000000000006', '11111111-1111-4111-8111-111111111111', 'receptionist',          'Receptionist',              true),
+  ('a2000000-0000-4000-8000-000000000007', '11111111-1111-4111-8111-111111111111', 'pharmacist_verifier',   'Pharmacist — Verification', true),
+  ('a2000000-0000-4000-8000-000000000008', '11111111-1111-4111-8111-111111111111', 'lab_technologist',      'Laboratory Technologist',   true),
+  ('a2000000-0000-4000-8000-000000000009', '11111111-1111-4111-8111-111111111111', 'lab_verifier',          'Laboratory Verifier',       true)
 ON CONFLICT (tenant_id, code) DO UPDATE
   SET name = EXCLUDED.name, is_system = true, deleted_at = NULL;
 
@@ -304,10 +325,59 @@ WHERE p.code IN (
     'files.read', 'notifications.read', 'reference.read')
 ON CONFLICT (tenant_id, role_id, permission_id) DO NOTHING;
 
+-- --- 3d. pharmacist_verifier (migration 0055, PHM-T1) ----------------------
+-- Clinical check only: rx.verify WITHOUT dispense.post — the sod_conflicts
+-- pair demands the verifier be a different identity from the dispenser.
+INSERT INTO role_permissions (tenant_id, role_id, permission_id)
+SELECT v.tenant_id, r.id, p.id
+FROM (VALUES ('11111111-1111-4111-8111-111111111111'::uuid)) AS v(tenant_id)
+JOIN roles r ON r.tenant_id = v.tenant_id AND r.code = 'pharmacist_verifier'
+CROSS JOIN permissions p
+WHERE p.code IN (
+    'pharmacy.rx.read', 'pharmacy.rx.verify', 'pharmacy.rx.intervene',
+    'pharmacy.product.read', 'pharmacy.controlled.read')
+ON CONFLICT (tenant_id, role_id, permission_id) DO NOTHING;
+
+-- --- 3e. lab_technologist (migration 0056, AC-17 bench side) ----------------
+-- Everything up to but NOT including lab.result.verify: the encoder must
+-- never verify their own work.
+INSERT INTO role_permissions (tenant_id, role_id, permission_id)
+SELECT v.tenant_id, r.id, p.id
+FROM (VALUES ('11111111-1111-4111-8111-111111111111'::uuid)) AS v(tenant_id)
+JOIN roles r ON r.tenant_id = v.tenant_id AND r.code = 'lab_technologist'
+CROSS JOIN permissions p
+WHERE p.code IN (
+    'lab.order.read', 'lab.order.create',
+    'lab.specimen.read', 'lab.specimen.collect', 'lab.specimen.receive',
+    'lab.result.read', 'lab.result.enter', 'lab.result.amend',
+    'lab.critical.read', 'lab.critical.ack',
+    'lab.qc.read', 'lab.qc.create', 'lab.qc.update', 'lab.qc.accept', 'lab.qc.reject',
+    'lab.sendout.read', 'lab.sendout.create',
+    'lab.config.read', 'lab.config.create', 'lab.config.update',
+    'lab.interface.read', 'lab.interface.write',
+    'supply.stock.read', 'supply.item.read')
+ON CONFLICT (tenant_id, role_id, permission_id) DO NOTHING;
+
+-- --- 3f. lab_verifier (migration 0056, AC-17 verification side) -------------
+-- The independent check: verifies and releases, never enters.
+INSERT INTO role_permissions (tenant_id, role_id, permission_id)
+SELECT v.tenant_id, r.id, p.id
+FROM (VALUES ('11111111-1111-4111-8111-111111111111'::uuid)) AS v(tenant_id)
+JOIN roles r ON r.tenant_id = v.tenant_id AND r.code = 'lab_verifier'
+CROSS JOIN permissions p
+WHERE p.code IN (
+    'lab.order.read', 'lab.specimen.read',
+    'lab.result.read', 'lab.result.verify',
+    'lab.report.read', 'lab.report.release',
+    'lab.critical.read', 'lab.critical.ack',
+    'lab.config.read')
+ON CONFLICT (tenant_id, role_id, permission_id) DO NOTHING;
+
 
 -- ============================================================================
--- 4. Staff accounts — tenant admin, doctor, nurse, pharmacist, receptionist
---    All five share the demo password  DemoPassw0rd!2026
+-- 4. Staff accounts — tenant admin, doctor, nurse, pharmacist dispenser,
+--    pharmacist verifier, receptionist, lab technologist, lab verifier.
+--    All eight share the demo password  DemoPassw0rd!2026
 --    (argon2id hash reused verbatim from migrations/seeds/demo.sql).
 --
 --    The pharmacist and receptionist exist because the demo tenant has to be
@@ -315,6 +385,11 @@ ON CONFLICT (tenant_id, role_id, permission_id) DO NOTHING;
 --    `tenant_admin` holds pharmacy.*read and billing.*read but not
 --    pharmacy.dispense.post or billing.payment.create, so a single admin
 --    account cannot complete it.
+--
+--    The verifier / technologist accounts exist so the AC-17 (lab enter ≠
+--    verify) and PHM-T1 (rx verify ≠ dispense post) independence controls can
+--    be demonstrated with two real logins instead of one role holding both
+--    sides of a sod_conflicts pair.
 --
 --    Resolved by NATURAL KEY (email / role code / branch code), never by UUID:
 --    ON CONFLICT keeps the existing row's own id, so pinning the child ids
@@ -333,6 +408,12 @@ FROM (VALUES
   ('dispenser@demo-a.test','Demo A — Pharmacist',
    '$argon2id$v=19$m=19456,t=2,p=1$PJbfK+fX4INlaV6B1J1P9Q$r8KelzGMcN1aCKjlBfUifGfeT1j7Wnk7sl8WlLr624I'),
   ('staff@demo-a.test',    'Demo A — Receptionist',
+   '$argon2id$v=19$m=19456,t=2,p=1$PJbfK+fX4INlaV6B1J1P9Q$r8KelzGMcN1aCKjlBfUifGfeT1j7Wnk7sl8WlLr624I'),
+  ('verifier@demo-a.test', 'Demo A — Pharmacist Verifier',
+   '$argon2id$v=19$m=19456,t=2,p=1$PJbfK+fX4INlaV6B1J1P9Q$r8KelzGMcN1aCKjlBfUifGfeT1j7Wnk7sl8WlLr624I'),
+  ('labtech@demo-a.test',  'Demo A — Medical Technologist',
+   '$argon2id$v=19$m=19456,t=2,p=1$PJbfK+fX4INlaV6B1J1P9Q$r8KelzGMcN1aCKjlBfUifGfeT1j7Wnk7sl8WlLr624I'),
+  ('labverify@demo-a.test','Demo A — Lab Verifier',
    '$argon2id$v=19$m=19456,t=2,p=1$PJbfK+fX4INlaV6B1J1P9Q$r8KelzGMcN1aCKjlBfUifGfeT1j7Wnk7sl8WlLr624I')
 ) AS v(email, name, password_hash)
 ON CONFLICT (tenant_id, email) DO UPDATE
@@ -351,7 +432,10 @@ FROM (VALUES
   ('doctor@demo-a.test',   'doctor'),
   ('nurse@demo-a.test',    'nurse'),
   ('dispenser@demo-a.test','pharmacist_dispenser'),
-  ('staff@demo-a.test',    'receptionist')
+  ('staff@demo-a.test',    'receptionist'),
+  ('verifier@demo-a.test', 'pharmacist_verifier'),
+  ('labtech@demo-a.test',  'lab_technologist'),
+  ('labverify@demo-a.test','lab_verifier')
 ) AS v(email, role_code)
 JOIN users u ON u.tenant_id = '11111111-1111-4111-8111-111111111111' AND u.email = v.email
 JOIN roles r ON r.tenant_id = u.tenant_id AND r.code = v.role_code
@@ -364,7 +448,8 @@ FROM users u
 CROSS JOIN branches b
 WHERE u.tenant_id = '11111111-1111-4111-8111-111111111111'
   AND u.email IN ('admin@demo-a.test', 'doctor@demo-a.test', 'nurse@demo-a.test',
-                  'dispenser@demo-a.test', 'staff@demo-a.test')
+                  'dispenser@demo-a.test', 'staff@demo-a.test', 'verifier@demo-a.test',
+                  'labtech@demo-a.test', 'labverify@demo-a.test')
   AND b.tenant_id = u.tenant_id AND b.code = 'MAIN'
 ON CONFLICT (user_id, branch_id) DO UPDATE SET is_default = true;
 
@@ -389,7 +474,10 @@ FROM (VALUES
   ('doctor@demo-a.test', 'DA-0002', 'Consultant Physician',  'Internal Medicine','CONSULTANT','Internal Medicine',    'PRC-1000001',   'PTR-1000001',   'S2-1000001',   '(02) 8888-0102', DATE '2023-06-01'),
   ('nurse@demo-a.test',  'DA-0003', 'Registered Nurse',      'Nursing',         'FULL_TIME',  'Emergency Nursing',  NULL,            'PTR-1000003',   NULL,            '(02) 8888-0103', DATE '2024-03-01'),
   ('dispenser@demo-a.test','DA-0004', 'Pharmacist',          'Pharmacy',        'FULL_TIME',  'Hospital Pharmacy',  NULL,            NULL,            NULL,            '(02) 8888-0104', DATE '2024-05-06'),
-  ('staff@demo-a.test',  'DA-0005', 'Front Desk Receptionist','Front Desk',    'FULL_TIME',  NULL,                  NULL,            NULL,            NULL,            '(02) 8888-0105', DATE '2024-02-19')
+  ('staff@demo-a.test',  'DA-0005', 'Front Desk Receptionist','Front Desk',    'FULL_TIME',  NULL,                  NULL,            NULL,            NULL,            '(02) 8888-0105', DATE '2024-02-19'),
+  ('verifier@demo-a.test','DA-0006','Pharmacist — Verification','Pharmacy',    'FULL_TIME',  'Clinical Pharmacy',   'PRC-1000006',   NULL,            NULL,            '(02) 8888-0106', DATE '2024-06-03'),
+  ('labtech@demo-a.test','DA-0007', 'Medical Laboratory Technologist','Laboratory','FULL_TIME','Hematology',         'PRC-1000007',   NULL,            NULL,            '(02) 8888-0107', DATE '2024-04-15'),
+  ('labverify@demo-a.test','DA-0008','Pathologist',           'Laboratory',    'CONSULTANT', 'Anatomic & Clinical Pathology','PRC-1000008','PTR-1000008',NULL,          '(02) 8888-0108', DATE '2023-09-01')
 ) AS v(email, employee_no, job_title, department, employment_type,
        specialization, prc_license_no, ptr_no, s2_license_no, phone, hire_date)
 JOIN users u ON u.tenant_id = '11111111-1111-4111-8111-111111111111' AND u.email = v.email
@@ -813,6 +901,118 @@ WHERE s.code = 'RX-' || i.code
 
 
 -- ============================================================================
+-- 9d. Opening stock — receipt-born so the ledger is consistent from row zero.
+--     Every seeded batch exists through exactly one GRN movement whose qty
+--     equals the balance, so the reconciliation job (apps/worker
+--     supply-jobs.handler.ts) computes zero mismatches instead of holding
+--     every batch for a week and failing the first dispense with 409
+--     STOCK_INSUFFICIENT. Idempotency: batches resolve on their natural key
+--     (tenant, item, lot, expiry); the GRN movement and the balance insert
+--     only when absent, so re-running never doubles stock and never resets
+--     stock a demo has already consumed.
+--     AUDIT NOTE: prev_hash/row_hash are NULL on these seed rows. No verifier
+--     of the hash chain exists in this codebase, so a SQL-replicated chain
+--     would look legitimate while being unverifiable; seeded rows are outside
+--     the chain by construction, and ref_type 'SEED_OPENING' marks them as
+--     such. Real GRNs posted by the application keep chaining as usual.
+-- ============================================================================
+
+WITH v(item_code, location_code, lot_no, expiry_date, qty) AS (VALUES
+  -- 16 formulary medicines -> Dispensary (the Rx pick location)
+  ('MED-AMOX-500',  'DISP', 'LOT-SEED-AMOX-500',  DATE '2027-03-31', 500::numeric),
+  ('MED-AMOX-SUS',  'DISP', 'LOT-SEED-AMOX-SUS',  DATE '2027-03-31', 300::numeric),
+  ('MED-AZI-500',   'DISP', 'LOT-SEED-AZI-500',   DATE '2027-06-30', 500::numeric),
+  ('MED-PARA-500',  'DISP', 'LOT-SEED-PARA-500',  DATE '2027-01-31', 500::numeric),
+  ('MED-PARA-SUS',  'DISP', 'LOT-SEED-PARA-SUS',  DATE '2027-01-31', 300::numeric),
+  ('MED-IBU-200',   'DISP', 'LOT-SEED-IBU-200',   DATE '2027-06-30', 500::numeric),
+  ('MED-MET-500',   'DISP', 'LOT-SEED-MET-500',   DATE '2027-09-30', 500::numeric),
+  ('MED-MET-850',   'DISP', 'LOT-SEED-MET-850',   DATE '2027-09-30', 500::numeric),
+  ('MED-AML-5',     'DISP', 'LOT-SEED-AML-5',     DATE '2027-06-30', 500::numeric),
+  ('MED-LOS-50',    'DISP', 'LOT-SEED-LOS-50',    DATE '2027-09-30', 500::numeric),
+  ('MED-HCTZ-25',   'DISP', 'LOT-SEED-HCTZ-25',   DATE '2027-06-30', 500::numeric),
+  ('MED-SIM-20',    'DISP', 'LOT-SEED-SIM-20',    DATE '2027-09-30', 500::numeric),
+  ('MED-OME-20',    'DISP', 'LOT-SEED-OME-20',    DATE '2027-06-30', 500::numeric),
+  ('MED-SAL-NEB',   'DISP', 'LOT-SEED-SAL-NEB',   DATE '2027-03-31',  40::numeric),
+  ('MED-CET-5',     'DISP', 'LOT-SEED-CET-5',     DATE '2027-06-30', 500::numeric),
+  ('MED-IBU-400',   'DISP', 'LOT-SEED-IBU-400',   DATE '2027-09-30', 500::numeric),
+  -- Supply items -> Central Store
+  ('SUP-ORAL-SYR-5',   'CENTRAL', 'LOT-SEED-SYR5',    DATE '2028-12-31', 200::numeric),
+  ('SUP-ORAL-SYR-10',  'CENTRAL', 'LOT-SEED-SYR10',   DATE '2028-12-31', 200::numeric),
+  ('SUP-IV-SET',       'CENTRAL', 'LOT-SEED-IVSET',   DATE '2027-12-31', 100::numeric),
+  ('SUP-COTTON-BALL',  'CENTRAL', 'LOT-SEED-COTTON',  DATE '2028-12-31',  40::numeric),
+  ('SUP-GAUZE-4X4',    'CENTRAL', 'LOT-SEED-GAUZE',   DATE '2028-12-31',  40::numeric),
+  ('SUP-ALCOHOL-SWAB', 'CENTRAL', 'LOT-SEED-SWAB',    DATE '2027-12-31',  40::numeric),
+  ('CLN-BP-CUFF',      'CENTRAL', 'LOT-SEED-BPCUFF',  DATE '2028-12-31',  20::numeric),
+  ('CLN-THERMO',       'CENTRAL', 'LOT-SEED-THERMO',  DATE '2028-12-31',  20::numeric),
+  ('CLN-TAPE',         'CENTRAL', 'LOT-SEED-TAPE',    DATE '2028-12-31', 150::numeric),
+  ('PPE-GLOVE-M',      'CENTRAL', 'LOT-SEED-GLOVE-M', DATE '2028-12-31',  40::numeric),
+  ('PPE-GLOVE-L',      'CENTRAL', 'LOT-SEED-GLOVE-L', DATE '2028-12-31',  40::numeric),
+  ('PPE-MASK-SURG',    'CENTRAL', 'LOT-SEED-MASK',    DATE '2028-12-31',  40::numeric),
+  ('PPE-N95',          'CENTRAL', 'LOT-SEED-N95',     DATE '2028-12-31',  40::numeric),
+  ('STA-RX-PAD',       'CENTRAL', 'LOT-SEED-RXPAD',   DATE '2028-12-31',  30::numeric),
+  ('LAB-VAC-EDTA',     'CENTRAL', 'LOT-SEED-EDTA',    DATE '2027-12-31',  40::numeric),
+  ('LAB-VAC-SER',      'CENTRAL', 'LOT-SEED-VACSER',  DATE '2027-12-31',  40::numeric),
+  ('LAB-URINE-CUP',    'CENTRAL', 'LOT-SEED-CUP',     DATE '2028-12-31', 200::numeric),
+  ('LAB-SLIDE',        'CENTRAL', 'LOT-SEED-SLIDE',   DATE '2028-12-31',  40::numeric),
+  -- Laboratory consumables also stocked in the Lab store so the workbench
+  -- consumes from its own location
+  ('LAB-VAC-EDTA',     'LAB',     'LOT-SEED-EDTA',    DATE '2027-12-31',  40::numeric),
+  ('LAB-VAC-SER',      'LAB',     'LOT-SEED-VACSER',  DATE '2027-12-31',  40::numeric),
+  ('LAB-URINE-CUP',    'LAB',     'LOT-SEED-CUP',     DATE '2028-12-31', 200::numeric),
+  ('LAB-SLIDE',        'LAB',     'LOT-SEED-SLIDE',   DATE '2028-12-31',  40::numeric),
+  ('LAB-COVERSLIP',    'LAB',     'LOT-SEED-COVER',   DATE '2028-12-31',  40::numeric),
+  ('LAB-TUBE-RACK',    'LAB',     'LOT-SEED-RACK',    DATE '2028-12-31',  10::numeric)
+),
+tgt AS (
+  SELECT i.id AS item_id, i.tenant_id, i.base_uom_id, i.standard_cost,
+         l.id AS location_id, v.lot_no, v.expiry_date, v.qty
+  FROM v
+  JOIN items i
+    ON i.tenant_id = '11111111-1111-4111-8111-111111111111' AND i.code = v.item_code
+  JOIN stock_locations l
+    ON l.tenant_id = i.tenant_id AND l.code = v.location_code
+),
+b AS (
+  INSERT INTO stock_batches (tenant_id, item_id, lot_no, expiry_date, unit_cost, status)
+  SELECT DISTINCT tenant_id, item_id, lot_no, expiry_date, standard_cost, 'AVAILABLE'
+  FROM tgt
+  ON CONFLICT (tenant_id, item_id, lot_no, expiry_date) DO UPDATE
+    SET status = 'AVAILABLE', unit_cost = EXCLUDED.unit_cost
+  RETURNING id, tenant_id, item_id, lot_no, expiry_date
+),
+m AS (
+  INSERT INTO stock_movements (
+    tenant_id, occurred_at, location_id, item_id, batch_id, qty, uom_id,
+    unit_cost, movement_type, ref_type, ref_id, posted_by, request_id,
+    prev_hash, row_hash)
+  SELECT t.tenant_id, now(), t.location_id, t.item_id, bt.id, t.qty, t.base_uom_id,
+         t.standard_cost, 'GRN', 'SEED_OPENING', bt.id,
+         (SELECT id FROM users
+           WHERE tenant_id = t.tenant_id AND email = 'admin@demo-a.test'),
+         'seed:demo_clean:opening', NULL, NULL
+  FROM tgt t
+  JOIN b bt ON bt.tenant_id = t.tenant_id AND bt.item_id = t.item_id
+           AND bt.lot_no = t.lot_no AND bt.expiry_date = t.expiry_date
+  WHERE NOT EXISTS (
+    SELECT 1 FROM stock_movements sm
+    WHERE sm.tenant_id = t.tenant_id
+      AND sm.location_id = t.location_id
+      AND sm.ref_type = 'SEED_OPENING' AND sm.ref_id = bt.id)
+  RETURNING 1
+)
+INSERT INTO stock_balances (tenant_id, location_id, batch_id, qty_on_hand, last_movement_at)
+SELECT t.tenant_id, t.location_id, bt.id, t.qty, now()
+FROM tgt t
+JOIN b bt ON bt.tenant_id = t.tenant_id AND bt.item_id = t.item_id
+         AND bt.lot_no = t.lot_no AND bt.expiry_date = t.expiry_date
+WHERE NOT EXISTS (
+  SELECT 1 FROM stock_balances sb
+  WHERE sb.tenant_id = t.tenant_id
+    AND sb.location_id = t.location_id AND sb.batch_id = bt.id)
+ON CONFLICT (tenant_id, location_id, batch_id) DO NOTHING;
+
+
+-- ============================================================================
 -- 10. Patients — exactly three
 --     These are the three this seed creates. It does not remove any other
 --     patient the tenant already holds (see SCOPE NOTE 4).
@@ -933,10 +1133,14 @@ BEGIN
       JOIN user_roles ur ON ur.tenant_id = u.tenant_id AND ur.user_id = u.id
       JOIN roles r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id
       WHERE u.tenant_id = '11111111-1111-4111-8111-111111111111'
-        AND u.email IN ('admin@demo-a.test','doctor@demo-a.test','nurse@demo-a.test')
-        AND u.status = 'ACTIVE' AND r.code IN ('tenant_admin','doctor','nurse')
-     ) <> 3 THEN
-    RAISE EXCEPTION 'demo_clean: expected 3 active staff accounts with tenant_admin/doctor/nurse roles';
+        AND u.email IN ('admin@demo-a.test','doctor@demo-a.test','nurse@demo-a.test',
+                        'dispenser@demo-a.test','staff@demo-a.test','verifier@demo-a.test',
+                        'labtech@demo-a.test','labverify@demo-a.test')
+        AND u.status = 'ACTIVE'
+        AND r.code IN ('tenant_admin','doctor','nurse','pharmacist_dispenser',
+                       'receptionist','pharmacist_verifier','lab_technologist','lab_verifier')
+     ) <> 8 THEN
+    RAISE EXCEPTION 'demo_clean: expected 8 active staff accounts, each with its seeded role';
   END IF;
 
   -- Every seeded account must be reachable from the tenant's MAIN branch (G-02).
@@ -944,9 +1148,11 @@ BEGIN
       JOIN user_branches ub ON ub.tenant_id = u.tenant_id AND ub.user_id = u.id
       JOIN branches b ON b.tenant_id = ub.tenant_id AND b.id = ub.branch_id AND b.code = 'MAIN'
       WHERE u.tenant_id = '11111111-1111-4111-8111-111111111111'
-        AND u.email IN ('admin@demo-a.test','doctor@demo-a.test','nurse@demo-a.test')
-     ) <> 3 THEN
-    RAISE EXCEPTION 'demo_clean: all 3 seeded staff must be assigned to branch MAIN';
+        AND u.email IN ('admin@demo-a.test','doctor@demo-a.test','nurse@demo-a.test',
+                        'dispenser@demo-a.test','staff@demo-a.test','verifier@demo-a.test',
+                        'labtech@demo-a.test','labverify@demo-a.test')
+     ) <> 8 THEN
+    RAISE EXCEPTION 'demo_clean: all 8 seeded staff must be assigned to branch MAIN';
   END IF;
 
   -- All three seeded staff must carry an employee record, and the prescribing
@@ -956,10 +1162,12 @@ BEGIN
   IF (SELECT count(*) FROM users u
       JOIN employees e ON e.tenant_id = u.tenant_id AND e.user_id = u.id
       WHERE u.tenant_id = '11111111-1111-4111-8111-111111111111'
-        AND u.email IN ('admin@demo-a.test','doctor@demo-a.test','nurse@demo-a.test')
+        AND u.email IN ('admin@demo-a.test','doctor@demo-a.test','nurse@demo-a.test',
+                        'dispenser@demo-a.test','staff@demo-a.test','verifier@demo-a.test',
+                        'labtech@demo-a.test','labverify@demo-a.test')
         AND e.status = 'ACTIVE' AND e.job_title <> ''
-     ) <> 3 THEN
-    RAISE EXCEPTION 'demo_clean: all 3 seeded staff must have an ACTIVE employees record';
+     ) <> 8 THEN
+    RAISE EXCEPTION 'demo_clean: all 8 seeded staff must have an ACTIVE employees record';
   END IF;
 
   IF (SELECT count(*) FROM users u
@@ -1108,7 +1316,8 @@ BEGIN
   -- silently matching zero permissions).
   IF (SELECT count(*) FROM roles r
       WHERE r.tenant_id = '11111111-1111-4111-8111-111111111111'
-        AND r.code IN ('tenant_admin','doctor','nurse','pharmacist_dispenser','receptionist')
+        AND r.code IN ('tenant_admin','doctor','nurse','pharmacist_dispenser','receptionist',
+                       'pharmacist_verifier','lab_technologist','lab_verifier')
         AND NOT EXISTS (SELECT 1 FROM role_permissions rp WHERE rp.tenant_id = r.tenant_id AND rp.role_id = r.id)
      ) > 0 THEN
     RAISE EXCEPTION 'demo_clean: a seeded role ended up with zero permissions (filter typo?)';
@@ -1120,7 +1329,8 @@ BEGIN
   FROM sod_conflicts s
   CROSS JOIN (VALUES
     ('tenant_admin'::text), ('doctor'::text), ('nurse'::text),
-    ('pharmacist_dispenser'::text), ('receptionist'::text)) AS rr(role_code)
+    ('pharmacist_dispenser'::text), ('receptionist'::text),
+    ('pharmacist_verifier'::text), ('lab_technologist'::text), ('lab_verifier'::text)) AS rr(role_code)
   JOIN roles r ON r.tenant_id = '11111111-1111-4111-8111-111111111111' AND r.code = rr.role_code
   WHERE EXISTS (
     SELECT 1 FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id
@@ -1134,7 +1344,25 @@ BEGIN
     RAISE EXCEPTION 'demo_clean: segregation-of-duty violation -> %', v_missing;
   END IF;
 
-  RAISE NOTICE 'demo_clean: verified — 10 modules, 5 staff on MAIN, 3 patients, pharmacy/lab/supply master data, no SoD conflicts';
+  -- Opening stock must be ledger-consistent: every seeded batch's balance must
+  -- equal the SUM of its movements — the exact invariant the reconciliation
+  -- job holds stock on (7-day FEFO hold + outbox alert). Scoped to the seed's
+  -- LOT-SEED-% lots so transactional drift from a running demo is never this
+  -- seed's failure.
+  IF (SELECT count(*)
+      FROM stock_balances b
+      JOIN stock_batches bt ON bt.tenant_id = b.tenant_id AND bt.id = b.batch_id
+      WHERE b.tenant_id = '11111111-1111-4111-8111-111111111111'
+        AND bt.lot_no LIKE 'LOT-SEED-%'
+        AND b.qty_on_hand <> COALESCE((
+              SELECT SUM(sm.qty) FROM stock_movements sm
+              WHERE sm.tenant_id = b.tenant_id
+                AND sm.location_id = b.location_id AND sm.batch_id = b.batch_id), 0)
+     ) > 0 THEN
+    RAISE EXCEPTION 'demo_clean: opening stock is not ledger-consistent with its GRN receipts';
+  END IF;
+
+  RAISE NOTICE 'demo_clean: verified — 10 modules, 8 staff on MAIN, 3 patients, 36 receipt-born opening batches across 3 locations, pharmacy/lab/supply master data, no SoD conflicts';
 END $$;
 
 COMMIT;

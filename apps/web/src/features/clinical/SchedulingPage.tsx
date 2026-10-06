@@ -33,6 +33,13 @@ interface PatientOption {
   patientNo: string;
 }
 
+interface PractitionerOption {
+  id: string;
+  name: string;
+  title?: string;
+  specialization?: string;
+}
+
 const STATUS_TONE: Record<string, "critical" | "high" | "normal" | "low" | "neutral" | "pending"> = {
   BOOKED: "pending",
   CONFIRMED: "low",
@@ -43,13 +50,12 @@ const STATUS_TONE: Record<string, "critical" | "high" | "normal" | "low" | "neut
   NO_SHOW: "high",
 };
 
-
-
 function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
 function timeOf(iso: string): string {
+  if (!iso) return "--:--";
   return iso.slice(11, 16);
 }
 
@@ -60,6 +66,7 @@ export function SchedulingPage() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [patientOptions, setPatientOptions] = useState<PatientOption[]>([]);
+  const [practitioners, setPractitioners] = useState<PractitionerOption[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [bookingOpen, setBookingOpen] = useState(false);
@@ -100,16 +107,34 @@ export function SchedulingPage() {
     })();
   }, []);
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await apiGet<{ data?: PractitionerOption[] }>("/clinical/practitioners");
+        if (Array.isArray(res?.data) && res.data.length > 0) {
+          setPractitioners(res.data);
+          if (session?.userId && res.data.some((p) => p.id === session.userId)) {
+            setPractitionerId(session.userId);
+          } else if (res.data[0]) {
+            setPractitionerId(res.data[0].id);
+          }
+        }
+      } catch {
+        /* fallback */
+      }
+    })();
+  }, [session?.userId]);
+
   const loadAvailability = useCallback(async (d: string) => {
     try {
       const res = await apiGet<{ slots?: Slot[] }>(
-        `/clinical/availability?branchId=" + currentBranchId + "&practitionerId=${practitionerId}&date=${d}`,
+        `/clinical/availability?branchId=${currentBranchId}&practitionerId=${practitionerId}&date=${d}`,
       );
       setSlots(res?.slots ?? []);
     } catch {
       setSlots([]);
     }
-  }, [practitionerId]);
+  }, [currentBranchId, practitionerId]);
 
   useEffect(() => {
     void loadAvailability(date);
@@ -192,11 +217,29 @@ export function SchedulingPage() {
       {error ? <div className="mb-3"><AlertBanner severity="danger" title="Booking problem">{error}</AlertBanner></div> : null}
 
       <div className="clinic-card p-3 mb-3">
-        <div className="row g-2 align-items-end">
-          <div className="col-md-4">
+        <div className="row g-3 align-items-end">
+          <div className="col-md-3">
             <DateField label="Date" value={date} onChange={setDate} />
           </div>
-          <div className="col-md-8 text-md-end small text-muted">
+          <div className="col-md-4">
+            <label className="form-label small fw-semibold" htmlFor="sch-practitioner">Doctor / Practitioner</label>
+            <select
+              id="sch-practitioner"
+              className="form-select form-select-sm"
+              value={practitionerId}
+              onChange={(e) => setPractitionerId(e.target.value)}
+            >
+              {practitioners.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} {p.title ? `(${p.title})` : ""}
+                </option>
+              ))}
+              {!practitioners.some((p) => p.id === practitionerId) && (
+                <option value={practitionerId}>{practitionerId}</option>
+              )}
+            </select>
+          </div>
+          <div className="col-md-5 text-md-end small text-muted">
             {dayList.length} appointments · {slots.filter((s) => s.available).length} open slots
           </div>
         </div>
@@ -213,21 +256,36 @@ export function SchedulingPage() {
                   <tr><th>TIME</th><th>PATIENT</th><th>PRACTITIONER</th><th>STATUS</th><th className="text-end">ACTION</th></tr>
                 </thead>
                 <tbody>
-                  {dayList.map((a) => (
-                    <tr key={a.id}>
-                      <td className="tabular">{timeOf(a.startsAt)}–{timeOf(a.endsAt)}</td>
-                      <td className="fw-semibold text-dark">{a.patientName}</td>
-                      <td className="small">{a.practitionerName}</td>
-                      <td><StatusPill tone={STATUS_TONE[a.status] ?? "neutral"} label={a.status} /></td>
-                      <td className="text-end">
-                        {a.status === "BOOKED" || a.status === "CONFIRMED" ? (
-                          <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => void checkIn(a)}>
-                            Check in
-                          </button>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
+                  {dayList.map((a) => {
+                    const startsAt = a.startsAt || (a as any).starts_at || "";
+                    const endsAt = a.endsAt || (a as any).ends_at || "";
+                    const patientName = a.patientName || (a as any).patient_name || "Unknown Patient";
+                    const practitionerName = a.practitionerName || (a as any).practitioner_name || "Doctor";
+                    const channel = (a as any).channel || "FRONT_DESK";
+
+                    return (
+                      <tr key={a.id}>
+                        <td className="tabular">{timeOf(startsAt)}–{timeOf(endsAt)}</td>
+                        <td>
+                          <span className="fw-semibold text-dark">{patientName}</span>
+                          {channel === "ONLINE" && (
+                            <span className="badge bg-info-subtle text-info border border-info-subtle ms-2" style={{ fontSize: "0.72rem" }}>
+                              🌐 Online
+                            </span>
+                          )}
+                        </td>
+                        <td className="small">{practitionerName}</td>
+                        <td><StatusPill tone={STATUS_TONE[a.status] ?? "neutral"} label={a.status} /></td>
+                        <td className="text-end">
+                          {a.status === "BOOKED" || a.status === "CONFIRMED" ? (
+                            <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => void checkIn(a)}>
+                              Check in
+                            </button>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {dayList.length === 0 ? (
                     <tr><td colSpan={5} className="text-center text-muted py-4">No appointments this day.</td></tr>
                   ) : null}
@@ -275,6 +333,22 @@ export function SchedulingPage() {
                 <button type="button" className="btn-close" onClick={() => setBookingOpen(false)} aria-label="Close" />
               </div>
               <div className="modal-body">
+                <div className="mb-3">
+                  <label className="form-label small fw-semibold" htmlFor="bk-practitioner">Doctor *</label>
+                  <select
+                    id="bk-practitioner"
+                    className="form-select"
+                    value={practitionerId}
+                    onChange={(e) => setPractitionerId(e.target.value)}
+                  >
+                    {practitioners.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.title || "Physician"})</option>
+                    ))}
+                    {!practitioners.some((p) => p.id === practitionerId) && (
+                      <option value={practitionerId}>{practitionerId}</option>
+                    )}
+                  </select>
+                </div>
                 <div className="mb-3">
                   <label className="form-label small fw-semibold" htmlFor="bk-patient">Patient *</label>
                   <select id="bk-patient" className="form-select" value={patientId} onChange={(e) => setPatientId(e.target.value)}>

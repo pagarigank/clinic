@@ -5,7 +5,7 @@ import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { ModuleAllowlist } from '../rbac/module.guard.js';
 import { RequirePermission } from '../rbac/require-permission.decorator.js';
-import { ProvisioningService } from './provisioning.service.js';
+import { ProvisioningService, buildStarterCredentials } from './provisioning.service.js';
 import { MODULES, type ModuleName } from '../rbac/module.guard.js';
 import type { FastifyRequest } from 'fastify';
 import type { RequestWithAuth } from '../auth/auth-context.js';
@@ -59,7 +59,10 @@ export class ProvisioningController {
   @ApiOperation({ summary: 'Get tenant metadata (platform console, surfaces no PHI)' })
   async getTenant(@Param('tenantId') tenantId: string) {
     const tenant = await this.provisioning.getTenant(tenantId);
-    return { tenant };
+    return {
+      tenant,
+      credentials: buildStarterCredentials(tenant.slug, tenant.name),
+    };
   }
 
   /** POST /platform/tenants — wizard step: create tenant with modules */
@@ -83,7 +86,10 @@ export class ProvisioningController {
       },
       auth?.userId ?? null,
     );
-    return { tenant };
+    return {
+      tenant,
+      credentials: buildStarterCredentials(tenant.slug, tenant.name),
+    };
   }
 
   /** POST /platform/tenants/{id}/provision — retry JOB-03 on failure */

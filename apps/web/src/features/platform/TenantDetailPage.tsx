@@ -11,6 +11,7 @@ import {
   type ModuleStatus,
   type TenantModuleRow,
 } from "./moduleCatalogue.js";
+import { TenantCredentialsCard, type StarterCredentialsPayload } from "./TenantCredentialsCard.js";
 
 /**
  * Tenant detail with the Modules tab — todo.md §1.7 ⛔ and frontend.md §14.1:
@@ -69,7 +70,10 @@ export function TenantDetailPage() {
   const navigatePreferredTenant = (location.state as { tenant?: { name?: string; slug?: string } } | null)?.tenant;
   const [tenantName, setTenantName] = useState(navigatePreferredTenant?.name ?? "Tenant");
   const [tenantSlug, setTenantSlug] = useState(navigatePreferredTenant?.slug ?? "");
-  const [tab, setTab] = useState<"overview" | "modules" | "subscription" | "jobs" | "transparency">("modules");
+  const [tenantStatus, setTenantStatus] = useState<string>("ACTIVE");
+  const [provisioningBusy, setProvisioningBusy] = useState(false);
+  const [tab, setTab] = useState<"overview" | "modules" | "logins" | "subscription" | "jobs" | "transparency">("modules");
+  const [credentials, setCredentials] = useState<StarterCredentialsPayload | undefined>();
   const [modules, setModules] = useState<Record<ModuleKey, TenantModuleRow>>(DEMO_MODULES);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -82,10 +86,12 @@ export function TenantDetailPage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await apiGet<{ tenant?: { name?: string; slug?: string } }>(`/platform/tenants/${tenantId}`);
+        const res = await apiGet<{ tenant?: { name?: string; slug?: string; status?: string }; credentials?: StarterCredentialsPayload }>(`/platform/tenants/${tenantId}`);
         if (!cancelled && res?.tenant) {
           setTenantName(res.tenant.name ?? tenantName);
           setTenantSlug(res.tenant.slug ?? tenantSlug);
+          if (res.tenant.status) setTenantStatus(res.tenant.status);
+          if (res.credentials) setCredentials(res.credentials);
         }
       } catch {
         /* demo fallback keeps the console usable */
@@ -113,6 +119,32 @@ export function TenantDetailPage() {
     };
   }, [tenantId]);
 
+  const handleActivateProvisioning = async () => {
+    setProvisioningBusy(true);
+    setError(null);
+    try {
+      await apiPost(`/platform/tenants/${tenantId}/provision`, {});
+      setTenantStatus("ACTIVE");
+      setNotice(`Tenant successfully provisioned and activated! Staff can now log in.`);
+      const modRes = await apiGet<{ modules?: TenantModuleRow[] }>(`/platform/tenants/${tenantId}/modules`);
+      if (Array.isArray(modRes?.modules)) {
+        setModules((prev) => {
+          const next = { ...prev };
+          for (const row of modRes.modules!) {
+            if (MODULE_CATALOGUE.some((m) => m.key === row.module)) {
+              next[row.module] = row;
+            }
+          }
+          return next;
+        });
+      }
+    } catch (err: any) {
+      setError(problemCopy(err) || "Could not complete provisioning.");
+    } finally {
+      setProvisioningBusy(false);
+    }
+  };
+
   const recordChange = useCallback((entry: ChangeEntry) => {
     setHistory((prev) => [entry, ...prev]);
   }, []);
@@ -131,12 +163,49 @@ export function TenantDetailPage() {
           <nav aria-label="Breadcrumb" className="small text-muted mb-1">
             <Link to="/platform/tenants">Tenants</Link> <span aria-hidden="true">/</span> {tenantName}
           </nav>
-          <h1 className="page-title">{tenantName}</h1>
+          <div className="d-flex align-items-center gap-2">
+            <h1 className="page-title mb-0">{tenantName}</h1>
+            <span
+              className={`badge ${
+                tenantStatus === "ACTIVE"
+                  ? "bg-success-subtle text-success border border-success"
+                  : tenantStatus === "PROVISIONING"
+                  ? "bg-warning-subtle text-warning-emphasis border border-warning"
+                  : "bg-danger-subtle text-danger border border-danger"
+              }`}
+            >
+              {tenantStatus}
+            </span>
+          </div>
           <div className="page-subtitle">
             Platform scope — no patient data is available here. {tenantSlug ? `Slug: ${tenantSlug}` : ""}
           </div>
         </div>
       </div>
+
+      {tenantStatus === "PROVISIONING" ? (
+        <div className="alert alert-warning d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4 shadow-sm" role="status">
+          <div className="d-flex align-items-center gap-3">
+            <span className="fs-2">⏳</span>
+            <div>
+              <h5 className="alert-heading mb-1 fw-bold">Tenant is in PROVISIONING Status</h5>
+              <p className="mb-0 small">
+                Master data catalogs and starter user logins are pending. Complete provisioning to activate the clinic for staff login.
+              </p>
+            </div>
+          </div>
+          <div>
+            <button
+              type="button"
+              className="btn btn-primary fw-bold px-3 text-nowrap shadow-sm"
+              disabled={provisioningBusy}
+              onClick={handleActivateProvisioning}
+            >
+              {provisioningBusy ? "Provisioning & Activating…" : "⚡ Activate Tenant (Complete Provisioning)"}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {notice ? (
         <div className="mb-3" role="status">
@@ -178,6 +247,17 @@ export function TenantDetailPage() {
           <button
             type="button"
             role="tab"
+            aria-selected={tab === "logins"}
+            className={`nav-link ${tab === "logins" ? "active" : ""}`}
+            onClick={() => setTab("logins")}
+          >
+            🔑 Logins & Credentials
+          </button>
+        </li>
+        <li className="nav-item" role="presentation">
+          <button
+            type="button"
+            role="tab"
             aria-selected={tab === "subscription"}
             className={`nav-link ${tab === "subscription" ? "active" : ""}`}
             onClick={() => setTab("subscription")}
@@ -210,16 +290,35 @@ export function TenantDetailPage() {
       </ul>
 
       {tab === "overview" ? (
-        <div className="clinic-card p-3">
-          <p className="text-body-secondary mb-2">
-            Platform scope — no patient data is available here. Entitlement, subscription, lifecycle,
-            and transparency controls are active.
-          </p>
-          <Timeline entries={history} />
+        <div>
+          <TenantCredentialsCard
+            tenantName={tenantName}
+            tenantSlug={tenantSlug}
+            credentials={credentials}
+          />
+          <div className="clinic-card p-3">
+            <h5 className="h6 fw-bold mb-2">Platform Audit Timeline</h5>
+            <p className="text-body-secondary mb-2">
+              Platform scope — no patient data is available here. Entitlement, subscription, lifecycle,
+              and transparency controls are active.
+            </p>
+            <Timeline entries={history} />
+          </div>
+        </div>
+      ) : tab === "logins" ? (
+        <div>
+          <TenantCredentialsCard
+            tenantName={tenantName}
+            tenantSlug={tenantSlug}
+            credentials={credentials}
+          />
         </div>
       ) : tab === "subscription" ? (
         <SubscriptionTab
           tenantId={tenantId}
+          tenantStatus={tenantStatus}
+          provisioningBusy={provisioningBusy}
+          onActivateProvisioning={handleActivateProvisioning}
           onNotice={(msg) => setNotice(`${msg} — ${new Date().toLocaleTimeString()}`)}
           onError={setError}
         />
@@ -823,10 +922,16 @@ function problemCopy(err: unknown): string {
 /* ─── Subscription & Lifecycle Tab ─────────────────────────────────────── */
 function SubscriptionTab({
   tenantId,
+  tenantStatus,
+  provisioningBusy,
+  onActivateProvisioning,
   onNotice,
   onError,
 }: {
   tenantId: string;
+  tenantStatus: string;
+  provisioningBusy: boolean;
+  onActivateProvisioning: () => Promise<void>;
   onNotice: (msg: string) => void;
   onError: (msg: string | null) => void;
 }) {
@@ -897,6 +1002,44 @@ function SubscriptionTab({
 
   return (
     <div className="d-flex flex-column gap-4">
+      {/* Tenant Lifecycle & Activation */}
+      <div className="clinic-card p-4">
+        <h5 className="h6 fw-bold mb-2">Tenant Lifecycle & Activation Status</h5>
+        <div className="d-flex align-items-center justify-content-between flex-wrap gap-3">
+          <div>
+            <span className="text-muted small me-2">Current Status:</span>
+            <span
+              className={`badge ${
+                tenantStatus === "ACTIVE"
+                  ? "bg-success"
+                  : tenantStatus === "PROVISIONING"
+                  ? "bg-warning text-dark"
+                  : "bg-danger"
+              }`}
+            >
+              {tenantStatus}
+            </span>
+            <p className="small text-muted mt-1 mb-0">
+              {tenantStatus === "ACTIVE"
+                ? "The clinic is live and operational. All starter and invited staff accounts can log in."
+                : tenantStatus === "PROVISIONING"
+                ? "Tenant is in provisioning state. Click Activate Tenant to complete seeding and enable staff logins."
+                : "Tenant is suspended. Staff logins and background jobs are paused."}
+            </p>
+          </div>
+          {tenantStatus === "PROVISIONING" && (
+            <button
+              type="button"
+              className="btn btn-sm btn-primary fw-bold px-3 shadow-sm"
+              disabled={provisioningBusy}
+              onClick={onActivateProvisioning}
+            >
+              {provisioningBusy ? "Activating…" : "⚡ Complete Provisioning & Set Active"}
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Plan Management */}
       <div className="clinic-card p-4">
         <h5 className="h6 fw-bold mb-2">Commercial Subscription Plan (Q-15 Downgrade Protection)</h5>

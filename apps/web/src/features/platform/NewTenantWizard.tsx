@@ -1,19 +1,20 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { AlertBanner } from "@clinic/ui";
-import { apiPost, ApiError } from "../../shared/api/client.js";
+import { apiGet, apiPost, ApiError } from "../../shared/api/client.js";
 import { MODULE_CATALOGUE, MODULE_DEPENDENCIES, type ModuleKey } from "./moduleCatalogue.js";
+import { TenantCredentialsCard, type StarterCredentialsPayload } from "./TenantCredentialsCard.js";
 
 /**
  * New tenant wizard — todo.md §1.7 / frontend.md §14.1.
  *
- * Steps: profile (name, slug with live format check) → modules → confirm.
+ * Steps: profile (name, slug with live format check, plan) → modules → confirm → credentials.
  * The module step is the one that needs care:
  *   - a grid of module cards with plain-language descriptions and dependencies;
  *   - `Admin` is on and locked (everything depends on it);
  *   - ticking a dependent module auto-ticks its dependency and says why;
  *   - the right-hand live summary names what the tenant will run;
- *   - nothing is created until Confirm posts `modules[]` with the tenant.
+ *   - once created, step 4 displays all default logins and passwords for copying.
  */
 
 interface WizardTenant {
@@ -23,18 +24,55 @@ interface WizardTenant {
   status?: string;
 }
 
+interface SubscriptionPlanItem {
+  id: string;
+  code: string;
+  name: string;
+}
+
+const DEFAULT_PLANS: SubscriptionPlanItem[] = [
+  { id: "b0000000-0000-4000-8000-000000000003", code: "enterprise", name: "Enterprise Hospital & Diagnostic (All Modules)" },
+  { id: "fa000000-0000-4000-8000-000000000002", code: "complete", name: "Complete (All Modules)" },
+  { id: "b0000000-0000-4000-8000-000000000002", code: "standard", name: "Standard Practice" },
+  { id: "fa000000-0000-4000-8000-000000000001", code: "starter", name: "Starter (Consultation + Patients)" },
+];
+
 const SLUG_RE = /^[a-z0-9-]{2,60}$/;
 
 export function NewTenantWizard() {
   const navigate = useNavigate();
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [createdTenant, setCreatedTenant] = useState<WizardTenant | null>(null);
+  const [createdCredentials, setCreatedCredentials] = useState<StarterCredentialsPayload | undefined>();
   const [name, setName] = useState("");
   const [legalName, setLegalName] = useState("");
   const [slug, setSlug] = useState("");
   const [timezone, setTimezone] = useState("Asia/Manila");
+  const [plans, setPlans] = useState<SubscriptionPlanItem[]>(DEFAULT_PLANS);
+  const [planId, setPlanId] = useState<string>("b0000000-0000-4000-8000-000000000003");
   const [selected, setSelected] = useState<Set<ModuleKey>>(new Set(["admin", "patients"]));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Load live plans from API on mount
+  useEffect(() => {
+    apiGet<{ plans: SubscriptionPlanItem[] }>("/platform/plans")
+      .then((data) => {
+        if (data?.plans?.length) {
+          setPlans(data.plans);
+          // Prefer enterprise or complete by default so all modules can be enabled
+          const enterprisePlan = data.plans.find((p) => p.code === "enterprise" || p.code === "complete");
+          if (enterprisePlan) {
+            setPlanId(enterprisePlan.id);
+          } else if (data.plans[0]) {
+            setPlanId(data.plans[0].id);
+          }
+        }
+      })
+      .catch(() => {
+        // Fallback plans are preserved
+      });
+  }, []);
 
   const slugValid = SLUG_RE.test(slug);
 
@@ -51,9 +89,25 @@ export function NewTenantWizard() {
         // Auto-tick hard dependencies with the reason shown beside the card.
         for (const dep of MODULE_DEPENDENCIES[key]) next.add(dep);
       }
+
+      // If user enabled laboratory/pharmacy/supply, ensure the selected plan supports them
+      if (key === "laboratory" || key === "pharmacy" || key === "supply") {
+        const ent = plans.find((p) => p.code === "enterprise" || p.code === "complete");
+        if (ent && planId !== ent.id) {
+          const currentPlan = plans.find((p) => p.id === planId);
+          if (currentPlan?.code === "starter" || (key === "laboratory" && currentPlan?.code === "standard")) {
+            setPlanId(ent.id);
+          }
+        }
+      }
+
       return next;
     });
   };
+
+  const selectedPlan = useMemo(() => {
+    return plans.find((p) => p.id === planId) ?? plans[0] ?? DEFAULT_PLANS[0];
+  }, [plans, planId]);
 
   const unmetDependencies = useMemo(() => {
     const problems: string[] = [];
@@ -77,14 +131,19 @@ export function NewTenantWizard() {
     setBusy(true);
     setError(null);
     try {
-      const res = await apiPost<{ tenant: WizardTenant }>("/platform/tenants", {
+      const targetPlanId = planId || selectedPlan?.id || "b0000000-0000-4000-8000-000000000003";
+      const res = await apiPost<{ tenant: WizardTenant; credentials?: StarterCredentialsPayload }>("/platform/tenants", {
         name: name.trim(),
         slug: slug.trim(),
-        planId: "00000000-0000-4000-8000-000000000001",
+        planId: targetPlanId,
         timezone,
         modules: Array.from(selected),
       });
-      navigate(`/platform/tenants/${res.tenant?.id ?? ""}`);
+      const t = res.tenant ?? { id: "", name: name.trim(), slug: slug.trim() };
+      setCreatedTenant(t);
+      setCreatedCredentials(res.credentials);
+      setStep(4);
+      setBusy(false);
     } catch (err) {
       setError(
         err instanceof ApiError
@@ -111,6 +170,7 @@ export function NewTenantWizard() {
         <li className={`breadcrumb-item ${step === 1 ? "active" : ""}`} aria-current={step === 1 ? "step" : undefined}>Profile</li>
         <li className={`breadcrumb-item ${step === 2 ? "active" : ""}`} aria-current={step === 2 ? "step" : undefined}>Modules</li>
         <li className={`breadcrumb-item ${step === 3 ? "active" : ""}`} aria-current={step === 3 ? "step" : undefined}>Confirm</li>
+        <li className={`breadcrumb-item ${step === 4 ? "active" : ""}`} aria-current={step === 4 ? "step" : undefined}>Logins & Handover</li>
       </ol>
 
       {error ? (
@@ -151,6 +211,24 @@ export function NewTenantWizard() {
                   <select id="wz-tz" className="form-select" value={timezone} onChange={(e) => setTimezone(e.target.value)}>
                     <option value="Asia/Manila">Asia/Manila (PHT)</option>
                   </select>
+                </div>
+                <div className="col-md-6">
+                  <label className="form-label small fw-semibold" htmlFor="wz-plan">Subscription Plan *</label>
+                  <select
+                    id="wz-plan"
+                    className="form-select"
+                    value={planId}
+                    onChange={(e) => setPlanId(e.target.value)}
+                  >
+                    {plans.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="form-text small">
+                    Enterprise tier enables all clinical, laboratory, pharmacy, and supply workflows.
+                  </div>
                 </div>
               </div>
               <div className="d-flex justify-content-end mt-3">
@@ -225,6 +303,8 @@ export function NewTenantWizard() {
                 <dd className="col-sm-8">{name}</dd>
                 <dt className="col-sm-4">Slug</dt>
                 <dd className="col-sm-8 font-monospace">{slug}</dd>
+                <dt className="col-sm-4">Subscription plan</dt>
+                <dd className="col-sm-8 fw-semibold text-primary">{selectedPlan?.name || "Enterprise Hospital & Diagnostic"}</dd>
                 <dt className="col-sm-4">Timezone</dt>
                 <dd className="col-sm-8">{timezone}</dd>
                 <dt className="col-sm-4">Modules</dt>
@@ -243,16 +323,45 @@ export function NewTenantWizard() {
               </div>
             </div>
           ) : null}
+
+          {step === 4 && createdTenant ? (
+            <div>
+              <div className="alert alert-success d-flex align-items-center gap-3 p-3 mb-4 shadow-sm" role="status">
+                <div className="fs-1">🎉</div>
+                <div>
+                  <h5 className="alert-heading mb-1 fw-bold">Tenant Successfully Created!</h5>
+                  <p className="mb-0 small">
+                    The tenant <strong>{createdTenant.name}</strong> (slug: <code>{createdTenant.slug}</code>) has been
+                    registered. Master data for laboratory, pharmacy, and central supply, along with all 9 starter roles and
+                    12 default logins, have been provisioned.
+                  </p>
+                </div>
+              </div>
+
+              <TenantCredentialsCard
+                tenantName={createdTenant.name ?? name}
+                tenantSlug={createdTenant.slug ?? slug}
+                credentials={createdCredentials}
+                onProceed={() => navigate(`/platform/tenants/${createdTenant.id ?? ""}`)}
+                proceedLabel="Proceed to Tenant Console"
+              />
+            </div>
+          ) : null}
         </div>
 
         {/* Right-hand live summary (frontend §14.1) */}
         <div className="col-lg-4">
           <div className="clinic-card p-3">
-            <h2 className="h6">Live summary</h2>
-            <p className="small">{summary}</p>
+            <h2 className="h6">{step === 4 ? "Handover Summary" : "Live summary"}</h2>
+            <p className="small">
+              {step === 4
+                ? `Starter credentials generated for ${createdTenant?.name ?? name}. The common password DemoPassw0rd!2026 is ready for tenant onboarding.`
+                : summary}
+            </p>
             <p className="small text-muted mb-0">
-              Each module choice implies the seeded masters (service catalog, drug schedules, report
-              templates) that JOB-03 will install for the branch service profile.
+              {step === 4
+                ? "The admin can reset their password on first login. All master catalogues (lab tests, medicines, inventory) are loaded automatically."
+                : "Each module choice implies the seeded masters (service catalog, drug schedules, report templates) that JOB-03 will install for the branch service profile."}
             </p>
           </div>
         </div>

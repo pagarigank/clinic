@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router";
 import { useAuth } from "../../shared/auth/AuthContext.js";
 import { AlertBanner } from "@clinic/ui";
@@ -12,30 +12,29 @@ export function LoginPage() {
   // `doctor@demo-a.test` — there is no `demo` slug and no `admin@example.com`.
   // A mismatch here is invisible in dev until someone presses Submit, and then
   // it looks like the login endpoint is broken when it is not.
-  const [slug, setSlug] = useState("demo-a");
-  const [email, setEmail] = useState("admin@demo-a.test");
-  const [password, setPassword] = useState("DemoPassw0rd!2026");
+  const [slug, setSlug] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [rememberDevice, setRememberDevice] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const executeLogin = async (s: string, em: string, pw: string) => {
     setLocalError(null);
 
-    if (!slug.trim()) {
+    if (!s.trim()) {
       setLocalError("Please enter your clinic identifier (slug).");
       return;
     }
-    if (!email.trim() || !password.trim()) {
+    if (!em.trim() || !pw.trim()) {
       setLocalError("Please enter both email and password.");
       return;
     }
 
     setIsLoading(true);
     try {
-      await login(slug.trim(), email.trim(), password);
+      await login(s.trim(), em.trim(), pw);
       navigate("/dashboard");
     } catch (err: any) {
       setLocalError(err?.problem?.detail || err?.message || "Invalid credentials or clinic slug.");
@@ -44,12 +43,31 @@ export function LoginPage() {
     }
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeLogin(slug, email, password);
+  };
+
   const fillCredentials = (s: string, em: string, pw: string) => {
     setSlug(s);
     setEmail(em);
     setPassword(pw);
     setLocalError(null);
   };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Shortcut Ctrl+I (or Cmd+I on Mac) to auto-fill admin tenant credentials and submit
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "i" || e.code === "KeyI")) {
+        e.preventDefault();
+        fillCredentials("demo-a", "admin@demo-a.test", "DemoPassw0rd!2026");
+        void executeLogin("demo-a", "admin@demo-a.test", "DemoPassw0rd!2026");
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [login, navigate]);
 
   return (
     <div className="auth-page-wrapper">
@@ -100,7 +118,7 @@ export function LoginPage() {
                   id="clinic-slug"
                   type="text"
                   className="form-control"
-                  placeholder="e.g. demo or metrocare"
+                  placeholder="e.g. metrocare"
                   value={slug}
                   onChange={(e) => setSlug(e.target.value)}
                   autoComplete="organization"
@@ -185,29 +203,31 @@ export function LoginPage() {
             </button>
           </form>
 
-          {/* Quick Demo Credentials */}
+          {/* Patient Online Appointment Booking */}
           <div className="mt-4 pt-3 border-top text-center">
-            <span className="text-muted small d-block mb-2">One-Click Demo Credentials:</span>
-            <div className="d-flex gap-2 justify-content-center">
-              <button
-                type="button"
-                className="btn btn-sm btn-outline-secondary"
-                onClick={() => fillCredentials("demo-a", "admin@demo-a.test", "DemoPassw0rd!2026")}
+            <div className="p-3 rounded-3" style={{ backgroundColor: "rgba(14, 165, 233, 0.08)", border: "1px solid rgba(14, 165, 233, 0.25)" }}>
+              <div className="d-flex align-items-center justify-content-center gap-2 mb-1">
+                <span style={{ fontSize: "1.1rem" }}>📅</span>
+                <span className="fw-semibold text-primary" style={{ fontSize: "0.95rem" }}>
+                  Patient Appointment Scheduling
+                </span>
+              </div>
+              <p className="small text-secondary mb-2">
+                Need to consult a doctor? Book an outpatient consultation online without logging in.
+              </p>
+              <Link
+                to={slug ? `/book?slug=${encodeURIComponent(slug)}` : "/book"}
+                id="patient-booking-link"
+                className="btn btn-outline-primary btn-sm w-100 fw-semibold d-inline-flex align-items-center justify-content-center gap-2"
               >
-                Tenant Admin
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm btn-outline-secondary"
-                onClick={() => fillCredentials("demo-a", "doctor@demo-a.test", "DemoPassw0rd!2026")}
-              >
-                Attending Doctor
-              </button>
+                <span>Schedule Appointment with Doctor</span>
+                <span aria-hidden="true">→</span>
+              </Link>
             </div>
           </div>
 
           {/* Registration Notice & Link */}
-          <div className="mt-4 pt-3 border-top text-center">
+          <div className="mt-3 pt-3 border-top text-center">
             <p className="small text-muted mb-2">
               New clinician, nurse, or medical staff?
             </p>

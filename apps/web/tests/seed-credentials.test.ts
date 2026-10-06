@@ -44,79 +44,52 @@ function seedEmails(): string[] {
 /** Default state values declared in the login page. */
 function loginDefaults(): { slug: string; email: string; password: string } {
   const src = readFileSync(loginPath, "utf8");
-  const slugM = src.match(/const \[slug, setSlug\] = useState\("([^"]+)"\)/);
-  const emailM = src.match(/const \[email, setEmail\] = useState\("([^"]+)"\)/);
-  const passM = src.match(/const \[password, setPassword\] = useState\("([^"]+)"\)/);
-  if (!slugM?.[1] || !emailM?.[1] || !passM?.[1]) {
+  const slugM = src.match(/const \[slug, setSlug\] = useState\("([^"]*)"\)/);
+  const emailM = src.match(/const \[email, setEmail\] = useState\("([^"]*)"\)/);
+  const passM = src.match(/const \[password, setPassword\] = useState\("([^"]*)"\)/);
+  if (!slugM || !emailM || !passM) {
     throw new Error("LoginPage.tsx defaults could not be parsed");
   }
-  return { slug: slugM[1], email: emailM[1], password: passM[1] };
+  return { slug: slugM[1]!, email: emailM[1]!, password: passM[1]! };
 }
 
-describe("login defaults match the demo seed", () => {
+describe("login defaults for deployment", () => {
   it("has a readable seed and login page", () => {
     expect(existsSync(seedPath)).toBe(true);
     expect(existsSync(loginPath)).toBe(true);
   });
 
-  it("uses a tenant slug that the seed actually creates", () => {
-    const slugs = seedSlugs();
-    expect(slugs.length, "no tenant slugs parsed from demo.sql — the regex is stale").toBeGreaterThan(0);
-    const { slug } = loginDefaults();
-    expect(
-      slugs,
-      `LoginPage defaults to slug "${slug}", which demo.sql does not create (found: ${slugs.join(", ")})`,
-    ).toContain(slug);
-  });
-
-  it("uses an email that the seed actually creates", () => {
-    const emails = seedEmails();
-    expect(emails.length, "no emails parsed from demo.sql — the regex is stale").toBeGreaterThan(0);
-    const { email } = loginDefaults();
-    expect(
-      emails,
-      `LoginPage defaults to "${email}", which demo.sql does not create`,
-    ).toContain(email.toLowerCase());
-  });
-
-  it("uses the demo password documented in the seed header", () => {
-    const sql = readFileSync(seedPath, "utf8");
-    const m = sql.match(/demo credential "([^"]+)"/);
-    expect(m?.[1], "demo.sql no longer documents its credential").toBeTruthy();
-    expect(loginDefaults().password).toBe(m![1]);
+  it("defaults to empty textboxes on initial load for deployment", () => {
+    const { slug, email, password } = loginDefaults();
+    expect(slug).toBe("");
+    expect(email).toBe("");
+    expect(password).toBe("");
   });
 });
 
-describe("demo buttons and form defaults agree", () => {
+describe("shortcut credentials match demo seed", () => {
   it("every fillCredentials target is a real seeded tenant + user", () => {
     const src = readFileSync(loginPath, "utf8");
     const calls = [...src.matchAll(/fillCredentials\("([^"]+)",\s*"([^"]+)",\s*"([^"]+)"\)/g)];
-    expect(calls.length, "no demo buttons found — the markup changed?").toBeGreaterThan(0);
+    expect(calls.length, "fillCredentials shortcut target missing").toBeGreaterThan(0);
 
     const slugs = seedSlugs();
     const emails = seedEmails();
 
     for (const c of calls) {
       const [, slug, email] = c;
-      expect(slugs, `demo button slug "${slug}" is not seeded`).toContain(slug);
-      expect(emails, `demo button email "${email}" is not seeded`).toContain(email!.toLowerCase());
+      expect(slugs, `shortcut slug "${slug}" is not seeded`).toContain(slug);
+      expect(emails, `shortcut email "${email}" is not seeded`).toContain(email!.toLowerCase());
     }
   });
 
-  it("a demo button can reproduce the default form state", () => {
-    // Otherwise the pre-filled form and the advertised "one-click" path
-    // disagree, which is precisely the confusion this suite was written for.
+  it("uses the demo password documented in the seed header", () => {
+    const sql = readFileSync(seedPath, "utf8");
+    const m = sql.match(/demo credential "([^"]+)"/);
+    expect(m?.[1], "demo.sql no longer documents its credential").toBeTruthy();
+
     const src = readFileSync(loginPath, "utf8");
     const calls = [...src.matchAll(/fillCredentials\("([^"]+)",\s*"([^"]+)",\s*"([^"]+)"\)/g)];
-    const defaults = loginDefaults();
-    const matches = calls.some(
-      (c) => c[1] === defaults.slug && c[2] === defaults.email && c[3] === defaults.password,
-    );
-    expect(
-      matches,
-      `defaults (${defaults.slug}/${defaults.email}) match no demo button; available: ${calls
-        .map((c) => `${c[1]}/${c[2]}`)
-        .join(", ")}`,
-    ).toBe(true);
+    expect(calls[0]![3]).toBe(m![1]);
   });
 });

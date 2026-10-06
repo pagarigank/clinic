@@ -17,3 +17,8 @@ export {
   tenantTransactionsInScope,
   type TenantScopeHandle,
 } from "./tenant-scope.js";
+export {
+  runTenantBootstrap,
+  BootstrapSeedError,
+  type TenantBootstrapOptions,
+} from "./bootstrap.js";

@@ -733,7 +733,7 @@ export function ItemMasterPage() {
       {isCsvModalOpen && (
         <Modal show={true} onHide={() => setIsCsvModalOpen(false)} size="lg" centered>
           <Modal.Header closeButton>
-            <Modal.Title className="h5 font-weight-bold">Bulk CSV Import — Location Item Parameters (todo §4.1)</Modal.Title>
+            <Modal.Title className="h5 font-weight-bold">Bulk CSV Import — Location Item Parameters</Modal.Title>
           </Modal.Header>
           <form onSubmit={handleImportCsv}>
             <Modal.Body>

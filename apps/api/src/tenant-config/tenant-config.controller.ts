@@ -1,5 +1,21 @@
-import { Inject, Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import {
+  Inject,
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Patch,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+  Req,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { getAppPool, withTenant } from '@clinic/db';
 import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
@@ -16,6 +32,8 @@ import {
   CreateHolidaySchema, type CreateHolidayRequest,
   CreateServiceUnitSchema, type CreateServiceUnitRequest,
   CreateOperatingHoursSchema, type CreateOperatingHoursRequest,
+  CreateIcd10Schema, type CreateIcd10Request,
+  UpdateIcd10Schema, type UpdateIcd10Request,
 } from '@clinic/contracts';
 
 @ApiTags('Tenant Configuration')
@@ -263,5 +281,96 @@ export class TenantConfigController {
     @Body(new ZodValidationPipe(CreateOperatingHoursSchema)) dto: CreateOperatingHoursRequest,
   ) {
     return this.svc.setOperatingHours(req.tenantId!, req.authContext!.userId!, dto);
+  }
+
+  // ── ICD-10 Reference Catalog (admin alias) ──────────────────────────────────
+
+  @RequirePermission('reference.read')
+  @Get('icd10')
+  @ApiOperation({ summary: 'List ICD-10 codes (admin alias)' })
+  async listIcd10(
+    @Req() req: RequestWithAuth,
+    @Query('q') q?: string,
+    @Query('limit') limitStr?: string,
+    @Query('offset') offsetStr?: string,
+  ) {
+    return withTenant({ tenantId: req.tenantId, userId: req.authContext?.userId || undefined }, async (tx) => {
+      const limit = Math.min(Math.max(parseInt(limitStr || '100', 10) || 100, 1), 1000);
+      const offset = Math.max(parseInt(offsetStr || '0', 10) || 0, 0);
+
+      let whereClause = '';
+      const params: any[] = [];
+      if (q && q.trim()) {
+        whereClause = ` WHERE code ILIKE $1 OR description ILIKE $1`;
+        params.push(`%${q.trim()}%`);
+      }
+
+      const countRes = await tx.query(`SELECT count(*)::int as total FROM ref_icd10${whereClause}`, params);
+      const total = countRes.rows[0]?.total ?? 0;
+
+      params.push(limit, offset);
+      const query = `SELECT code, description FROM ref_icd10${whereClause} ORDER BY code LIMIT $${params.length - 1} OFFSET $${params.length}`;
+      const res = await tx.query(query, params);
+      return { data: res.rows, total, limit, offset };
+    });
+  }
+
+  @RequirePermission('admin.settings.update')
+  @Post('icd10')
+  @ApiOperation({ summary: 'Create ICD-10 code (admin alias)' })
+  async createIcd10(
+    @Req() req: RequestWithAuth,
+    @Body(new ZodValidationPipe(CreateIcd10Schema)) dto: CreateIcd10Request,
+  ) {
+    return withTenant({ tenantId: req.tenantId, userId: req.authContext?.userId || undefined }, async (tx) => {
+      const code = dto.code.trim().toUpperCase();
+      const description = dto.description.trim();
+
+      const existing = await tx.query('SELECT code FROM ref_icd10 WHERE code = $1', [code]);
+      if (existing.rowCount && existing.rowCount > 0) {
+        throw new ConflictException(`ICD-10 code "${code}" already exists.`);
+      }
+
+      await tx.query('INSERT INTO ref_icd10 (code, description) VALUES ($1, $2)', [code, description]);
+      return { code, description };
+    });
+  }
+
+  @RequirePermission('admin.settings.update')
+  @Put('icd10/:code')
+  @ApiOperation({ summary: 'Update ICD-10 code description (admin alias)' })
+  async updateIcd10(
+    @Req() req: RequestWithAuth,
+    @Param('code') rawCode: string,
+    @Body(new ZodValidationPipe(UpdateIcd10Schema)) dto: UpdateIcd10Request,
+  ) {
+    return withTenant({ tenantId: req.tenantId, userId: req.authContext?.userId || undefined }, async (tx) => {
+      const code = decodeURIComponent(rawCode).trim().toUpperCase();
+      const description = dto.description.trim();
+
+      const res = await tx.query(
+        'UPDATE ref_icd10 SET description = $1 WHERE code = $2 RETURNING code, description',
+        [description, code],
+      );
+      if (res.rowCount === 0) {
+        throw new NotFoundException(`ICD-10 code "${code}" not found.`);
+      }
+      return res.rows[0];
+    });
+  }
+
+  @RequirePermission('admin.settings.update')
+  @Delete('icd10/:code')
+  @ApiOperation({ summary: 'Delete ICD-10 code (admin alias)' })
+  async deleteIcd10(@Req() req: RequestWithAuth, @Param('code') rawCode: string) {
+    return withTenant({ tenantId: req.tenantId, userId: req.authContext?.userId || undefined }, async (tx) => {
+      const code = decodeURIComponent(rawCode).trim().toUpperCase();
+
+      const res = await tx.query('DELETE FROM ref_icd10 WHERE code = $1 RETURNING code', [code]);
+      if (res.rowCount === 0) {
+        throw new NotFoundException(`ICD-10 code "${code}" not found.`);
+      }
+      return { success: true, code };
+    });
   }
 }

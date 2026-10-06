@@ -6,6 +6,7 @@ import { StepUpProvider } from "../src/shared/auth/StepUpContext.js";
 import { TenantsPage } from "../src/features/platform/TenantsPage.js";
 import { TenantDetailPage } from "../src/features/platform/TenantDetailPage.js";
 import { NewTenantWizard } from "../src/features/platform/NewTenantWizard.js";
+import { useStubHandler } from "./setup.js";
 
 /**
  * Platform console — todo.md §1.7 ⛔ (Modules tab, RPT-PLT-09) and the new
@@ -140,4 +141,99 @@ describe("Platform console (todo §1.7)", () => {
     // clicked module, then its auto-ticked dependencies.
     expect(screen.getByText("admin, patients, pharmacy, supply")).toBeInTheDocument();
   });
+
+  it("wizard step 4 renders created logins, shared password, and 1-click copy handover card", async () => {
+    useStubHandler((req, res) => {
+      if (req.method === "POST" && req.url === "/platform/tenants") {
+        res.writeHead(201, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            tenant: {
+              id: "new-tenant-123",
+              name: "Metro General",
+              slug: "metro-general",
+              status: "PROVISIONING",
+            },
+            credentials: {
+              tenantSlug: "metro-general",
+              defaultPassword: "DemoPassw0rd!2026",
+              loginUrl: "http://localhost:5173/login",
+              accounts: [
+                { email: "admintenant@metro-general.emr", role: "admin", description: "Tenant Administrator" },
+                { email: "doctor@metro-general.emr", role: "doctor", description: "Primary Physician" },
+                { email: "receptionist@metro-general.emr", role: "receptionist", description: "Front Desk & Scheduling" },
+                { email: "pharmacist@metro-general.emr", role: "pharmacist", description: "Licensed Pharmacist" },
+                { email: "labtech@metro-general.emr", role: "lab_tech", description: "Laboratory Technician" },
+              ],
+            },
+          }),
+        );
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ message: "pong" }));
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/platform/tenants/new"]}>
+        <AuthProvider>
+          <StepUpProvider>
+            <Routes>
+              <Route path="/platform/tenants/new" element={<NewTenantWizard />} />
+              <Route path="/platform/tenants/:tenantId" element={<div>DETAIL-PAGE</div>} />
+            </Routes>
+          </StepUpProvider>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/Clinic name/i), { target: { value: "Metro General" } });
+    fireEvent.change(screen.getByLabelText(/Slug/i), { target: { value: "metro-general" } });
+    fireEvent.click(screen.getByRole("button", { name: /Next: modules/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Next: confirm/i }));
+
+    const submitBtn = screen.getByRole("button", { name: /Create tenant/i });
+    fireEvent.click(submitBtn);
+
+    // Lands on Step 4 "Logins & Handover"
+    expect(await screen.findByText(/Tenant Successfully Created!/i)).toBeInTheDocument();
+    expect(screen.getByText(/Tenant Logins & Default Password/i)).toBeInTheDocument();
+    expect(screen.getByText("admintenant@metro-general.emr")).toBeInTheDocument();
+    expect(screen.getByText("doctor@metro-general.emr")).toBeInTheDocument();
+    expect(screen.getByText("pharmacist@metro-general.emr")).toBeInTheDocument();
+    expect(screen.getByText("labtech@metro-general.emr")).toBeInTheDocument();
+    expect(screen.getByText("DemoPassw0rd!2026")).toBeInTheDocument();
+
+    // Verify copy buttons are rendered
+    expect(screen.getByRole("button", { name: /Copy All Credentials/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Proceed to Tenant Console/i })).toBeInTheDocument();
+  });
+
+  it("TenantDetailPage includes Logins & Credentials tab displaying starter accounts", async () => {
+    render(
+      <MemoryRouter
+        initialEntries={[
+          { pathname: "/platform/tenants/t1", state: { tenant: { name: "Northwind Clinic", slug: "northwind" } } },
+        ]}
+      >
+        <AuthProvider>
+          <StepUpProvider>
+            <Routes>
+              <Route path="/platform/tenants/:tenantId" element={<TenantDetailPage />} />
+            </Routes>
+          </StepUpProvider>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    const loginsTab = await screen.findByRole("tab", { name: /Logins & Credentials/i });
+    expect(loginsTab).toBeInTheDocument();
+    fireEvent.click(loginsTab);
+
+    expect(await screen.findByText(/admintenant@northwind.emr/i)).toBeInTheDocument();
+    expect(screen.getByText(/doctor@northwind.emr/i)).toBeInTheDocument();
+    expect(screen.getByText(/receptionist@northwind.emr/i)).toBeInTheDocument();
+    expect(screen.getByText(/DemoPassw0rd!2026/i)).toBeInTheDocument();
+  });
 });
+

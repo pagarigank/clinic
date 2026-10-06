@@ -1,11 +1,12 @@
 import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { AuthProvider } from "../src/shared/auth/AuthContext.js";
 import { LoginPage } from "../src/features/auth/LoginPage.js";
 import { RegisterPage } from "../src/features/auth/RegisterPage.js";
+import { useStubHandler } from "./setup.js";
 
 describe("LoginPage", () => {
   it("renders login form with Cerulean branding and fields", () => {
@@ -22,10 +23,11 @@ describe("LoginPage", () => {
     expect(screen.getByLabelText(/WORK EMAIL ADDRESS/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/PASSWORD/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Sign In to Clinic/i })).toBeInTheDocument();
+    expect(screen.getByText(/Schedule Appointment with Doctor/i)).toBeInTheDocument();
     expect(screen.getByText(/Submit Staff Registration Request/i)).toBeInTheDocument();
   });
 
-  it("fills demo credentials on one-click button click", () => {
+  it("initializes with empty textboxes and hidden demo credential buttons", () => {
     render(
       <MemoryRouter>
         <AuthProvider>
@@ -34,15 +36,60 @@ describe("LoginPage", () => {
       </MemoryRouter>,
     );
 
-    const demoBtn = screen.getByRole("button", { name: /Tenant Admin/i });
-    fireEvent.click(demoBtn);
-
-    // Must be the credentials demo.sql actually seeds (see
-    // tests/seed-credentials.test.ts, which enforces that contract).
     const slugInput = screen.getByLabelText(/CLINIC IDENTIFIER/i) as HTMLInputElement;
     const emailInput = screen.getByLabelText(/WORK EMAIL ADDRESS/i) as HTMLInputElement;
+    const passwordInput = screen.getByLabelText(/PASSWORD/i) as HTMLInputElement;
+
+    expect(slugInput.value).toBe("");
+    expect(emailInput.value).toBe("");
+    expect(passwordInput.value).toBe("");
+    expect(screen.queryByRole("button", { name: /Tenant Admin/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Attending Doctor/i })).not.toBeInTheDocument();
+  });
+
+  it("fills admin credentials and automatically logs in on Ctrl + I shortcut", async () => {
+    let loginBody: any = null;
+    useStubHandler((req, res) => {
+      const url = req.url ?? "";
+      if (url.includes("/auth/login")) {
+        let body = "";
+        req.on("data", (chunk) => { body += chunk; });
+        req.on("end", () => {
+          loginBody = JSON.parse(body);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ status: "OK", accessToken: "test-token" }));
+        });
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ message: "pong" }));
+    });
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <LoginPage />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.keyDown(window, { key: "i", ctrlKey: true });
+
+    const slugInput = screen.getByLabelText(/CLINIC IDENTIFIER/i) as HTMLInputElement;
+    const emailInput = screen.getByLabelText(/WORK EMAIL ADDRESS/i) as HTMLInputElement;
+    const passwordInput = screen.getByLabelText(/PASSWORD/i) as HTMLInputElement;
+
     expect(slugInput.value).toBe("demo-a");
     expect(emailInput.value).toBe("admin@demo-a.test");
+    expect(passwordInput.value).toBe("DemoPassw0rd!2026");
+
+    await waitFor(() => {
+      expect(loginBody).toEqual({
+        tenant: "demo-a",
+        email: "admin@demo-a.test",
+        password: "DemoPassw0rd!2026",
+      });
+    });
   });
 });
 
