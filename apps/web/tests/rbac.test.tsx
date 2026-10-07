@@ -6,7 +6,7 @@ import "@testing-library/jest-dom/vitest";
 import { AuthProvider } from "../src/shared/auth/AuthContext.js";
 import { PermissionsProvider, RequirePermission } from "../src/shared/auth/PermissionsContext.js";
 import { usePermissions } from "../src/shared/auth/PermissionsContext.js";
-import { RolesPage } from "../src/features/admin/RolesPage.js";
+import { RolesPage, resolveSodSafePerms } from "../src/features/admin/RolesPage.js";
 import { useStubHandler, type StubHandler } from "./setup.js";
 
 /**
@@ -260,6 +260,98 @@ describe("RolesPage live matrix", () => {
     await waitFor(() =>
       expect(screen.getByText(/lab\.result\.enter \+ lab\.result\.verify may not be held together/)).toBeInTheDocument(),
     );
+  });
+
+  it("resolveSodSafePerms prevents conflicting permissions from being held simultaneously", () => {
+    // 1. Neither held: prefers enter over verify
+    const res1 = resolveSodSafePerms([], ["lab.result.enter", "lab.result.verify", "patients.read"]);
+    expect(res1.finalPerms).toContain("lab.result.enter");
+    expect(res1.finalPerms).not.toContain("lab.result.verify");
+    expect(res1.finalPerms).toContain("patients.read");
+    expect(res1.skipped.some((s) => s.code === "lab.result.verify")).toBe(true);
+
+    // 2. Verify already held: preserves verify and excludes enter
+    const res2 = resolveSodSafePerms(["lab.result.verify"], ["lab.result.enter", "patients.read"]);
+    expect(res2.finalPerms).toContain("lab.result.verify");
+    expect(res2.finalPerms).not.toContain("lab.result.enter");
+    expect(res2.skipped.some((s) => s.code === "lab.result.enter")).toBe(true);
+
+    // 3. Billing: create vs void (prefers create if neither held)
+    const res3 = resolveSodSafePerms([], ["billing.payment.create", "billing.payment.void"]);
+    expect(res3.finalPerms).toContain("billing.payment.create");
+    expect(res3.finalPerms).not.toContain("billing.payment.void");
+
+    // 4. Billing: void already held: preserves void
+    const res4 = resolveSodSafePerms(["billing.payment.void"], ["billing.payment.create"]);
+    expect(res4.finalPerms).toContain("billing.payment.void");
+    expect(res4.finalPerms).not.toContain("billing.payment.create");
+  });
+
+  it("auto-swaps out conflicting SoD permission when counterpart is toggled", async () => {
+    let patchBody: any = null;
+    const roleWithEnter = {
+      id: "3f1d3f1d-0000-4000-8000-0000000000a3",
+      code: "lab_tech",
+      name: "Lab Tech",
+      isSystem: false,
+      permissions: ["lab.result.enter", "patients.read"],
+      rowVersion: 1,
+    };
+
+    useStubHandler((req, res) => {
+      const url = req.url ?? "";
+      if (req.method === "GET" && url.includes("/admin/roles")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify([...ROLES, roleWithEnter]));
+        return;
+      }
+      if (req.method === "GET" && url.includes("/admin/permissions")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify([
+            ...CATALOGUE,
+            {
+              module: "lab",
+              permissions: [
+                { code: "lab.result.enter", description: "Enter results" },
+                { code: "lab.result.verify", description: "Verify results" },
+              ],
+            },
+          ]),
+        );
+        return;
+      }
+      if (req.method === "PATCH" && url.includes(`/admin/roles/${roleWithEnter.id}`)) {
+        let raw = "";
+        req.on("data", (c: Buffer) => (raw += c.toString()));
+        req.on("end", () => {
+          patchBody = JSON.parse(raw);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ...roleWithEnter, permissions: patchBody.permissions, rowVersion: 2 }));
+        });
+        return;
+      }
+      baseHandler(req, res);
+    });
+
+    renderWithProviders(<Route path="*" element={<RolesPage />} />);
+    await waitFor(() => expect(screen.getByText("Lab Tech")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Lab Tech"));
+
+    // Verify checkbox for lab.result.verify is visible
+    const verifyCb = await waitFor(() => {
+      const cb = screen.getByRole("checkbox", { name: /Grant lab\.result\.verify on Lab Tech/ });
+      expect(cb).not.toBeDisabled();
+      return cb;
+    });
+
+    // Clicking lab.result.verify must automatically drop lab.result.enter and add lab.result.verify
+    fireEvent.click(verifyCb);
+
+    await waitFor(() => expect(patchBody).not.toBeNull());
+    expect(patchBody.permissions).toContain("lab.result.verify");
+    expect(patchBody.permissions).not.toContain("lab.result.enter");
+    expect(patchBody.permissions).toContain("patients.read");
   });
 
   it("hides nav groups for modules the tenant does not have (rendered via MainLayout contract)", async () => {

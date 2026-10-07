@@ -18,18 +18,114 @@ import type { RoleDto, PermissionDto } from "@clinic/contracts";
  * their matrix renders read-only.
  */
 
-interface SodPair {
+export interface SodConflictRule {
   p1: string;
   p2: string;
   reason: string;
+  preferred: string;
 }
 
-const SOD_CONFLICTS: SodPair[] = [
-  { p1: "lab.result.enter", p2: "lab.result.verify", reason: "Technician entering analyte result cannot verify the same report" },
-  { p1: "pharmacy.rx.verify", p2: "pharmacy.dispense.post", reason: "Verifier cannot dispense their own verified prescription" },
-  { p1: "billing.payment.create", p2: "billing.payment.void", reason: "Cashier collecting payment cannot void transaction without supervisor authorization" },
-  { p1: "supply.po.submit", p2: "supply.po.approve", reason: "Purchase order requester cannot self-approve order requisition" },
+export const SOD_CONFLICTS: SodConflictRule[] = [
+  {
+    p1: "lab.result.enter",
+    p2: "lab.result.verify",
+    reason: "Technician entering analyte result cannot verify the same report (AC-17)",
+    preferred: "lab.result.enter",
+  },
+  {
+    p1: "pharmacy.rx.verify",
+    p2: "pharmacy.dispense.post",
+    reason: "Verifier cannot dispense their own verified prescription",
+    preferred: "pharmacy.dispense.post",
+  },
+  {
+    p1: "billing.payment.create",
+    p2: "billing.payment.void",
+    reason: "Cashier collecting payment cannot void transaction without supervisor authorization",
+    preferred: "billing.payment.create",
+  },
+  {
+    p1: "supply.po.submit",
+    p2: "supply.po.approve",
+    reason: "Purchase order requester cannot self-approve order requisition",
+    preferred: "supply.po.submit",
+  },
+  {
+    p1: "supply.adjust.submit",
+    p2: "supply.adjust.approve",
+    reason: "Stock adjustment creator must not approve adjustment",
+    preferred: "supply.adjust.submit",
+  },
+  {
+    p1: "supply.adjust.approve",
+    p2: "supply.adjust.post",
+    reason: "Stock adjustment approver must not post adjustment to ledger",
+    preferred: "supply.adjust.submit",
+  },
+  {
+    p1: "supply.grn.post",
+    p2: "supply.invoice.match",
+    reason: "Goods receiver must not 3-way match supplier invoice",
+    preferred: "supply.grn.post",
+  },
 ];
+
+export function getConflictsFor(code: string): Array<{ conflictingCode: string; reason: string; preferred: string }> {
+  const result: Array<{ conflictingCode: string; reason: string; preferred: string }> = [];
+  for (const c of SOD_CONFLICTS) {
+    if (c.p1 === code) {
+      result.push({ conflictingCode: c.p2, reason: c.reason, preferred: c.preferred });
+    } else if (c.p2 === code) {
+      result.push({ conflictingCode: c.p1, reason: c.reason, preferred: c.preferred });
+    }
+  }
+  return result;
+}
+
+export function resolveSodSafePerms(
+  currentPerms: readonly string[],
+  visibleCodesToAdd: readonly string[],
+): {
+  finalPerms: string[];
+  skipped: Array<{ code: string; conflictingWith: string; reason: string }>;
+} {
+  const selected = new Set<string>(currentPerms);
+  const candidates = Array.from(new Set(visibleCodesToAdd)).filter((c) => !selected.has(c));
+  const candidateSet = new Set(candidates);
+  const skipped: Array<{ code: string; conflictingWith: string; reason: string }> = [];
+
+  for (const code of candidates) {
+    const conflicts = getConflictsFor(code);
+
+    // 1. Does `code` conflict with a permission already granted on this role?
+    const existingConflict = conflicts.find((c) => selected.has(c.conflictingCode));
+    if (existingConflict) {
+      skipped.push({
+        code,
+        conflictingWith: existingConflict.conflictingCode,
+        reason: existingConflict.reason,
+      });
+      continue;
+    }
+
+    // 2. Does `code` conflict with another candidate that takes precedence/preference?
+    const preferredCandidateConflict = conflicts.find((c) => {
+      return candidateSet.has(c.conflictingCode) && c.preferred === c.conflictingCode;
+    });
+    if (preferredCandidateConflict) {
+      skipped.push({
+        code,
+        conflictingWith: preferredCandidateConflict.conflictingCode,
+        reason: preferredCandidateConflict.reason,
+      });
+      continue;
+    }
+
+    selected.add(code);
+  }
+
+  return { finalPerms: Array.from(selected), skipped };
+}
 
 export function RolesPage() {
   const { session } = useAuth();
@@ -115,23 +211,46 @@ export function RolesPage() {
       return;
     }
     const currentlyGranted = selectedRole.permissions.includes(code);
-    const nextPermissions = currentlyGranted
-      ? selectedRole.permissions.filter((c) => c !== code)
-      : [...selectedRole.permissions, code];
+    let nextPermissions: string[];
+    let note: string;
+
+    if (currentlyGranted) {
+      nextPermissions = selectedRole.permissions.filter((c) => c !== code);
+      note = `Revoked ${code} — Saved`;
+    } else {
+      // If granting `code`, check if any currently held permission conflicts with `code`
+      const conflicts = getConflictsFor(code);
+      const conflictingHeld = conflicts.filter((c) => selectedRole.permissions.includes(c.conflictingCode));
+
+      if (conflictingHeld.length > 0) {
+        // Auto-swap: remove the conflicting permissions to preserve Segregation of Duties
+        const dropCodes = new Set(conflictingHeld.map((c) => c.conflictingCode));
+        nextPermissions = [...selectedRole.permissions.filter((c) => !dropCodes.has(c)), code];
+        const conflictNames = conflictingHeld.map((c) => c.conflictingCode).join(", ");
+        note = `Granted ${code} (automatically unselected ${conflictNames} per Segregation of Duties AC-17) — Saved`;
+      } else {
+        nextPermissions = [...selectedRole.permissions, code];
+        note = `Granted ${code} — Saved`;
+      }
+    }
+
     setPending(new Set([code]));
-    await saveRolePermissions(
-      nextPermissions,
-      currentlyGranted ? `Revoked ${code} — Saved` : `Granted ${code} — Saved`,
-    );
+    await saveRolePermissions(nextPermissions, note);
   };
 
   const grantAllVisible = async () => {
     if (!selectedRole || !canEdit || isSaving) return;
     const visibleCodes = visibleMatrix.flatMap((g) => g.permissions.map((p) => p.code));
-    const merged = Array.from(new Set([...selectedRole.permissions, ...visibleCodes]));
+    const { finalPerms, skipped } = resolveSodSafePerms(selectedRole.permissions, visibleCodes);
+
+    const filterLabel = searchModule === "ALL" ? "" : searchModule + " ";
+    const skippedNote = skipped.length > 0
+      ? ` (SoD compliance active: excluded ${skipped.length} mutually exclusive permission${skipped.length > 1 ? "s" : ""}: ${skipped.map((s) => s.code).slice(0, 3).join(", ")}${skipped.length > 3 ? "…" : ""})`
+      : "";
+
     await saveRolePermissions(
-      merged,
-      `Granted all visible ${searchModule === "ALL" ? "" : searchModule + " "}permissions — Saved`,
+      finalPerms,
+      `Granted all visible ${filterLabel}permissions${skippedNote} — Saved`,
     );
   };
 
@@ -268,7 +387,7 @@ export function RolesPage() {
                   </span>
                   <div className="d-flex align-items-center gap-2">
                     {selectedRole.code === "tenant_admin" ? (
-                      <span className="badge bg-info text-dark">Immutable Template</span>
+                      <span className="badge bg-info text-dark">Immutable Template (Protected Admin)</span>
                     ) : canEdit ? (
                       <span className="badge bg-success">Editable</span>
                     ) : (
@@ -294,50 +413,52 @@ export function RolesPage() {
                   </div>
                 </div>
 
-                {selectedRole.code === "tenant_admin" ? (
+                {selectedRole.code === "tenant_admin" && (
                   <div className="mb-3">
                     <AlertBanner severity="info">
-                      System roles are template-managed. Clone this role (POST /admin/roles/:id/clone) to customize it.
+                      <strong>Tenant Administrator Role (Protected Template):</strong> Operational permissions are customizable. Core management permissions (<code className="text-dark">admin.role.update</code>, <code className="text-dark">admin.role.read</code>) remain permanently active to prevent administrator lockout.
                     </AlertBanner>
                   </div>
-                ) : (
-                  <div className="d-flex justify-content-between align-items-center mb-2 px-1 flex-wrap gap-2">
-                    <div className="small">
-                      {isSaving ? (
-                        <span className="text-primary fw-semibold">
-                          <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />
-                          Saving changes to database...
-                        </span>
-                      ) : (
-                        <span className="text-success small fw-semibold">
-                          ✓ Auto-saves instantly on toggle
-                        </span>
-                      )}
-                    </div>
-                    {canEdit && (
-                      <div className="d-flex gap-1">
-                        <button
-                          type="button"
-                          className="btn btn-outline-primary btn-sm py-0 px-2"
-                          style={{ fontSize: "0.75rem" }}
-                          onClick={grantAllVisible}
-                          disabled={isSaving}
-                        >
-                          Grant All Visible
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-outline-secondary btn-sm py-0 px-2"
-                          style={{ fontSize: "0.75rem" }}
-                          onClick={revokeAllVisible}
-                          disabled={isSaving}
-                        >
-                          Revoke All Visible
-                        </button>
-                      </div>
+                )}
+
+                <div className="d-flex justify-content-between align-items-center mb-2 px-1 flex-wrap gap-2">
+                  <div className="small">
+                    {isSaving ? (
+                      <span className="text-primary fw-semibold">
+                        <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />
+                        Saving changes to database...
+                      </span>
+                    ) : (
+                      <span className="text-success small fw-semibold">
+                        ✓ Auto-saves instantly on toggle (SoD conflicts auto-resolved)
+                      </span>
                     )}
                   </div>
-                )}
+                  {canEdit && (
+                    <div className="d-flex gap-1">
+                      <button
+                        type="button"
+                        className="btn btn-outline-primary btn-sm py-0 px-2"
+                        style={{ fontSize: "0.75rem" }}
+                        onClick={grantAllVisible}
+                        disabled={isSaving}
+                        title="Grant all permissions currently visible, automatically skipping mutually conflicting SoD pairs"
+                      >
+                        Grant All Visible
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-outline-secondary btn-sm py-0 px-2"
+                        style={{ fontSize: "0.75rem" }}
+                        onClick={revokeAllVisible}
+                        disabled={isSaving}
+                        title="Revoke all permissions currently visible (preserving essential admin management)"
+                      >
+                        Revoke All Visible
+                      </button>
+                    </div>
+                  )}
+                </div>
 
                 <div className="table-responsive" style={{ maxHeight: "32rem", overflowY: "auto" }}>
                   <table className="table table-sm table-hover align-middle mb-0">
@@ -355,8 +476,11 @@ export function RolesPage() {
                           const granted = isGranted(p.code);
                           const isLocked = selectedRole.code === "tenant_admin" && (p.code === "admin.role.update" || p.code === "admin.role.read");
                           const editable = canEdit && pending.size === 0 && !isSaving && !isLocked;
+                          const conflicts = getConflictsFor(p.code);
+                          const activeConflict = conflicts.find((c) => selectedRole.permissions.includes(c.conflictingCode));
+
                           return (
-                            <tr key={p.code}>
+                            <tr key={p.code} className={activeConflict && !granted ? "table-light text-muted" : ""}>
                               <td>
                                 <input
                                   type="checkbox"
@@ -365,11 +489,54 @@ export function RolesPage() {
                                   disabled={!editable}
                                   onChange={() => toggle(p.code)}
                                   aria-label={`${granted ? "Revoke" : "Grant"} ${p.code} on ${selectedRole.name}`}
+                                  title={
+                                    isLocked
+                                      ? "Essential permission locked to prevent lockout"
+                                      : activeConflict && !granted
+                                      ? `Checking this will automatically swap out ${activeConflict.conflictingCode}`
+                                      : undefined
+                                  }
                                 />
                               </td>
-                              <td className={`font-monospace fw-semibold ${granted ? "text-primary" : "text-secondary"}`}>{p.code}</td>
+                              <td className={`font-monospace fw-semibold ${granted ? "text-primary" : "text-secondary"}`}>
+                                {p.code}
+                                {activeConflict && granted && (
+                                  <span
+                                    className="badge bg-danger-subtle text-danger border border-danger-subtle ms-2"
+                                    style={{ fontSize: "0.68rem" }}
+                                    title={`Mutually exclusive with ${activeConflict.conflictingCode}: ${activeConflict.reason}`}
+                                  >
+                                    ⚖️ SoD Active (excludes {activeConflict.conflictingCode})
+                                  </span>
+                                )}
+                                {activeConflict && !granted && (
+                                  <span
+                                    className="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle ms-2"
+                                    style={{ fontSize: "0.68rem" }}
+                                    title={`Mutually exclusive with ${activeConflict.conflictingCode}: ${activeConflict.reason}. Checking this will auto-swap.`}
+                                  >
+                                    ⚡ Excludes {activeConflict.conflictingCode} (auto-swaps)
+                                  </span>
+                                )}
+                                {conflicts.length > 0 && !activeConflict && (
+                                  <span
+                                    className="badge bg-light text-muted border ms-2"
+                                    style={{ fontSize: "0.68rem" }}
+                                    title={`Mutually exclusive with: ${conflicts.map((c) => c.conflictingCode).join(", ")}`}
+                                  >
+                                    ⚡ SoD Pair
+                                  </span>
+                                )}
+                              </td>
                               <td><span className="badge bg-light text-dark border">{group.module}</span></td>
-                              <td className="text-secondary">{p.description}</td>
+                              <td className="text-secondary">
+                                {p.description}
+                                {isLocked && (
+                                  <span className="badge bg-secondary-subtle text-secondary ms-2" style={{ fontSize: "0.68rem" }}>
+                                    🔒 Protected Core
+                                  </span>
+                                )}
+                              </td>
                             </tr>
                           );
                         }),
@@ -389,3 +556,5 @@ export function RolesPage() {
     </div>
   );
 }
+
+
