@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertBanner, StatusPill, DateField } from "@clinic/ui";
 import { apiGet, apiPost, apiPatch, ApiError } from "../../shared/api/client.js";
 import { useAuth } from "../../shared/auth/AuthContext.js";
@@ -46,7 +46,10 @@ interface Slot {
 interface PatientOption {
   id: string;
   name: string;
-  patientNo: string;
+  patientNo?: string;
+  dob?: string;
+  gender?: string;
+  mobile?: string;
 }
 
 interface PractitionerOption {
@@ -96,6 +99,14 @@ export function SchedulingPage() {
   const [end, setEnd] = useState("09:30");
   const [isWalkIn, setIsWalkIn] = useState(false);
 
+  // Fuzzy patient search state for booking modal
+  const [serverPatientResults, setServerPatientResults] = useState<PatientOption[]>([]);
+  const [patientSearchQuery, setPatientSearchQuery] = useState("");
+  const [selectedPatient, setSelectedPatient] = useState<PatientOption | null>(null);
+  const [isPatientDropdownOpen, setIsPatientDropdownOpen] = useState(false);
+  const [isSearchingServer, setIsSearchingServer] = useState(false);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+
   // Reschedule / Modify Schedule modal
   const [rescheduleTarget, setRescheduleTarget] = useState<Appointment | null>(null);
   const [rescheduleDate, setRescheduleDate] = useState(today());
@@ -129,17 +140,171 @@ export function SchedulingPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await apiGet<{ data?: PatientOption[] }>("/patients");
-        if (Array.isArray(res?.data)) {
-          setPatientOptions(res.data.slice(0, 50).map((p: any) => ({
+        const res = await apiGet<{ data?: any[]; patients?: any[] }>("/patients?limit=50");
+        const list = res?.data ?? res?.patients;
+        if (Array.isArray(list)) {
+          setPatientOptions(list.map((p: any) => ({
             id: p.id,
-            name: `${p.last_name ?? p.lastName ?? ""}, ${p.first_name ?? p.firstName ?? ""}`.replace(/^,\s*/, ""),
-            patientNo: p.patientNo ?? "",
+            name: `${p.last_name ?? p.lastName ?? ""}, ${p.first_name ?? p.firstName ?? ""}`.replace(/^,\s*/, "").trim() || "Unnamed Patient",
+            patientNo: p.patientNo ?? p.patient_no ?? p.mrn ?? "",
+            dob: p.date_of_birth ? new Date(p.date_of_birth).toLocaleDateString() : (p.dob ?? ""),
+            gender: p.gender ?? p.sex ?? "",
+            mobile: p.phone ?? p.mobile ?? "",
           })));
         }
-      } catch { /* picker stays with the demo options */ }
+      } catch { /* picker stays with empty/cached options */ }
     })();
   }, []);
+
+  // Click-outside listener to close fuzzy patient dropdown
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
+        setIsPatientDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  // Debounced server fuzzy query when searching
+  useEffect(() => {
+    const q = patientSearchQuery.trim();
+    if (!bookingOpen || q.length < 2) {
+      setServerPatientResults([]);
+      setIsSearchingServer(false);
+      return;
+    }
+
+    let active = true;
+    setIsSearchingServer(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await apiGet<{ data?: any[]; patients?: any[] }>(
+          `/patients?q=${encodeURIComponent(q)}&limit=25`,
+        );
+        if (!active) return;
+        const list = res?.data ?? res?.patients;
+        if (Array.isArray(list)) {
+          const mapped: PatientOption[] = list.map((p: any) => ({
+            id: p.id,
+            name: `${p.last_name ?? p.lastName ?? ""}, ${p.first_name ?? p.firstName ?? ""}`.replace(/^,\s*/, "").trim() || "Unnamed Patient",
+            patientNo: p.patientNo ?? p.patient_no ?? p.mrn ?? "",
+            dob: p.date_of_birth ? new Date(p.date_of_birth).toLocaleDateString() : (p.dob ?? ""),
+            gender: p.gender ?? p.sex ?? "",
+            mobile: p.phone ?? p.mobile ?? "",
+          }));
+          setServerPatientResults(mapped);
+          setPatientOptions((prev) => {
+            const map = new Map(prev.map((item) => [item.id, item]));
+            for (const item of mapped) {
+              map.set(item.id, item);
+            }
+            return Array.from(map.values());
+          });
+        }
+      } catch {
+        if (active) setServerPatientResults([]);
+      } finally {
+        if (active) setIsSearchingServer(false);
+      }
+    }, 250);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [patientSearchQuery, bookingOpen]);
+
+  // Combined candidates & multi-level fuzzy scoring
+  const combinedCandidates = useMemo(() => {
+    const map = new Map<string, PatientOption>();
+    for (const p of patientOptions) map.set(p.id, p);
+    for (const p of serverPatientResults) map.set(p.id, p);
+    return Array.from(map.values());
+  }, [patientOptions, serverPatientResults]);
+
+  // Keep selectedPatient in sync with patientId
+  useEffect(() => {
+    if (patientId) {
+      if (!selectedPatient || selectedPatient.id !== patientId) {
+        const found = combinedCandidates.find((p) => p.id === patientId);
+        if (found) {
+          setSelectedPatient(found);
+        }
+      }
+    } else if (selectedPatient) {
+      setSelectedPatient(null);
+    }
+  }, [patientId, selectedPatient, combinedCandidates]);
+
+  const filteredPatients = useMemo(() => {
+    const q = patientSearchQuery.trim().toLowerCase();
+    if (!q) {
+      return combinedCandidates.slice(0, 10);
+    }
+
+    const tokens = q.split(/\s+/).filter(Boolean);
+
+    return combinedCandidates
+      .map((p) => {
+        const name = p.name.toLowerCase();
+        const no = (p.patientNo || "").toLowerCase();
+        const full = `${name} ${no}`;
+        let score = 0;
+
+        if (name === q || no === q) {
+          score += 500;
+        } else if (name.startsWith(q) || no.startsWith(q)) {
+          score += 300;
+        } else if (full.includes(q)) {
+          score += 150;
+        } else if (tokens.length > 1 && tokens.every((t) => full.includes(t))) {
+          score += 120;
+        } else {
+          // Subsequence fuzzy match (e.g. "snt" -> "santos")
+          let tIdx = 0;
+          let qIdx = 0;
+          let streak = 0;
+          let subScore = 0;
+          while (tIdx < full.length && qIdx < q.length) {
+            if (full[tIdx] === q[qIdx]) {
+              subScore += 10 + streak * 5;
+              streak++;
+              qIdx++;
+            } else {
+              streak = 0;
+            }
+            tIdx++;
+          }
+          if (qIdx === q.length) {
+            score += subScore;
+          }
+        }
+
+        return { patient: p, score };
+      })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((item) => item.patient)
+      .slice(0, 15);
+  }, [combinedCandidates, patientSearchQuery]);
+
+  const selectPatient = (p: PatientOption) => {
+    setPatientId(p.id);
+    setSelectedPatient(p);
+    setPatientSearchQuery("");
+    setIsPatientDropdownOpen(false);
+  };
+
+  const clearSelectedPatient = () => {
+    setPatientId("");
+    setSelectedPatient(null);
+    setPatientSearchQuery("");
+    setIsPatientDropdownOpen(true);
+  };
 
   useEffect(() => {
     (async () => {
@@ -234,6 +399,9 @@ export function SchedulingPage() {
         setNotice(`Booked ${start}–${end}.`);
       }
       setBookingOpen(false);
+      setPatientId("");
+      setSelectedPatient(null);
+      setPatientSearchQuery("");
       await loadDay(date);
       await loadAvailability(date);
     } catch (err) {
@@ -380,7 +548,17 @@ export function SchedulingPage() {
           <h1 className="page-title">Appointments & Scheduling</h1>
           <div className="page-subtitle">Day view, slot booking with conflict detection, reschedule modification, and walk-in queue mode</div>
         </div>
-        <button type="button" className="btn btn-cerulean" onClick={() => setBookingOpen(true)}>
+        <button
+          type="button"
+          className="btn btn-cerulean"
+          onClick={() => {
+            setPatientId("");
+            setSelectedPatient(null);
+            setPatientSearchQuery("");
+            setIsPatientDropdownOpen(false);
+            setBookingOpen(true);
+          }}
+        >
           + Book / Walk-in
         </button>
       </div>
@@ -542,6 +720,10 @@ export function SchedulingPage() {
                     onClick={() => {
                       setStart(timeOf(s.startsAt));
                       setEnd(timeOf(s.endsAt));
+                      setPatientId("");
+                      setSelectedPatient(null);
+                      setPatientSearchQuery("");
+                      setIsPatientDropdownOpen(false);
                       setBookingOpen(true);
                     }}
                   >
@@ -561,7 +743,16 @@ export function SchedulingPage() {
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title" id="book-title">{isWalkIn ? "Walk-in ticket" : "Book appointment"}</h5>
-                <button type="button" className="btn-close" onClick={() => setBookingOpen(false)} aria-label="Close" />
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => {
+                    setBookingOpen(false);
+                    setPatientSearchQuery("");
+                    setIsPatientDropdownOpen(false);
+                  }}
+                  aria-label="Close"
+                />
               </div>
               <div className="modal-body">
                 <div className="mb-3">
@@ -580,15 +771,154 @@ export function SchedulingPage() {
                     )}
                   </select>
                 </div>
+
                 <div className="mb-3">
-                  <label className="form-label small fw-semibold" htmlFor="bk-patient">Patient *</label>
-                  <select id="bk-patient" className="form-select" value={patientId} onChange={(e) => setPatientId(e.target.value)}>
-                    <option value="">Select patient…</option>
-                    {patientOptions.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name} {p.patientNo ? `(${p.patientNo})` : ""}</option>
-                    ))}
-                  </select>
+                  <div className="d-flex justify-content-between align-items-center mb-1">
+                    <label className="form-label small fw-semibold mb-0" htmlFor="bk-patient-input">
+                      Patient *
+                    </label>
+                    <span className="small text-muted" style={{ fontSize: "0.75rem" }}>
+                      Fuzzy search by name, MRN, or ID
+                    </span>
+                  </div>
+
+                  {selectedPatient ? (
+                    <div className="border border-primary-subtle rounded-3 p-2 px-3 bg-primary-subtle bg-opacity-10 d-flex align-items-center justify-content-between shadow-sm">
+                      <div className="d-flex align-items-center gap-2">
+                        <span className="badge bg-success-subtle text-success border border-success-subtle">
+                          ✓ Selected
+                        </span>
+                        <div>
+                          <div className="fw-semibold text-dark">{selectedPatient.name}</div>
+                          <div className="small text-muted">
+                            {selectedPatient.patientNo && (
+                              <span className="badge bg-light text-dark border me-1">
+                                {selectedPatient.patientNo}
+                              </span>
+                            )}
+                            {selectedPatient.dob && <span className="me-2">DOB: {selectedPatient.dob}</span>}
+                            {selectedPatient.gender && <span>{selectedPatient.gender}</span>}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-secondary"
+                        onClick={clearSelectedPatient}
+                        aria-label="Change patient"
+                      >
+                        Change
+                      </button>
+                      <input type="hidden" id="bk-patient" data-testid="bk-patient" value={patientId} readOnly />
+                    </div>
+                  ) : (
+                    <div className="position-relative" ref={searchContainerRef}>
+                      <div className="input-group">
+                        <span className="input-group-text bg-white text-muted">🔍</span>
+                        <input
+                          id="bk-patient-input"
+                          data-testid="bk-patient-input"
+                          type="text"
+                          className="form-control"
+                          placeholder="Type patient name, ID, or MRN…"
+                          value={patientSearchQuery}
+                          onChange={(e) => {
+                            setPatientSearchQuery(e.target.value);
+                            setIsPatientDropdownOpen(true);
+                          }}
+                          onFocus={() => setIsPatientDropdownOpen(true)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") {
+                              setIsPatientDropdownOpen(false);
+                            } else if (e.key === "Enter" && filteredPatients[0]) {
+                              e.preventDefault();
+                              selectPatient(filteredPatients[0]);
+                            }
+                          }}
+                          autoComplete="off"
+                        />
+                        {patientSearchQuery && (
+                          <button
+                            type="button"
+                            className="btn btn-outline-secondary"
+                            onClick={() => {
+                              setPatientSearchQuery("");
+                              setIsPatientDropdownOpen(true);
+                            }}
+                            aria-label="Clear search query"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                      <input type="hidden" id="bk-patient" data-testid="bk-patient" value={patientId} readOnly />
+
+                      {isPatientDropdownOpen && (
+                        <div
+                          className="dropdown-menu show w-100 mt-1 shadow-lg border rounded-3 p-0"
+                          style={{
+                            maxHeight: "260px",
+                            overflowY: "auto",
+                            zIndex: 1055,
+                            position: "absolute",
+                            top: "100%",
+                            left: 0,
+                          }}
+                        >
+                          <div className="p-2 px-3 bg-light border-bottom d-flex justify-content-between align-items-center">
+                            <span className="small text-muted fw-semibold">
+                              {patientSearchQuery.trim()
+                                ? `Matching Patients (${filteredPatients.length})`
+                                : "Available Patients"}
+                            </span>
+                            {isSearchingServer && (
+                              <span className="small text-primary fst-italic">Searching DB…</span>
+                            )}
+                          </div>
+
+                          {filteredPatients.length === 0 ? (
+                            <div className="p-3 text-center text-muted small">
+                              {isSearchingServer
+                                ? "Searching database..."
+                                : `No patients matching "${patientSearchQuery}"`}
+                            </div>
+                          ) : (
+                            <div className="list-group list-group-flush">
+                              {filteredPatients.map((p) => (
+                                <button
+                                  key={p.id}
+                                  type="button"
+                                  className="list-group-item list-group-item-action px-3 py-2 text-start d-flex justify-content-between align-items-center"
+                                  onClick={() => selectPatient(p)}
+                                >
+                                  <div>
+                                    <div className="fw-semibold text-dark">{p.name}</div>
+                                    <div className="small text-muted">
+                                      {p.patientNo ? (
+                                        <span className="badge bg-light text-dark border me-1">
+                                          {p.patientNo}
+                                        </span>
+                                      ) : null}
+                                      {p.dob ? <span className="me-2">DOB: {p.dob}</span> : null}
+                                      {p.gender ? <span>{p.gender}</span> : null}
+                                    </div>
+                                  </div>
+                                  <span
+                                    className="btn btn-xs btn-outline-primary py-0 px-2"
+                                    style={{ fontSize: "0.75rem" }}
+                                  >
+                                    Select
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
+
                 <div className="form-check mb-3">
                   <input className="form-check-input" type="checkbox" id="bk-walkin" checked={isWalkIn} onChange={(e) => setIsWalkIn(e.target.checked)} />
                   <label className="form-check-label small" htmlFor="bk-walkin">
@@ -609,7 +939,17 @@ export function SchedulingPage() {
                 ) : null}
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-outline-secondary" onClick={() => setBookingOpen(false)}>Cancel</button>
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary"
+                  onClick={() => {
+                    setBookingOpen(false);
+                    setPatientSearchQuery("");
+                    setIsPatientDropdownOpen(false);
+                  }}
+                >
+                  Cancel
+                </button>
                 <button type="button" className="btn btn-cerulean" disabled={!patientId || busy} onClick={() => void book()}>
                   {busy ? "Working…" : isWalkIn ? "Issue ticket" : "Book"}
                 </button>

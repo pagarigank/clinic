@@ -230,6 +230,37 @@ describe("SchedulingPage (todo §3.1, CLN-T1)", () => {
     expect(screen.getByRole("button", { name: /Issue ticket/i })).toBeInTheDocument();
   });
 
+  it("provides fuzzy search for patient selection in booking modal and allows selecting/changing", async () => {
+    renderAt("*", <SchedulingPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /Book \/ Walk-in/i }));
+    expect(screen.getByText(/Walk-in ticket|Book appointment/i)).toBeInTheDocument();
+
+    // The fuzzy search input is present instead of legacy select dropdown
+    const searchInput = screen.getByPlaceholderText(/Type patient name, ID, or MRN…/i);
+    expect(searchInput).toBeInTheDocument();
+
+    // Focus or type fuzzy term e.g. "san"
+    fireEvent.focus(searchInput);
+    fireEvent.change(searchInput, { target: { value: "san" } });
+
+    // Matching patient appears in fuzzy results dropdown
+    const selectBtn = await screen.findByRole("button", { name: /Select/i });
+    expect(selectBtn).toBeInTheDocument();
+    expect(screen.getAllByText("Santos, Maria Elena").length).toBeGreaterThanOrEqual(1);
+
+    // Select the patient
+    fireEvent.click(selectBtn);
+
+    // Selected patient chip is displayed with Change button
+    expect(screen.getByText("✓ Selected")).toBeInTheDocument();
+    const changeBtn = screen.getByRole("button", { name: /Change/i });
+    expect(changeBtn).toBeInTheDocument();
+
+    // Clicking change resets selection back to fuzzy search input
+    fireEvent.click(changeBtn);
+    expect(screen.getByPlaceholderText(/Type patient name, ID, or MRN…/i)).toBeInTheDocument();
+  });
+
   it("renders appointments booked online with the online channel badge", async () => {
     useStubHandler((req, res) => {
       const url = req.url ?? "";
