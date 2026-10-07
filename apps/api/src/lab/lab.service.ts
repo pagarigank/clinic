@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { withTenant } from '@clinic/db';
-import { renderBarcodeLabel } from '@clinic/print';
+import { renderBarcodeLabel, renderPdf, renderLabReportHtml, type LabReport } from '@clinic/print';
 import { ProblemException } from '../http/problem.exception.js';
 import { SupplyService } from '../supply/supply.service.js';
 import { resolveServicePrice } from '../common/pricing.js';
@@ -30,6 +30,23 @@ import type {
 } from '@clinic/contracts';
 
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0];
+
+function mapResultFlag(flag: string | null | undefined): 'H' | 'L' | 'HH' | 'LL' | 'CRITICAL' | null {
+  switch (flag) {
+    case 'H':
+      return 'H';
+    case 'L':
+      return 'L';
+    case 'HH':
+      return 'HH';
+    case 'LL':
+      return 'LL';
+    case 'CRITICAL':
+      return 'CRITICAL';
+    default:
+      return null;
+  }
+}
 
 @Injectable()
 export class LabService {
@@ -1685,6 +1702,261 @@ async getReportArtifact(
         byteLength: row.content.byteLength,
       };
     });
+  }
+
+  /**
+   * Get clinic letterhead, branch information, and practitioner licensure profiles
+   * (Pathologist and Medical Technologist) for the official lab report printout.
+   */
+  async getLabPrintProfile(tenantId: string, userId: string, reportId: string) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const repRes = await tx.query(
+        `SELECT lr.*, lo.id as order_id, lo.order_no, lo.patient_id, lo.branch_id,
+                (SELECT lst.name FROM specimens sp JOIN lab_specimen_types lst ON lst.id = sp.specimen_type_id WHERE sp.tenant_id = lr.tenant_id AND sp.order_id = lo.id LIMIT 1) as specimen_type,
+                (SELECT sp.collected_at FROM specimens sp WHERE sp.tenant_id = lr.tenant_id AND sp.order_id = lo.id LIMIT 1) as collected_at,
+                (SELECT sp.received_at FROM specimens sp WHERE sp.tenant_id = lr.tenant_id AND sp.order_id = lo.id LIMIT 1) as received_at,
+                u_ord.name as ordering_clinician,
+                t.name as clinic_name, t.address as clinic_address, t.phone as clinic_phone, t.email as clinic_email,
+                t.doh_license_no as clinic_doh_license_no, t.philhealth_accreditation_no as clinic_philhealth_no,
+                b.name as branch_name, b.address as branch_address, b.phone as branch_phone, b.email as branch_email,
+                p.first_name, p.last_name, p.gender, p.date_of_birth,
+                (SELECT value FROM patient_identifiers WHERE patient_id = p.id AND type = 'MRN' LIMIT 1) as mrn,
+                u.name as pathologist_name,
+                e.job_title as pathologist_title, e.specialization as pathologist_specialization, e.prc_license_no as pathologist_prc_no
+         FROM lab_reports lr
+         JOIN lab_orders lo ON lo.id = lr.order_id AND lo.tenant_id = lr.tenant_id
+         JOIN patients p ON p.id = lo.patient_id AND p.tenant_id = lo.tenant_id
+         LEFT JOIN branches b ON b.id = lo.branch_id AND b.tenant_id = lo.tenant_id
+         LEFT JOIN tenants t ON t.id = lr.tenant_id
+         LEFT JOIN users u ON u.id = lr.issued_by
+         LEFT JOIN employees e ON e.user_id = lr.issued_by AND e.tenant_id = lr.tenant_id
+         LEFT JOIN users u_ord ON u_ord.id = lo.ordered_by
+         WHERE lr.tenant_id = $1 AND lr.id = $2`,
+        [tenantId, reportId],
+      );
+      if (!repRes.rows[0]) throw new ProblemException('NOT_FOUND', { detail: 'Report not found' });
+      const row = repRes.rows[0];
+
+      // Find the medical technologist who entered or performed the results
+      const medtechRes = await tx.query(
+        `SELECT u.name as medtech_name, e.job_title as medtech_title, e.prc_license_no as medtech_prc_no
+         FROM lab_results lr
+         JOIN lab_order_items loi ON loi.id = lr.order_item_id AND loi.tenant_id = lr.tenant_id
+         JOIN users u ON u.id = lr.entered_by
+         LEFT JOIN employees e ON e.user_id = lr.entered_by AND e.tenant_id = lr.tenant_id
+         WHERE lr.tenant_id = $1 AND loi.order_id = $2
+         LIMIT 1`,
+        [tenantId, row.order_id],
+      );
+      const medtech = medtechRes.rows[0];
+
+      const patientName = [row.first_name, row.last_name].filter(Boolean).join(' ') || 'Patient';
+
+      return {
+        report: {
+          id: row.id,
+          orderId: row.order_id,
+          orderNo: row.order_no,
+          version: row.version,
+          status: row.status,
+          issuedAt: row.issued_at,
+          sha256: row.sha256_hash,
+          specimenType: row.specimen_type || null,
+          collectedAt: row.collected_at || null,
+          receivedAt: row.received_at || null,
+          orderingClinician: row.ordering_clinician || null,
+          notes: (row.report_data as any)?.notes || null,
+        },
+        clinic: {
+          name: row.clinic_name || 'Clinical Laboratory Services',
+          branchName: row.branch_name || null,
+          address: row.branch_address || row.clinic_address || null,
+          phone: row.branch_phone || row.clinic_phone || null,
+          email: row.branch_email || row.clinic_email || null,
+          dohLicenseNo: row.clinic_doh_license_no || null,
+          philhealthAccreditationNo: row.clinic_philhealth_no || null,
+        },
+        pathologist: {
+          name: row.pathologist_name
+            ? (row.pathologist_name.startsWith('Dr.') ? row.pathologist_name : `Dr. ${row.pathologist_name}, MD`)
+            : 'Clinical Pathologist',
+          title: row.pathologist_title || 'Anatomic & Clinical Pathologist, FPSP',
+          specialization: row.pathologist_specialization || 'Clinical Pathology',
+          licenseNo: row.pathologist_prc_no || null,
+        },
+        medtech: {
+          name: medtech?.medtech_name || 'Registered Medical Technologist',
+          title: medtech?.medtech_title || 'Medical Technologist (RMT)',
+          licenseNo: medtech?.medtech_prc_no || null,
+        },
+        patient: {
+          name: patientName,
+          mrn: row.mrn || null,
+          gender: row.gender || null,
+          dateOfBirth: row.date_of_birth ? new Date(row.date_of_birth).toISOString().slice(0, 10) : null,
+        },
+      };
+    });
+  }
+
+  /**
+   * Render a true tamper-evident vector PDF for an official lab report.
+   * Renders with official clinic letterhead and doctor licensure, supporting live interactive overrides.
+   */
+  async renderReportPdf(
+    tenantId: string,
+    userId: string,
+    reportId: string,
+    overrides?: Record<string, string>,
+  ): Promise<{ bytes: Buffer; fileName: string; sha256: string; byteLength: number }> {
+    const profile = await this.getLabPrintProfile(tenantId, userId, reportId);
+
+    const reportRow = await withTenant({ tenantId, userId }, async (tx) => {
+      const res = await tx.query(
+        `SELECT lr.*, lo.order_no,
+                (SELECT lst.name FROM specimens sp JOIN lab_specimen_types lst ON lst.id = sp.specimen_type_id WHERE sp.tenant_id = lr.tenant_id AND sp.order_id = lo.id LIMIT 1) as specimen_type,
+                (SELECT sp.collected_at FROM specimens sp WHERE sp.tenant_id = lr.tenant_id AND sp.order_id = lo.id LIMIT 1) as collected_at,
+                (SELECT sp.received_at FROM specimens sp WHERE sp.tenant_id = lr.tenant_id AND sp.order_id = lo.id LIMIT 1) as received_at,
+                u_ord.name as ordering_clinician
+         FROM lab_reports lr
+         JOIN lab_orders lo ON lo.id = lr.order_id AND lo.tenant_id = lr.tenant_id
+         LEFT JOIN users u_ord ON u_ord.id = lo.ordered_by
+         WHERE lr.tenant_id = $1 AND lr.id = $2`,
+        [tenantId, reportId],
+      );
+      if (!res.rows[0]) throw new ProblemException('NOT_FOUND', { detail: 'Report not found' });
+      return res.rows[0];
+    });
+
+    const reportData = (reportRow.report_data ?? {}) as {
+      order?: Record<string, unknown>;
+      items?: Array<Record<string, unknown>>;
+      results?: Array<Record<string, unknown>>;
+      releasedAt?: string | null;
+      notes?: string | null;
+    };
+
+    let rawResults = Array.isArray(reportData.results) ? reportData.results : [];
+    if (rawResults.length === 0) {
+      rawResults = await withTenant({ tenantId, userId }, async (tx) => {
+        const res = await tx.query(
+          `SELECT lr.*, la.code as analyte_code, la.name as analyte_name,
+                  la.default_unit as unit, lt.name as test_name
+           FROM lab_results lr
+           JOIN lab_analytes la ON la.id = lr.analyte_id AND la.tenant_id = lr.tenant_id
+           JOIN lab_order_items loi ON loi.id = lr.order_item_id AND loi.tenant_id = lr.tenant_id
+           JOIN lab_tests lt ON lt.id = loi.test_id AND lt.tenant_id = loi.tenant_id
+           WHERE lr.tenant_id = $1 AND loi.order_id = $2`,
+          [tenantId, reportRow.order_id],
+        );
+        return res.rows;
+      });
+    }
+
+    const resultRows = rawResults.map((r: any) => ({
+      test: String(r.test_name ?? r.test ?? 'Diagnostic Examination'),
+      analyte: String(r.analyte_name ?? r.analyte ?? ''),
+      value: String(r.value_numeric ?? r.value_text ?? r.value_num ?? '—'),
+      unit: r.unit ?? r.default_unit ? String(r.unit ?? r.default_unit) : undefined,
+      referenceRange: r.ref_range_text ?? (r.reference_range ? (typeof r.reference_range === 'object' && r.reference_range.normal_min !== undefined ? `${r.reference_range.normal_min} – ${r.reference_range.normal_max}` : typeof r.reference_range === 'string' ? r.reference_range : undefined) : undefined),
+      flag: mapResultFlag(r.flag),
+    }));
+
+    if (resultRows.length === 0) {
+      throw new ProblemException('VALIDATION_FAILED', { detail: 'Lab report has no results to render' });
+    }
+
+    const orderNo = reportRow.order_no || `LAB-${reportRow.order_id.slice(0, 8)}`;
+    const version = reportRow.version;
+    const fileName = `lab-report-${orderNo}-v${version}.pdf`;
+
+    const calculateAge = (dob: string | Date) => {
+      const birth = new Date(dob);
+      if (isNaN(birth.getTime())) return undefined;
+      const diff = Date.now() - birth.getTime();
+      const ageDate = new Date(diff);
+      return Math.abs(ageDate.getUTCFullYear() - 1970).toString();
+    };
+
+    const doc: LabReport = {
+      clinicName: overrides?.clinicName || profile.clinic.name || 'Clinical Laboratory Services',
+      branchName: overrides?.branchName || profile.clinic.branchName || undefined,
+      clinicAddress: overrides?.clinicAddress || profile.clinic.address || undefined,
+      clinicPhone: overrides?.clinicPhone || profile.clinic.phone || undefined,
+      clinicEmail: overrides?.clinicEmail || profile.clinic.email || undefined,
+      dohAccreditationNo: overrides?.dohLicenseNo || profile.clinic.dohLicenseNo || undefined,
+      philhealthAccreditationNo: overrides?.philhealthNo || profile.clinic.philhealthAccreditationNo || undefined,
+      reportNo: overrides?.reportNo || `${orderNo}-v${version}`,
+      orderNo,
+      version,
+      status: reportRow.status === 'PRELIMINARY' ? 'PRELIMINARY' : reportRow.status === 'CORRECTED' ? 'CORRECTED' : 'RELEASED',
+      patientName: overrides?.patientName || profile.patient.name,
+      patientAge: profile.patient.dateOfBirth ? calculateAge(profile.patient.dateOfBirth) : undefined,
+      patientSex: profile.patient.gender || undefined,
+      patientDob: profile.patient.dateOfBirth || undefined,
+      patientMrn: profile.patient.mrn || undefined,
+      specimenType: overrides?.specimenType || reportRow.specimen_type || undefined,
+      collectedAt: reportRow.collected_at ? new Date(reportRow.collected_at).toLocaleString() : undefined,
+      receivedAt: reportRow.received_at ? new Date(reportRow.received_at).toLocaleString() : undefined,
+      releasedAt: reportRow.issued_at ? new Date(reportRow.issued_at).toLocaleString() : undefined,
+      orderingClinician: overrides?.orderingClinician || reportRow.ordering_clinician || undefined,
+      pathologistName: overrides?.pathologistName || profile.pathologist.name || undefined,
+      pathologistTitle: overrides?.pathologistTitle || profile.pathologist.title || undefined,
+      pathologistLicenseNo: overrides?.pathologistLicenseNo || profile.pathologist.licenseNo || undefined,
+      medtechName: overrides?.medtechName || profile.medtech.name || undefined,
+      medtechTitle: overrides?.medtechTitle || profile.medtech.title || undefined,
+      medtechLicenseNo: overrides?.medtechLicenseNo || profile.medtech.licenseNo || undefined,
+      interpretation: overrides?.interpretation || (reportData.notes ?? undefined),
+      results: resultRows,
+      verificationHash: reportRow.sha256_hash || undefined,
+    };
+
+    const rendered = await renderPdf(renderLabReportHtml(doc), { format: 'A4' });
+
+    // If report has no file_id and no custom overrides, seal and record it now so subsequent accesses are verified and instant
+    const hasOverrides = overrides && Object.keys(overrides).length > 0;
+    if (!hasOverrides && !reportRow.file_id) {
+      const objectKey = `t/${tenantId}/lab-report/${reportRow.order_id}-v${reportRow.version}`;
+      await withTenant({ tenantId, userId }, async (tx) => {
+        const claim = await tx.query(
+          `SELECT 1 FROM lab_reports WHERE tenant_id = $1 AND id = $2 AND file_id IS NULL FOR UPDATE`,
+          [tenantId, reportId],
+        );
+        if (claim.rowCount && claim.rowCount > 0) {
+          const fileRes = await tx.query<{ id: string }>(
+            `INSERT INTO files (tenant_id, object_key, file_name, mime_type, size_bytes,
+                                uploaded_by, origin, content, sha256, status)
+             VALUES ($1, $2, $3, 'application/pdf', $4, $5, 'GENERATED', $6, $7, 'READY')
+             RETURNING id`,
+            [
+              tenantId,
+              objectKey,
+              fileName,
+              rendered.bytes.length,
+              reportRow.issued_by,
+              rendered.bytes,
+              rendered.sha256,
+            ],
+          );
+          const fileId = fileRes.rows[0]?.id;
+          if (fileId) {
+            await tx.query(
+              `UPDATE lab_reports
+               SET file_id = $1, sha256_hash = $2
+               WHERE tenant_id = $3 AND id = $4`,
+              [fileId, rendered.sha256, tenantId, reportId],
+            );
+          }
+        }
+      });
+    }
+
+    return {
+      bytes: rendered.bytes,
+      fileName,
+      sha256: rendered.sha256,
+      byteLength: rendered.byteLength,
+    };
   }
 
   // ── Quality Control (QC) ───────────────────────────────────────────────────

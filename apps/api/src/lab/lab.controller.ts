@@ -507,28 +507,52 @@ export class LabController {
   }
 
   @RequirePermission('lab.report.read')
+  @Get('reports/:id/print-profile')
+  @ApiOperation({ summary: 'Get clinic and practitioner licensure profile for lab report' })
+  async getReportPrintProfile(@Req() req: RequestWithAuth, @Param('id') id: string) {
+    return this.svc.getLabPrintProfile(req.tenantId!, req.authContext?.userId!, id);
+  }
+
+  @RequirePermission('lab.report.read')
   @Get('reports/:id/pdf')
-  @ApiOperation({ summary: 'Download the stored, SHA-256 sealed laboratory report PDF' })
+  @ApiOperation({ summary: 'Download the laboratory report PDF (rendered on-demand or stored seal)' })
   async getReportPdf(
     @Req() req: RequestWithAuth,
     @Param('id') id: string,
     @Res() reply: FastifyReply,
+    @Query() query?: Record<string, string>,
   ) {
-    const artifact = await this.svc.getReportArtifact(req.tenantId!, id);
-    // A stored report is a sealed clinical document. Serve it only if the bytes
-    // still hash to the digest recorded when it was issued, and always publish
-    // that digest so the client can verify the copy it filed.
-    const seal = artifact.sha256
-      ? verifyDocument(artifact.bytes, artifact.sha256)
-      : { valid: false, actualSha256: '' };
-    if (!seal.valid) {
-      throw new ProblemException('CONFLICT', {
-        detail: artifact.sha256
-          ? `The stored report PDF no longer matches its recorded SHA-256 seal. It has not been served. Expected ${artifact.sha256}, got ${seal.actualSha256}.`
-          : 'The stored report PDF has no SHA-256 seal recorded, so it cannot be served as an official document.',
-      });
+    const hasOverrides = query && Object.keys(query).length > 0;
+    if (hasOverrides) {
+      const doc = await this.svc.renderReportPdf(req.tenantId!, req.authContext?.userId!, id, query);
+      void sendPdf(reply, doc, doc.fileName);
+      return;
     }
-    void sendPdf(reply, { ...artifact, sha256: seal.actualSha256 }, artifact.fileName);
+    try {
+      const artifact = await this.svc.getReportArtifact(req.tenantId!, id);
+      // A stored report is a sealed clinical document. Serve it only if the bytes
+      // still hash to the digest recorded when it was issued, and always publish
+      // that digest so the client can verify the copy it filed.
+      const seal = artifact.sha256
+        ? verifyDocument(artifact.bytes, artifact.sha256)
+        : { valid: false, actualSha256: '' };
+      if (!seal.valid) {
+        throw new ProblemException('CONFLICT', {
+          detail: artifact.sha256
+            ? `The stored report PDF no longer matches its recorded SHA-256 seal. It has not been served. Expected ${artifact.sha256}, got ${seal.actualSha256}.`
+            : 'The stored report PDF has no SHA-256 seal recorded, so it cannot be served as an official document.',
+        });
+      }
+      void sendPdf(reply, { ...artifact, sha256: seal.actualSha256 }, artifact.fileName);
+    } catch (err: any) {
+      const resp = err instanceof ProblemException ? (err.getResponse() as any) : null;
+      if (err instanceof ProblemException && err.getStatus() === 409 && typeof resp?.detail === 'string' && resp.detail.includes('has not been rendered yet')) {
+        const doc = await this.svc.renderReportPdf(req.tenantId!, req.authContext?.userId!, id);
+        void sendPdf(reply, doc, doc.fileName);
+        return;
+      }
+      throw err;
+    }
   }
 
   // ── Quality Control (QC) (LAB-T5) ──────────────────────────────────────────

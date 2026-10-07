@@ -237,6 +237,12 @@ export function renderCertificateHtml(doc: MedicalCertificate): string {
 
 export interface LabReport {
   clinicName: string;
+  branchName?: string;
+  clinicAddress?: string;
+  clinicPhone?: string;
+  clinicEmail?: string;
+  dohAccreditationNo?: string;
+  philhealthAccreditationNo?: string;
   reportNo: string;
   orderNo: string;
   version: number;
@@ -244,11 +250,22 @@ export interface LabReport {
   patientName: string;
   patientAge?: string;
   patientSex?: string;
+  patientDob?: string;
+  patientMrn?: string;
+  patientAddress?: string;
   collectedAt?: string;
   receivedAt?: string;
   releasedAt?: string;
   orderingClinician?: string;
+  specimenType?: string;
+  accessionNo?: string;
   verifiedBy?: string;
+  pathologistName?: string;
+  pathologistTitle?: string;
+  pathologistLicenseNo?: string;
+  medtechName?: string;
+  medtechTitle?: string;
+  medtechLicenseNo?: string;
   /** Present on an amendment; states why the earlier version was replaced. */
   amendmentReason?: string;
   results: Array<{
@@ -263,6 +280,7 @@ export interface LabReport {
   interpretation?: string;
   /** Shown when the test requires explicit authorisation to view. */
   confidentialityNotice?: string;
+  verificationHash?: string;
 }
 
 /** Map an abnormal flag to the bold marker printed beside the value. */
@@ -292,55 +310,96 @@ export function renderLabReportHtml(doc: LabReport): string {
   const rows = doc.results
     .map(
       (r) => `<tr>
-        <td>${escapeHtml(r.test)}</td>
+        <td style="font-weight: 600;">${escapeHtml(r.test)}</td>
         <td>${escapeHtml(r.analyte)}</td>
-        <td class="num">${escapeHtml(r.value)}${flagMark(r.flag)}</td>
+        <td class="num" style="font-weight: 700; ${r.flag === 'HH' || r.flag === 'LL' || r.flag === 'CRITICAL' ? 'color: #b91c1c;' : r.flag === 'H' || r.flag === 'L' ? 'color: #c2410c;' : ''}">${escapeHtml(r.value)}${flagMark(r.flag)}</td>
         <td>${escapeHtml(r.unit ?? "")}</td>
         <td>${escapeHtml(r.referenceRange ?? "")}</td>
       </tr>`,
     )
     .join("");
 
+  const headerTable = doc.clinicAddress || doc.branchName || doc.dohAccreditationNo
+    ? `<header style="border-bottom: 2pt solid #0f2942; padding-bottom: 3.5mm; margin-bottom: 4mm;">
+        <table style="width: 100%; border: none; margin: 0;">
+          <tr>
+            <td style="border: none; padding: 0; vertical-align: top;">
+              <div class="clinic" style="font-size: 15pt; font-weight: 800; color: #0f2942; letter-spacing: -0.2pt; text-transform: uppercase;">${escapeHtml(doc.clinicName)}</div>
+              ${doc.branchName ? `<div style="font-size: 9.5pt; font-weight: 600; color: #0284c7; text-transform: uppercase; letter-spacing: 0.4pt; margin-top: 1mm;">${escapeHtml(doc.branchName)}</div>` : ''}
+              ${doc.clinicAddress ? `<div class="muted" style="font-size: 8.5pt; color: #64748b; margin-top: 1mm;">${escapeHtml(doc.clinicAddress)}${doc.clinicPhone ? ` &middot; Tel: ${escapeHtml(doc.clinicPhone)}` : ''}${doc.clinicEmail ? ` &middot; ${escapeHtml(doc.clinicEmail)}` : ''}</div>` : ''}
+              ${doc.dohAccreditationNo ? `<div style="font-size: 8pt; color: #94a3b8; margin-top: 0.5mm;">DOH Accreditation / LTO No. ${escapeHtml(doc.dohAccreditationNo)}</div>` : ''}
+            </td>
+            <td style="border: none; padding: 0; vertical-align: top; text-align: right; width: 170px;">
+              <div style="display: inline-block; background: #0f2942; color: #fff; font-size: 8.5pt; font-weight: 700; padding: 1.5mm 3.5mm; border-radius: 4px; letter-spacing: 0.5pt;">
+                ${doc.status === "PRELIMINARY" ? "PRELIMINARY REPORT" : "OFFICIAL LAB REPORT"}
+              </div>
+              <div class="doc-no" style="font-size: 9.5pt; color: #0f2942; margin-top: 2mm;">Report ${escapeHtml(doc.reportNo)} &middot; Version ${doc.version}</div>
+            </td>
+          </tr>
+        </table>
+      </header>`
+    : `<header>
+        <div class="clinic">${escapeHtml(doc.clinicName)}</div>
+        <div class="doc-no">Report ${escapeHtml(doc.reportNo)} &middot; Version ${doc.version}</div>
+      </header>`;
+
   const body = [
-    "<header>",
-    `<div class="clinic">${escapeHtml(doc.clinicName)}</div>`,
-    `<div class="doc-no">Report ${escapeHtml(doc.reportNo)} &middot; Version ${doc.version}</div>`,
-    `</header>`,
+    headerTable,
     `<p><strong>Status: ${escapeHtml(doc.status)}</strong>${
       doc.status === "CORRECTED" ? " &mdash; this version supersedes all earlier versions" : ""
     }</p>`,
     doc.amendmentReason
       ? `<p><strong>Reason for amendment:</strong> ${escapeHtml(doc.amendmentReason)}</p>`
       : "",
-    '<div class="grid">',
+    '<div class="grid" style="background: #f8fafc; padding: 2.5mm 3.5mm; border: 0.5pt solid #e2e8f0; border-radius: 4px; margin-bottom: 3.5mm;">',
     field("Patient", doc.patientName),
     field("Order", doc.orderNo),
     doc.patientAge ? field("Age", doc.patientAge) : "",
     doc.patientSex ? field("Sex", doc.patientSex) : "",
+    doc.patientDob ? field("Date of Birth", doc.patientDob) : "",
+    doc.patientMrn ? field("MRN", doc.patientMrn) : "",
+    doc.specimenType ? field("Specimen", doc.specimenType) : "",
     doc.collectedAt ? field("Collected", doc.collectedAt) : "",
     doc.receivedAt ? field("Received", doc.receivedAt) : "",
     doc.releasedAt ? field("Released", doc.releasedAt) : "",
     doc.orderingClinician ? field("Ordering clinician", doc.orderingClinician) : "",
     "</div>",
     doc.confidentialityNotice
-      ? `<p style="border:1pt solid #111;padding:2mm"><strong>CONFIDENTIAL.</strong> ${escapeHtml(
+      ? `<p style="border:1pt solid #b91c1c;background:#fef2f2;color:#991b1b;padding:2mm;border-radius:3px;"><strong>CONFIDENTIAL.</strong> ${escapeHtml(
           doc.confidentialityNotice,
         )}</p>`
       : "",
-    "<h2>Results</h2>",
+    "<h2 style='color:#0f2942;border-bottom:1pt solid #cbd5e1;padding-bottom:1mm;margin-top:4mm;'>Diagnostic Examination Results</h2>",
     "<table><thead><tr><th>Test</th><th>Analyte</th><th class='num'>Value</th><th>Unit</th><th>Reference</th></tr></thead>",
     `<tbody>${rows}</tbody></table>`,
-    doc.interpretation ? `<h2>Interpretation</h2><div>${escapeHtml(doc.interpretation)}</div>` : "",
-    doc.verifiedBy
+    doc.interpretation ? `<h2 style='color:#0f2942;margin-top:4mm;'>Interpretation</h2><div style="background:#f8fafc;padding:2.5mm 3.5mm;border-left:2pt solid #0284c7;border-radius:2px;">${escapeHtml(doc.interpretation)}</div>` : "",
+    doc.medtechName || doc.pathologistName
+      ? `<div style="margin-top: 10mm; display: flex; justify-content: space-between; gap: 20mm;">
+          <div style="flex: 1; text-align: center;">
+            <div style="border-top: 0.75pt solid #334155; padding-top: 1.5mm; font-weight: 700; font-size: 9.5pt; color: #0f172a;">
+              ${escapeHtml(doc.medtechName || "Registered Medical Technologist")}
+            </div>
+            <div class="muted" style="font-size: 8.5pt;">${escapeHtml(doc.medtechTitle || "Medical Technologist (RMT)")}</div>
+            ${doc.medtechLicenseNo ? `<div class="muted" style="font-size: 8pt;">PRC License No. ${escapeHtml(doc.medtechLicenseNo)}</div>` : ""}
+          </div>
+          <div style="flex: 1; text-align: center;">
+            <div style="border-top: 0.75pt solid #334155; padding-top: 1.5mm; font-weight: 700; font-size: 9.5pt; color: #0f172a;">
+              ${escapeHtml(doc.pathologistName || doc.verifiedBy || "Clinical Pathologist")}
+            </div>
+            <div class="muted" style="font-size: 8.5pt;">${escapeHtml(doc.pathologistTitle || "Pathologist, FPSP")}</div>
+            ${doc.pathologistLicenseNo ? `<div class="muted" style="font-size: 8pt;">PRC License No. ${escapeHtml(doc.pathologistLicenseNo)}</div>` : ""}
+          </div>
+        </div>`
+      : doc.verifiedBy
       ? `<div class="sig"><div class="sig-line">${escapeHtml(
           doc.verifiedBy,
         )} &middot; Verified</div></div>`
       : "",
-    `<footer>${escapeHtml(doc.clinicName)} &middot; Report ${escapeHtml(doc.reportNo)} v${doc.version}`,
-    doc.status === "RELEASED" || doc.status === "CORRECTED"
-      ? " &middot; Electronically verified; integrity evidenced by the recorded SHA-256"
-      : " &middot; NOT FOR CLINICAL USE",
-    "</footer>",
+    `<footer>${escapeHtml(doc.clinicName)} &middot; Report ${escapeHtml(doc.reportNo)} v${doc.version}${
+      doc.status === "RELEASED" || doc.status === "CORRECTED"
+        ? " &middot; Electronically verified; integrity evidenced by the recorded SHA-256"
+        : " &middot; NOT FOR CLINICAL USE"
+    }${doc.verificationHash ? ` &middot; Hash: ${escapeHtml(doc.verificationHash.slice(0, 16))}…` : ""}</footer>`,
   ]
     .filter(Boolean)
     .join("");

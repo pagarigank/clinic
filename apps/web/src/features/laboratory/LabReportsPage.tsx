@@ -1,41 +1,16 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router";
-import { Alert, Button, Modal } from "@clinic/ui";
+import { Alert, Button } from "@clinic/ui";
 import { labApi, type LabReport } from "./api.js";
-import { apiGetBlob } from "../../shared/api/client.js";
+import { LabReportPrintModal } from "./LabReportPrintModal.js";
 
 export function LabReportsPage() {
   const [reports, setReports] = useState<LabReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Detail Modal
+  // Detail / Print Modal
   const [selectedReport, setSelectedReport] = useState<LabReport | null>(null);
-  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
-
-  const handleOpenReportPdf = async () => {
-    if (!selectedReport) return;
-    if (!selectedReport.file_id) return;
-    setIsDownloadingPdf(true);
-    try {
-      const blob = await apiGetBlob(`/lab/reports/${selectedReport.id}/pdf`);
-      const blobUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.target = "_blank";
-      a.rel = "noopener";
-      a.download = `LabReport-${selectedReport.order_id.slice(0, 8)}-v${selectedReport.version}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(blobUrl);
-    } catch (err) {
-      console.warn("Direct lab report PDF download failed, falling back to window.print():", err);
-      window.print();
-    } finally {
-      setIsDownloadingPdf(false);
-    }
-  };
 
   const loadReports = async () => {
     try {
@@ -210,153 +185,12 @@ export function LabReportsPage() {
         </div>
       </div>
 
-      {/* ── Report Document Modal ───────────────────────────────────────────── */}
-      <Modal show={!!selectedReport} onHide={() => setSelectedReport(null)} size="lg">
-        <Modal.Header closeButton>
-          <Modal.Title className="h5 d-flex align-items-center gap-2">
-            <span>📜</span> Official Diagnostic Laboratory Report
-          </Modal.Title>
-        </Modal.Header>
-        <Modal.Body className="bg-light p-4">
-          {selectedReport && (
-            <div className="bg-white p-4 rounded shadow-sm border font-sans">
-              {/* Header Header */}
-              <div className="border-bottom pb-3 mb-3 d-flex justify-content-between align-items-center">
-                <div>
-                  <h4 className="fw-bold text-primary mb-0">CLINICAL LABORATORY SERVICES</h4>
-                  <div className="small text-muted">Accredited Diagnostic Pathology Unit</div>
-                </div>
-                <div className="text-end">
-                  <span
-                    className={`badge fs-6 ${
-                      selectedReport.status === "FINAL"
-                        ? "bg-success"
-                        : selectedReport.status === "CORRECTED"
-                        ? "bg-warning text-dark"
-                        : "bg-info"
-                    }`}
-                  >
-                    {selectedReport.status} REPORT (v{selectedReport.version})
-                  </span>
-                </div>
-              </div>
-
-              {/* Patient / Order Info */}
-              <div className="row g-2 mb-4 p-3 bg-light rounded border">
-                <div className="col-6">
-                  <div className="small text-muted">Patient Name:</div>
-                  <div className="fw-bold">
-                    {/* No invented fallback. A released laboratory report is a
-                        clinical document: printing "Juan Dela Cruz" on a report that
-                        belongs to someone else is worse than printing nothing, and it
-                        hides a broken payload behind a plausible-looking patient. */}
-                    {selectedReport.report_data?.patient?.family_name ?? "—"}
-                    {selectedReport.report_data?.patient?.given_name
-                      ? `, ${selectedReport.report_data.patient.given_name}`
-                      : ""}
-                  </div>
-                  <div className="small text-muted">
-                    MRN: {selectedReport.report_data?.patient?.mrn ?? "—"} •{" "}
-                    {selectedReport.report_data?.patient?.sex ?? "—"}
-                  </div>
-                </div>
-                <div className="col-6 text-end">
-                  <div className="small text-muted">Order No:</div>
-                  <div className="fw-bold text-primary">
-                    {selectedReport.report_data?.order?.order_no || "LAB-2026-0001"}
-                  </div>
-                  <div className="small text-muted">
-                    Issued: {new Date(selectedReport.issued_at).toLocaleString()}
-                  </div>
-                </div>
-              </div>
-
-              {/* Results Table */}
-              <div className="table-responsive mb-4">
-                <table className="table table-bordered table-sm align-middle" style={{ fontSize: "0.85rem" }}>
-                  <thead className="table-light">
-                    <tr>
-                      <th>Test / Analyte</th>
-                      <th>Observed Value</th>
-                      <th>Reference Range</th>
-                      <th>Unit</th>
-                      <th>Flag</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(selectedReport.report_data?.results || []).map((r: any, idx: number) => (
-                      <tr key={idx}>
-                        <td className="fw-semibold">{r.analyte_name || "Analyte"}</td>
-                        <td className="font-monospace fw-bold">{r.value_numeric ?? r.value_text ?? "—"}</td>
-                        <td className="small text-muted">
-                          {r.reference_range?.normal_min !== undefined
-                            ? `${r.reference_range.normal_min} – ${r.reference_range.normal_max}`
-                            : "Normal"}
-                        </td>
-                        <td className="font-monospace">{r.default_unit || ""}</td>
-                        <td>
-                          {r.flag === "HH" || r.flag === "LL" ? (
-                            <span className="badge bg-danger text-white">{r.flag} (Critical)</span>
-                          ) : r.flag === "H" || r.flag === "L" ? (
-                            <span className="badge bg-warning text-dark">{r.flag}</span>
-                          ) : (
-                            <span className="badge bg-success-subtle text-success">Normal</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* SHA-256 Compliance Box */}
-              <div className="p-3 bg-light rounded border mb-3">
-                <div className="d-flex justify-content-between align-items-center">
-                  <div>
-                    <div className="small fw-bold text-dark">Cryptographic Document Seal</div>
-                    <div className="font-monospace small text-muted text-break">
-                      SHA-256: {selectedReport.sha256_hash ?? selectedReport.report_hash}
-                    </div>
-                  </div>
-                  <span className="badge bg-primary text-white">✓ Verified Seal</span>
-                </div>
-              </div>
-
-              {/* Signatures */}
-              <div className="row text-center pt-3 border-top">
-                <div className="col-6">
-                  <div className="small text-muted">Electronically Performed by</div>
-                  <div className="fw-semibold">Registered Medical Technologist (RMT)</div>
-                </div>
-                <div className="col-6">
-                  <div className="small text-muted">Verified &amp; Released by</div>
-                  <div className="fw-semibold">Anatomic &amp; Clinical Pathologist, FPSP</div>
-                </div>
-              </div>
-            </div>
-          )}
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => setSelectedReport(null)}>
-            Close
-          </Button>
-          <Button variant="outline-primary" onClick={() => window.print()}>
-            🖨️ Print View
-          </Button>
-          <Button
-            variant="primary"
-            onClick={() => void handleOpenReportPdf()}
-            disabled={isDownloadingPdf || !selectedReport?.file_id}
-            title={
-              selectedReport?.file_id
-                ? "Open the sealed, SHA-256-verified report PDF"
-                : "The official PDF has not been rendered yet (JOB-43 pending)"
-            }
-          >
-            {isDownloadingPdf ? "Opening…" : "📄 Open Official PDF"}
-          </Button>
-        </Modal.Footer>
-      </Modal>
+      {/* ── True Vector PDF Report Document Modal ─────────────────────────────── */}
+      <LabReportPrintModal
+        isOpen={!!selectedReport}
+        onClose={() => setSelectedReport(null)}
+        report={selectedReport}
+      />
     </div>
   );
 }

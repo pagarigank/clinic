@@ -540,4 +540,40 @@ describe.skipIf(!hasDb)('Phase 6 Laboratory Service Tests (AC-10, AC-11, AC-17)'
     await ownerPool.query(`UPDATE lab_reports SET file_id = NULL WHERE tenant_id = $1 AND id = $2`, [TENANT_ID, report.id]);
     await ownerPool.query(`DELETE FROM files WHERE tenant_id = $1 AND id = $2`, [TENANT_ID, fileRes.rows[0]!.id]);
   });
+
+  it('loads print profile and renders true vector PDF for released lab report', async () => {
+    const order = await labSvc.createOrder(TENANT_ID, ENCODER_USER_ID, {
+      patientId,
+      branchId: BRANCH_ID,
+      testIds: [singleTestId],
+    });
+    const itemId = order.items[0].id;
+    await labSvc.collectSpecimen(TENANT_ID, order.id, itemId, ENCODER_USER_ID, {
+      specimenTypeId: specTypeId,
+    });
+    await labSvc.receiveSpecimen(TENANT_ID, order.id, itemId, ENCODER_USER_ID, {
+      condition: 'OK',
+    });
+    const results = await labSvc.enterResults(TENANT_ID, order.id, itemId, ENCODER_USER_ID, {
+      results: [{ analyteId: kAnalyteId, valueNum: 4.5, unit: 'mmol/L' }],
+    });
+    await labSvc.verifyResult(TENANT_ID, results[0].id, VERIFIER_USER_ID);
+    const report = await labSvc.releaseReport(TENANT_ID, order.id, VERIFIER_USER_ID, { status: 'FINAL' });
+
+    // 1. Check getLabPrintProfile
+    const profile = await labSvc.getLabPrintProfile(TENANT_ID, VERIFIER_USER_ID, report.id);
+    expect(profile.clinic).toBeDefined();
+    expect(profile.report.id).toBe(report.id);
+    expect(profile.patient.name).toBeDefined();
+
+    // 2. Check renderReportPdf with overrides
+    const rendered = await labSvc.renderReportPdf(TENANT_ID, VERIFIER_USER_ID, report.id, {
+      clinicName: 'Custom Diagnostics Laboratory',
+      pathologistName: 'Dr. John Doe, MD',
+    });
+    expect(rendered.bytes).toBeDefined();
+    expect(rendered.bytes.length).toBeGreaterThan(100);
+    expect(rendered.sha256).toBeDefined();
+    expect(rendered.fileName).toContain('.pdf');
+  });
 });
