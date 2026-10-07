@@ -409,14 +409,25 @@ export function renderLabReportHtml(doc: LabReport): string {
 
 export interface ReceiptDocument {
   clinicName: string;
+  branchName?: string;
   clinicAddress?: string;
+  clinicPhone?: string;
+  clinicEmail?: string;
+  tin?: string;
+  dohAccreditationNo?: string;
+  philhealthAccreditationNo?: string;
   receiptNo: string;
   /** Present on a reprint; the underlying payment is unchanged. */
   reprintedFrom?: string;
   issuedAt: string;
   cashierName: string;
   patientName?: string;
-  lines: Array<{ description: string; qty: number; unitPrice: number; total: number }>;
+  patientId?: string;
+  invoiceNo?: string;
+  paymentMethod?: string;
+  reference?: string;
+  balanceDue?: number;
+  lines: Array<{ description: string; qty: number; unitPrice: number; total: number; isProfessionalFee?: boolean }>;
   subtotal: number;
   discount?: { label: string; amount: number; /** Required when a discount needs ID capture. */
     idCaptured?: boolean } | null;
@@ -426,6 +437,7 @@ export interface ReceiptDocument {
   /** Payer as selected for the encounter (private cash, HMO, PhilHealth, corporate). */
   payer?: string;
   footer?: string;
+  verificationHash?: string;
 }
 
 /**
@@ -451,7 +463,19 @@ export function renderReceiptHtml(doc: ReceiptDocument): string {
   const body = [
     "<header>",
     `<div class="clinic">${escapeHtml(doc.clinicName)}</div>`,
-    doc.clinicAddress ? `<div class="muted">${escapeHtml(doc.clinicAddress)}</div>` : "",
+    doc.branchName ? `<div style="font-size:9.5pt;font-weight:600;color:#0284c7;text-transform:uppercase;letter-spacing:0.3pt;margin-top:0.5mm;">${escapeHtml(doc.branchName)}</div>` : "",
+    doc.clinicAddress || doc.clinicPhone || doc.clinicEmail
+      ? `<div class="muted">${escapeHtml(doc.clinicAddress || "")}${
+          doc.clinicPhone ? ` &middot; Tel: ${escapeHtml(doc.clinicPhone)}` : ""
+        }${doc.clinicEmail ? ` &middot; ${escapeHtml(doc.clinicEmail)}` : ""}</div>`
+      : "",
+    doc.tin || doc.dohAccreditationNo || doc.philhealthAccreditationNo
+      ? `<div class="muted" style="font-size:8pt;margin-top:0.5mm;">${
+          doc.tin ? `TIN: ${escapeHtml(doc.tin)}` : ""
+        }${doc.tin && doc.dohAccreditationNo ? " &middot; " : ""}${
+          doc.dohAccreditationNo ? `DOH Lic: ${escapeHtml(doc.dohAccreditationNo)}` : ""
+        }${doc.philhealthAccreditationNo ? ` &middot; PhilHealth: ${escapeHtml(doc.philhealthAccreditationNo)}` : ""}</div>`
+      : "",
     `<div class="doc-no">Official Receipt ${escapeHtml(doc.receiptNo)}</div>`,
     "</header>",
     doc.reprintedFrom
@@ -464,6 +488,9 @@ export function renderReceiptHtml(doc: ReceiptDocument): string {
     field("Cashier", doc.cashierName),
     doc.patientName ? field("Patient", doc.patientName) : "",
     doc.payer ? field("Payer", doc.payer) : "",
+    doc.invoiceNo ? field("Invoice No", doc.invoiceNo) : "",
+    doc.paymentMethod ? field("Payment Method", doc.paymentMethod) : "",
+    doc.reference ? field("Ref / Auth", doc.reference) : "",
     "</div>",
     "<table><thead><tr><th>Item</th><th class='num'>Qty</th><th class='num'>Price</th><th class='num'>Amount</th></tr></thead>",
     `<tbody>${rows}</tbody></table>`,
@@ -481,16 +508,211 @@ export function renderReceiptHtml(doc: ReceiptDocument): string {
     doc.changeGiven !== undefined
       ? `<div><span>Change</span><span>${money(doc.changeGiven)}</span></div>`
       : "",
+    doc.balanceDue !== undefined && Number(doc.balanceDue) > 0
+      ? `<div style="color:#b91c1c;font-weight:600;"><span>Remaining Balance</span><span>${money(doc.balanceDue)}</span></div>`
+      : "",
     "</div>",
     doc.footer ? `<p class="muted" style="margin-top:5mm">${escapeHtml(doc.footer)}</p>` : "",
     `<footer>${escapeHtml(doc.clinicName)} &middot; Receipt ${escapeHtml(
       doc.receiptNo,
-    )} &middot; Total ${money(doc.total)}</footer>`,
+    )} &middot; Total ${money(doc.total)}${
+      doc.verificationHash ? ` &middot; Hash: ${escapeHtml(doc.verificationHash.slice(0, 16))}…` : ""
+    }</footer>`,
   ]
     .filter(Boolean)
     .join("");
 
   return shell(`Receipt ${doc.receiptNo}`, body);
+}
+
+export interface InvoiceLineItem {
+  description: string;
+  qty: number | string;
+  unitPrice: number | string;
+  discountAmount?: number | string;
+  netAmount: number | string;
+  isProfessionalFee?: boolean;
+}
+
+export interface InvoiceDiscountItem {
+  name: string;
+  percentage?: number | string;
+  amount: number | string;
+  idType?: string;
+  idNumber?: string;
+  legalBasis?: string;
+}
+
+export interface InvoicePaymentItem {
+  paymentNo: string;
+  receivedAt: string;
+  methodName: string;
+  reference?: string;
+  amount: number | string;
+}
+
+export interface InvoiceDocument {
+  clinicName: string;
+  branchName?: string;
+  clinicAddress?: string;
+  clinicPhone?: string;
+  clinicEmail?: string;
+  tin?: string;
+  dohAccreditationNo?: string;
+  philhealthAccreditationNo?: string;
+
+  invoiceNo: string;
+  issuedAt: string;
+  dueDate?: string;
+  status: string;
+
+  patientName?: string;
+  patientNumber?: string;
+  patientDob?: string;
+  patientGender?: string;
+  patientAddress?: string;
+  payerType?: string;
+
+  billingOfficer?: string;
+  notes?: string;
+
+  lines: InvoiceLineItem[];
+  discounts?: InvoiceDiscountItem[];
+  payments?: InvoicePaymentItem[];
+
+  subtotal: number | string;
+  discountTotal: number | string;
+  taxTotal?: number | string;
+  total: number | string;
+  paidAmount: number | string;
+  balance: number | string;
+
+  verificationHash?: string;
+}
+
+/**
+ * Official billing invoice / Statement of Account.
+ *
+ * Q-17: professional fee charges are itemized cleanly with statutory discounts
+ * (Senior RA 9994 / PWD RA 10754). Internal practitioner revenue shares and
+ * profit percentages never appear on patient-facing documents.
+ */
+export function renderInvoiceHtml(doc: InvoiceDocument): string {
+  const lineRows = (doc.lines || []).map((l) => {
+    return `<tr>
+      <td>
+        <div style="font-weight: 600; color: #0f172a;">${escapeHtml(l.description)}</div>
+        ${l.isProfessionalFee ? '<span style="display:inline-block; font-size:7.5pt; font-weight:700; color:#0284c7; background:#e0f2fe; padding:0.5mm 1.5mm; border-radius:2px; margin-top:0.5mm;">PROFESSIONAL FEE (Q-17)</span>' : ''}
+      </td>
+      <td class="num">${escapeHtml(l.qty)}</td>
+      <td class="num">${money(l.unitPrice)}</td>
+      ${l.discountAmount && Number(l.discountAmount) > 0 ? `<td class="num" style="color:#dc2626;">-${money(l.discountAmount)}</td>` : '<td class="num" style="color:#64748b;">—</td>'}
+      <td class="num" style="font-weight:600;">${money(l.netAmount)}</td>
+    </tr>`;
+  }).join("");
+
+  const discountRows = (doc.discounts && doc.discounts.length > 0)
+    ? doc.discounts.map((d) => `
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 1mm 0; border-bottom: 0.5pt dashed #cbd5e1; font-size: 9pt;">
+        <div>
+          <strong style="color: #b91c1c;">${escapeHtml(d.name)}</strong>
+          ${d.percentage ? `<span class="muted"> (${escapeHtml(d.percentage)}%)</span>` : ''}
+          ${d.legalBasis ? `<div class="muted" style="font-size: 8pt;">Basis: ${escapeHtml(d.legalBasis)}</div>` : ''}
+          ${d.idType || d.idNumber ? `<div class="muted" style="font-size: 8pt;">ID: ${escapeHtml(d.idType || '')} ${escapeHtml(d.idNumber || '')}</div>` : ''}
+        </div>
+        <div style="font-weight: 700; color: #b91c1c;">-${money(d.amount)}</div>
+      </div>
+    `).join("")
+    : "";
+
+  const paymentRows = (doc.payments && doc.payments.length > 0)
+    ? doc.payments.map((p) => `
+      <tr>
+        <td class="doc-no">${escapeHtml(p.paymentNo)}</td>
+        <td>${escapeHtml(String(p.receivedAt).slice(0, 10))}</td>
+        <td>${escapeHtml(p.methodName)}${p.reference ? ` (${escapeHtml(p.reference)})` : ''}</td>
+        <td class="num" style="color: #15803d; font-weight: 600;">${money(p.amount)}</td>
+      </tr>
+    `).join("")
+    : "";
+
+  const statusTone = doc.status === 'PAID' ? '#15803d' : doc.status === 'VOID' ? '#dc2626' : '#d97706';
+
+  const body = [
+    '<header style="border-bottom: 2pt solid #0f2942; padding-bottom: 4mm; margin-bottom: 5mm;">',
+    '  <table style="width: 100%; border: none; margin: 0;">',
+    '    <tr>',
+    '      <td style="border: none; padding: 0; vertical-align: top;">',
+    `        <div class="clinic" style="font-size: 16pt; font-weight: 800; color: #0f2942; letter-spacing: -0.2pt; text-transform: uppercase;">${escapeHtml(doc.clinicName)}</div>`,
+    doc.branchName ? `        <div style="font-size: 9.5pt; font-weight: 600; color: #0284c7; text-transform: uppercase; letter-spacing: 0.4pt; margin-top: 1mm;">${escapeHtml(doc.branchName)}</div>` : '',
+    doc.clinicAddress ? `        <div class="muted" style="font-size: 8.5pt; color: #64748b; margin-top: 1mm;">${escapeHtml(doc.clinicAddress)}${doc.clinicPhone ? ` &middot; Tel: ${escapeHtml(doc.clinicPhone)}` : ''}${doc.clinicEmail ? ` &middot; ${escapeHtml(doc.clinicEmail)}` : ''}</div>` : '',
+    (doc.tin || doc.dohAccreditationNo || doc.philhealthAccreditationNo) ? `        <div class="muted" style="font-size: 8pt; color: #64748b; margin-top: 0.5mm;">${doc.tin ? `TIN: ${escapeHtml(doc.tin)}` : ''}${doc.tin && doc.dohAccreditationNo ? ' &middot; ' : ''}${doc.dohAccreditationNo ? `DOH Lic: ${escapeHtml(doc.dohAccreditationNo)}` : ''}${doc.philhealthAccreditationNo ? ` &middot; PhilHealth: ${escapeHtml(doc.philhealthAccreditationNo)}` : ''}</div>` : '',
+    '      </td>',
+    '      <td style="border: none; padding: 0; vertical-align: top; text-align: right; width: 220px;">',
+    '        <div style="display: inline-block; background: #0f2942; color: #fff; font-size: 9pt; font-weight: 700; padding: 1.5mm 3.5mm; border-radius: 4px; letter-spacing: 0.5pt;">',
+    '          OFFICIAL BILLING INVOICE',
+    '        </div>',
+    `        <div class="doc-no" style="font-family: Consolas, monospace; font-size: 11pt; font-weight: 800; color: #0f172a; margin-top: 2mm;">Invoice No. ${escapeHtml(doc.invoiceNo)}</div>`,
+    `        <div style="font-size: 8.5pt; color: #64748b; margin-top: 0.5mm;">Date: ${escapeHtml(doc.issuedAt ? String(doc.issuedAt).slice(0, 10) : '')}</div>`,
+    doc.dueDate ? `        <div style="font-size: 8.5pt; color: #64748b;">Due Date: ${escapeHtml(String(doc.dueDate).slice(0, 10))}</div>` : '',
+    `        <div style="margin-top: 1.5mm;"><span style="display: inline-block; font-size: 8pt; font-weight: 800; color: ${statusTone}; border: 1pt solid ${statusTone}; padding: 0.5mm 2.5mm; border-radius: 3px; text-transform: uppercase;">${escapeHtml(doc.status)}</span></div>`,
+    '      </td>',
+    '    </tr>',
+    '  </table>',
+    '</header>',
+    '<div class="grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 2mm 6mm; margin-bottom: 5mm; background: #f8fafc; border: 0.5pt solid #e2e8f0; border-radius: 4px; padding: 3mm 4mm;">',
+    field("Patient / Customer", doc.patientName || "Walk-in Patient"),
+    field("Patient ID / MRN", doc.patientNumber || "—"),
+    doc.patientDob ? field("Date of Birth", String(doc.patientDob).slice(0, 10)) : "",
+    doc.payerType ? field("Billing Category / Payer", doc.payerType.replace(/_/g, ' ')) : "",
+    doc.billingOfficer ? field("Billing Officer", doc.billingOfficer) : "",
+    "</div>",
+    '<h2 style="font-size: 10pt; font-weight: 700; text-transform: uppercase; color: #334155; margin: 4mm 0 1.5mm; letter-spacing: 0.3pt;">Itemized Charges &amp; Services</h2>',
+    '<table><thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit Price</th><th class="num">Discount</th><th class="num">Net Amount</th></tr></thead>',
+    `<tbody>${lineRows}</tbody></table>`,
+    discountRows ? `
+      <div style="margin-top: 4mm; background: #fff5f5; border: 0.5pt solid #fecaca; border-radius: 4px; padding: 2.5mm 3.5mm;">
+        <div style="font-size: 8.5pt; font-weight: 700; text-transform: uppercase; color: #991b1b; margin-bottom: 1.5mm; letter-spacing: 0.3pt;">Statutory &amp; Authorized Discounts</div>
+        ${discountRows}
+      </div>
+    ` : '',
+    paymentRows ? `
+      <div style="margin-top: 4mm;">
+        <h2 style="font-size: 9.5pt; font-weight: 700; text-transform: uppercase; color: #334155; margin: 0 0 1.5mm; letter-spacing: 0.3pt;">Payments &amp; Settlements Applied</h2>
+        <table><thead><tr><th>Official Receipt / Ref</th><th>Date</th><th>Method</th><th class="num">Amount Paid</th></tr></thead>
+        <tbody>${paymentRows}</tbody></table>
+      </div>
+    ` : '',
+    '<div class="totals" style="margin-top: 5mm; margin-left: auto; width: 80mm; background: #f8fafc; border: 0.5pt solid #e2e8f0; border-radius: 4px; padding: 3mm 4mm;">',
+    `<div><span style="color:#64748b;">Gross Subtotal</span><span style="font-weight:600;">${money(doc.subtotal)}</span></div>`,
+    Number(doc.discountTotal || 0) > 0 ? `<div style="color:#dc2626;"><span>Total Discounts</span><span>-${money(doc.discountTotal)}</span></div>` : '',
+    Number(doc.taxTotal || 0) > 0 ? `<div><span style="color:#64748b;">VAT / Sales Tax</span><span>${money(doc.taxTotal ?? 0)}</span></div>` : '',
+    `<div style="border-top:0.5pt solid #cbd5e1; margin-top:1.5mm; padding-top:1.5mm; font-weight:700;"><span>Total Billed</span><span>${money(doc.total)}</span></div>`,
+    Number(doc.paidAmount || 0) > 0 ? `<div style="color:#15803d;"><span>Total Paid / Credited</span><span>-${money(doc.paidAmount)}</span></div>` : '',
+    `<div class="grand" style="border-top:1.5pt solid #0f2942; margin-top:2mm; padding-top:2mm; font-size:12pt; font-weight:800; color:#0f2942;"><span>Balance Due</span><span>${money(doc.balance)}</span></div>`,
+    '</div>',
+    doc.notes ? `<div style="margin-top:4mm; font-size:8.5pt; color:#475569; background:#f1f5f9; padding:2.5mm 3.5mm; border-radius:4px;"><strong>Notes / Terms:</strong> ${escapeHtml(doc.notes)}</div>` : '',
+    '<div style="margin-top: 8mm; display: flex; justify-content: space-between;">',
+    '  <div style="width: 65mm;">',
+    '    <div style="border-top: 0.5pt solid #475569; padding-top: 1.5mm; font-size: 8.5pt; color: #334155; text-align: center;">',
+    `      Prepared By: <strong>${escapeHtml(doc.billingOfficer || 'Authorized Billing Officer')}</strong>`,
+    '      <div style="font-size: 7.5pt; color: #64748b;">Billing &amp; Accounts Section</div>',
+    '    </div>',
+    '  </div>',
+    '  <div style="width: 65mm;">',
+    '    <div style="border-top: 0.5pt solid #475569; padding-top: 1.5mm; font-size: 8.5pt; color: #334155; text-align: center;">',
+    '      Patient / Representative Signature',
+    '      <div style="font-size: 7.5pt; color: #64748b;">Conforme / Received Copy</div>',
+    '    </div>',
+    '  </div>',
+    '</div>',
+    '<div style="margin-top: 6mm; padding: 2mm 3mm; background: #f8fafc; border: 0.5pt solid #e2e8f0; border-radius: 4px; font-size: 7.5pt; color: #64748b; text-align: center;">',
+    '  This document serves as an Official Statement of Account / Billing Invoice. An Official Receipt (OR) will be issued upon receipt of cash, check, or online settlement in compliance with BIR regulations.',
+    '</div>',
+    `<footer>${escapeHtml(doc.clinicName)} &middot; Invoice ${escapeHtml(doc.invoiceNo)} &middot; Total ${money(doc.total)}${doc.verificationHash ? ` &middot; Hash: ${escapeHtml(doc.verificationHash.slice(0, 16))}…` : ''}</footer>`,
+  ].filter(Boolean).join("\n");
+
+  return shell(`Invoice ${doc.invoiceNo}`, body);
 }
 
 export interface PrescriptionItemDocument {

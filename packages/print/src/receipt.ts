@@ -25,12 +25,23 @@ import type { Receipt as ThermalReceipt } from "./escpos.js";
  */
 export interface ReceiptFacts {
   clinicName: string;
+  branchName?: string;
+  clinicAddress?: string;
+  clinicPhone?: string;
+  clinicEmail?: string;
+  tin?: string;
+  dohAccreditationNo?: string;
+  philhealthAccreditationNo?: string;
   receiptNo: string;
   /** ISO 8601. `pg` returns TIMESTAMPTZ as a Date, so callers must convert. */
   issuedAt: string;
   cashierName: string;
   patientName?: string;
-  lines: Array<{ description: string; qty: number; unitPrice: number; total: number }>;
+  patientId?: string;
+  invoiceNo?: string;
+  paymentMethod?: string;
+  reference?: string;
+  lines: Array<{ description: string; qty: number; unitPrice: number; total: number; isProfessionalFee?: boolean }>;
   /** Null for a payment not tied to an invoice. */
   invoiceTotal?: number | null;
   discountTotal?: number | null;
@@ -41,6 +52,8 @@ export interface ReceiptFacts {
   payer?: string;
   /** Set when this document is a reissue rather than the original. */
   reprintedFrom?: string;
+  balanceDue?: number;
+  verificationHash?: string;
 }
 
 /**
@@ -56,6 +69,13 @@ export function buildReceiptDocument(facts: ReceiptFacts): ReceiptDocument {
 
   return {
     clinicName: facts.clinicName,
+    ...(facts.branchName ? { branchName: facts.branchName } : {}),
+    ...(facts.clinicAddress ? { clinicAddress: facts.clinicAddress } : {}),
+    ...(facts.clinicPhone ? { clinicPhone: facts.clinicPhone } : {}),
+    ...(facts.clinicEmail ? { clinicEmail: facts.clinicEmail } : {}),
+    ...(facts.tin ? { tin: facts.tin } : {}),
+    ...(facts.dohAccreditationNo ? { dohAccreditationNo: facts.dohAccreditationNo } : {}),
+    ...(facts.philhealthAccreditationNo ? { philhealthAccreditationNo: facts.philhealthAccreditationNo } : {}),
     receiptNo: facts.receiptNo,
     // Omitted rather than left undefined, so an original receipt carries no
     // reissue provenance at all.
@@ -63,6 +83,10 @@ export function buildReceiptDocument(facts: ReceiptFacts): ReceiptDocument {
     issuedAt: facts.issuedAt,
     cashierName: facts.cashierName,
     patientName: facts.patientName,
+    ...(facts.patientId ? { patientId: facts.patientId } : {}),
+    ...(facts.invoiceNo ? { invoiceNo: facts.invoiceNo } : {}),
+    ...(facts.paymentMethod ? { paymentMethod: facts.paymentMethod } : {}),
+    ...(facts.reference ? { reference: facts.reference } : {}),
     lines: facts.lines,
     // A receipt against an invoice shows the pre-discount subtotal; a payment
     // with no invoice has nothing to discount, so the amount collected stands.
@@ -72,6 +96,8 @@ export function buildReceiptDocument(facts: ReceiptFacts): ReceiptDocument {
     amountTendered: facts.amountTendered,
     changeGiven: facts.changeGiven,
     payer: facts.payer,
+    ...(facts.balanceDue !== undefined ? { balanceDue: facts.balanceDue } : {}),
+    ...(facts.verificationHash ? { verificationHash: facts.verificationHash } : {}),
   };
 }
 

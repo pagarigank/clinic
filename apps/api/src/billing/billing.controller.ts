@@ -70,6 +70,51 @@ export class BillingController {
     return this.svc.getInvoiceById(req.tenantId!, id);
   }
 
+  @RequirePermission('billing.invoice.read')
+  @Get('invoices/:id/print-profile')
+  @ApiOperation({ summary: 'Get invoice and clinic print profile for letterhead customization' })
+  async getInvoicePrintProfile(@Req() req: RequestWithAuth, @Param('id') id: string) {
+    return this.svc.getInvoicePrintProfile(req.tenantId!, req.authContext!.userId!, id);
+  }
+
+  @RequirePermission('billing.invoice.read')
+  @Get('invoices/:id/pdf')
+  @ApiOperation({ summary: 'Official billing invoice as a true vector PDF (shared print pipeline, deterministic SHA-256)' })
+  async getInvoicePdf(
+    @Req() req: RequestWithAuth,
+    @Param('id') id: string,
+    @Res() reply: FastifyReply,
+    @Query('clinicName') clinicName?: string,
+    @Query('branchName') branchName?: string,
+    @Query('clinicAddress') clinicAddress?: string,
+    @Query('clinicPhone') clinicPhone?: string,
+    @Query('clinicEmail') clinicEmail?: string,
+    @Query('tin') tin?: string,
+    @Query('dohLicenseNo') dohLicenseNo?: string,
+    @Query('philhealthNo') philhealthNo?: string,
+    @Query('billingOfficer') billingOfficer?: string,
+    @Query('notes') notes?: string,
+  ) {
+    const overrides = {
+      clinicName,
+      branchName,
+      clinicAddress,
+      clinicPhone,
+      clinicEmail,
+      tin,
+      dohLicenseNo,
+      philhealthNo,
+      billingOfficer,
+      notes,
+    };
+    const cleanOverrides = Object.fromEntries(
+      Object.entries(overrides).filter(([_, v]) => typeof v === 'string' && v.trim().length > 0)
+    ) as Record<string, string>;
+
+    const doc = await this.svc.renderInvoicePdf(req.tenantId!, req.authContext!.userId!, id, cleanOverrides);
+    void sendPdf(reply, doc, `Invoice-${id.slice(0, 8)}.pdf`);
+  }
+
   @RequirePermission('billing.invoice.create')
   @Post('invoices')
   @ApiOperation({ summary: 'Create invoice' })
@@ -184,14 +229,45 @@ export class BillingController {
   }
 
   @RequirePermission('billing.payment.read')
+  @Get('payments/:id/print-profile')
+  @ApiOperation({ summary: 'Get payment receipt print profile for letterhead customization' })
+  async getPaymentPrintProfile(@Req() req: RequestWithAuth, @Param('id') id: string) {
+    return this.svc.getPaymentPrintProfile(req.tenantId!, req.authContext!.userId!, id);
+  }
+
+  @RequirePermission('billing.payment.read')
   @Get('payments/:id/receipt-pdf')
   @ApiOperation({ summary: 'Official receipt as a true vector PDF (shared print pipeline, deterministic SHA-256)' })
   async getPaymentReceiptPdf(
     @Req() req: RequestWithAuth,
     @Param('id') id: string,
     @Res() reply: FastifyReply,
+    @Query('clinicName') clinicName?: string,
+    @Query('branchName') branchName?: string,
+    @Query('clinicAddress') clinicAddress?: string,
+    @Query('clinicPhone') clinicPhone?: string,
+    @Query('clinicEmail') clinicEmail?: string,
+    @Query('tin') tin?: string,
+    @Query('dohAccreditationNo') dohAccreditationNo?: string,
+    @Query('philhealthAccreditationNo') philhealthAccreditationNo?: string,
+    @Query('cashierName') cashierName?: string,
   ) {
-    const doc = await this.svc.renderPaymentReceiptPdf(req.tenantId!, req.authContext!.userId!, id);
+    const overrides = {
+      clinicName,
+      branchName,
+      clinicAddress,
+      clinicPhone,
+      clinicEmail,
+      tin,
+      dohAccreditationNo,
+      philhealthAccreditationNo,
+      cashierName,
+    };
+    const cleanOverrides = Object.fromEntries(
+      Object.entries(overrides).filter(([_, v]) => typeof v === 'string' && v.trim().length > 0)
+    ) as Record<string, string>;
+
+    const doc = await this.svc.renderPaymentReceiptPdf(req.tenantId!, req.authContext!.userId!, id, cleanOverrides);
     void sendPdf(reply, doc, `Receipt-${id.slice(0, 8)}.pdf`);
   }
 

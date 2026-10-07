@@ -21,12 +21,20 @@ import {
   fetchPatientStatement,
 } from "./api.js";
 import { printBlob, apiGet } from "../../shared/api/client.js";
+import { InvoicePrintModal } from "./InvoicePrintModal.js";
+import { ReceiptPrintModal } from "./ReceiptPrintModal.js";
 
 export function BillingWorkbenchPage() {
   const [showStatementModal, setShowStatementModal] = useState(false);
   const [statementData, setStatementData] = useState<any | null>(null);
   const [statementLoading, setStatementLoading] = useState(false);
   const [isPrintingStatement, setIsPrintingStatement] = useState(false);
+
+  // True PDF Print Modals state
+  const [printInvoiceTarget, setPrintInvoiceTarget] = useState<any | null>(null);
+  const [showInvoicePrintModal, setShowInvoicePrintModal] = useState(false);
+  const [printReceiptTarget, setPrintReceiptTarget] = useState<any | null>(null);
+  const [showReceiptPrintModal, setShowReceiptPrintModal] = useState(false);
 
   const [invoices, setInvoices] = useState<any[]>([
     {
@@ -577,6 +585,16 @@ export function BillingWorkbenchPage() {
                           Details
                         </Button>
                         <Button
+                          variant="outline-primary"
+                          onClick={() => {
+                            setPrintInvoiceTarget(inv);
+                            setShowInvoicePrintModal(true);
+                          }}
+                          title="Print true vector PDF invoice"
+                        >
+                          Print
+                        </Button>
+                        <Button
                           variant="outline-secondary"
                           onClick={() =>
                             handleOpenStatement(
@@ -740,6 +758,48 @@ export function BillingWorkbenchPage() {
               <p className="text-muted small mb-3">No discounts applied to this invoice.</p>
             )}
 
+            {/* Payments / Collections Recorded */}
+            {selectedInvoice.payments && selectedInvoice.payments.length > 0 && (
+              <div className="mt-3 mb-3">
+                <h6 className="fw-semibold mb-2">Recorded Payments &amp; Receipts</h6>
+                <div className="border rounded bg-white">
+                  {selectedInvoice.payments.map((p: any) => (
+                    <div
+                      key={p.id}
+                      className="d-flex justify-content-between align-items-center p-2 border-bottom last-border-0"
+                    >
+                      <div>
+                        <span className="fw-semibold text-primary">{p.payment_no}</span>
+                        <small className="text-muted ms-2">
+                          {p.method_name} &middot; {new Date(p.received_at).toLocaleDateString()}
+                        </small>
+                      </div>
+                      <div className="d-flex align-items-center gap-2">
+                        <span className="fw-bold text-success">
+                          <Money amount={Number(p.amount)} />
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="outline-secondary"
+                          onClick={() => {
+                            setPrintReceiptTarget({
+                              ...p,
+                              invoiceNo: selectedInvoice.invoice_no,
+                              patientName: `${selectedInvoice.patient_first_name || ""} ${selectedInvoice.patient_last_name || ""}`.trim(),
+                            });
+                            setShowReceiptPrintModal(true);
+                          }}
+                          title="Print Official Receipt as true PDF"
+                        >
+                          🖨️ Receipt
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Financial Totals Summary */}
             <div className="border rounded p-3 bg-white">
               <div className="d-flex justify-content-between py-1">
@@ -777,6 +837,16 @@ export function BillingWorkbenchPage() {
               )}
             </div>
             <div className="d-flex gap-2">
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => {
+                  setPrintInvoiceTarget(selectedInvoice);
+                  setShowInvoicePrintModal(true);
+                }}
+              >
+                🖨️ Print Invoice (PDF)
+              </Button>
               {selectedInvoice.status !== "PAID" && selectedInvoice.status !== "VOID" && (
                 <Link
                   to={`/billing/pos?invoiceId=${selectedInvoice.id}`}
@@ -1253,6 +1323,24 @@ export function BillingWorkbenchPage() {
           </Button>
         </Modal.Footer>
       </Modal>
+
+      {/* True Vector PDF Invoice Print Modal */}
+      {printInvoiceTarget && (
+        <InvoicePrintModal
+          isOpen={showInvoicePrintModal}
+          onClose={() => setShowInvoicePrintModal(false)}
+          invoice={printInvoiceTarget}
+        />
+      )}
+
+      {/* True Vector PDF Receipt Print Modal */}
+      {printReceiptTarget && (
+        <ReceiptPrintModal
+          isOpen={showReceiptPrintModal}
+          onClose={() => setShowReceiptPrintModal(false)}
+          payment={printReceiptTarget}
+        />
+      )}
     </div>
   );
 }

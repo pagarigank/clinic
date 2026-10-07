@@ -23,6 +23,7 @@ import {
   saveSession,
 } from "./api.js";
 import { printBlob, ApiError } from "../../shared/api/client.js";
+import { ReceiptPrintModal } from "./ReceiptPrintModal.js";
 
 /** Surface the API problem (RFC 9457) rather than a generic failure string. */
 function describeError(err: unknown): string {
@@ -418,7 +419,7 @@ export function CashierPosPage() {
       try {
         if (!posted.id) throw new Error("payment response carried no id");
         const rcpt = await fetchPaymentReceipt(posted.id);
-        setReceiptData(rcpt);
+        setReceiptData({ ...rcpt, id: posted.id, payment_no: posted.payment_no });
       } catch (receiptErr) {
         // Never fabricate a receipt number. This document is the patient's proof of
         // payment and the cashier's BIR record, so an invented "OR-2026-000101" or
@@ -824,163 +825,25 @@ export function CashierPosPage() {
         </div>
       </div>
 
-      {/* Official Receipt Modal (Q-17 & BIR Compliance) */}
+      {/* Official Receipt True Vector PDF Modal */}
       {receiptData && (
-        <Modal
-          show={showReceiptModal}
-          onHide={() => setShowReceiptModal(false)}
-          centered
-        >
-          <Modal.Header closeButton>
-            <Modal.Title className="h6 fw-bold">Official Receipt (OR)</Modal.Title>
-          </Modal.Header>
-          <Modal.Body className="p-4 bg-light">
-            <div
-              className="p-3 bg-white border rounded shadow-sm"
-              style={{ fontFamily: "'Courier New', Courier, monospace" }}
-            >
-              <div className="text-center border-bottom pb-2 mb-2">
-                <h5 className="fw-bold mb-0">CLINIC HEALTHCARE SYSTEM</h5>
-                <small className="text-muted">Official Cash Receipt</small>
-                <div className="fw-bold fs-6 mt-1 text-primary">
-                  {receiptData.receiptNumber}
-                </div>
-                <small className="text-muted">
-                  Date: {new Date(receiptData.date).toLocaleString()}
-                </small>
-              </div>
-
-              <div className="mb-2 small">
-                <div><strong>Patient:</strong> {receiptData.patientName}</div>
-                <div><strong>Patient ID:</strong> {receiptData.patientNumber}</div>
-                <div><strong>Invoice:</strong> {receiptData.invoiceNo}</div>
-                <div><strong>Cashier:</strong> {receiptData.cashier}</div>
-                <div><strong>Tender:</strong> {receiptData.paymentMethod}</div>
-              </div>
-
-              <div className="border-top border-bottom py-2 my-2 small">
-                <div className="fw-bold mb-1">PARTICULARS (Q-17):</div>
-                {(receiptData.lines || []).map((l: any, i: number) => (
-                  <div key={i} className="d-flex justify-content-between">
-                    <span>
-                      {l.description} {l.isProfessionalFee ? "(PF)" : ""}
-                    </span>
-                    <span>₱{Number(l.amount || l.net_amount || 0).toFixed(2)}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="small">
-                <div className="d-flex justify-content-between">
-                  <span>AMOUNT PAID:</span>
-                  <strong>₱{Number(receiptData.amountPaid || 0).toFixed(2)}</strong>
-                </div>
-                {Number(receiptData.tendered || 0) > 0 && (
-                  <div className="d-flex justify-content-between">
-                    <span>TENDERED:</span>
-                    <span>₱{Number(receiptData.tendered || 0).toFixed(2)}</span>
-                  </div>
-                )}
-                {Number(receiptData.change || 0) > 0 && (
-                  <div className="d-flex justify-content-between text-success">
-                    <span>CHANGE:</span>
-                    <span>₱{Number(receiptData.change || 0).toFixed(2)}</span>
-                  </div>
-                )}
-                <div className="d-flex justify-content-between border-top mt-1 pt-1 fw-bold">
-                  <span>BALANCE:</span>
-                  <span>₱{Number(receiptData.remainingBalance || 0).toFixed(2)}</span>
-                </div>
-              </div>
-
-              {receiptData.isReprint && (
-                <div className="text-center mt-3 pt-2 border-top text-danger fw-bold">
-                  *** REPRINT #{receiptData.reprintCount} ***
-                </div>
-              )}
-            </div>
-          </Modal.Body>
-          <Modal.Footer className="d-flex justify-content-between">
-            <Button
-              variant="outline-secondary"
-              size="sm"
-              onClick={() => setShowReprintModal(true)}
-            >
-              Audited Reprint
-            </Button>
-            <div className="d-flex gap-2">
-              <Button
-                variant="primary"
-                size="sm"
-                disabled={isPrintingReceipt}
-                onClick={async () => {
-                  // Official route: the server-rendered receipt PDF (same
-                  // Q-17 patient-facing facts as the JSON receipt view, with
-                  // the deterministic SHA-256 header). Screen print fallback
-                  // only when the PDF endpoint is unreachable.
-                  if (receiptData?.id) {
-                    setIsPrintingReceipt(true);
-                    try {
-                      await printBlob(`/billing/payments/${receiptData.id}/receipt-pdf`);
-                      setIsPrintingReceipt(false);
-                      return;
-                    } catch {
-                      setIsPrintingReceipt(false);
-                    }
-                  }
-                  window.print();
-                }}
-              >
-                {isPrintingReceipt ? "Preparing official PDF…" : "🖨️ Print Official Receipt"}
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  setShowReceiptModal(false);
-                  setInvoice(null);
-                  setSelectedInvoiceId("");
-                }}
-              >
-                Done / Next Checkout
-              </Button>
-            </div>
-          </Modal.Footer>
-        </Modal>
+        <ReceiptPrintModal
+          isOpen={showReceiptModal}
+          onClose={() => {
+            setShowReceiptModal(false);
+            setInvoice(null);
+            setSelectedInvoiceId("");
+          }}
+          payment={receiptData}
+          onReprintSuccess={(updated) => {
+            setReceiptData((prev: any) => ({ ...prev, ...updated }));
+            setAlert({
+              tone: "success",
+              message: `Reprint logged (Reprint #${updated.reprintCount ?? updated.reprint_count ?? 1}).`,
+            });
+          }}
+        />
       )}
-
-      {/* Audited Reprint Dialog */}
-      <Modal show={showReprintModal} onHide={() => setShowReprintModal(false)} centered>
-        <Modal.Header closeButton>
-          <Modal.Title className="h6 fw-bold">Audited Receipt Reprint</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          <p className="text-muted small">
-            Under BIR &amp; internal control regulations, every reprint is logged with reason and timestamp.
-          </p>
-          <Form.Label className="small fw-semibold">Reason for Reprint *</Form.Label>
-          <Form.Control
-            as="textarea"
-            rows={2}
-            placeholder="e.g. Patient requested duplicate copy for insurance reimbursement"
-            value={reprintReason}
-            onChange={(e) => setReprintReason(e.target.value)}
-          />
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" size="sm" onClick={() => setShowReprintModal(false)}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={handleReprintReceipt}
-            disabled={!reprintReason.trim()}
-          >
-            Confirm &amp; Log Reprint
-          </Button>
-        </Modal.Footer>
-      </Modal>
 
       {/* Open Cashier Shift Modal */}
       <Modal show={showOpenShiftModal} onHide={() => setShowOpenShiftModal(false)} centered>

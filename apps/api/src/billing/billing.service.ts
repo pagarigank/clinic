@@ -6,11 +6,13 @@ import {
   buildReceiptDocument,
   renderPdf,
   renderReceiptHtml,
+  renderInvoiceHtml,
   renderPatientStatementHtml,
   renderShiftReportHtml,
   renderReceivablesAgingHtml,
   renderDailyCloseSummaryHtml,
   type ReceiptFacts,
+  type InvoiceDocument,
   type RenderedDocument,
   type PatientStatementDocument,
   type ShiftReportDocument,
@@ -1133,12 +1135,158 @@ if (tenderedAmount < amount - 0.001) {
    * pipeline — deterministic bytes plus the SHA-256 served as an integrity
    * response header. Rendering intentionally happens outside any transaction.
    */
-  async renderPaymentReceiptPdf(tenantId: string, userId: string, paymentId: string): Promise<RenderedDocument> {
+  async renderPaymentReceiptPdf(
+    tenantId: string,
+    userId: string,
+    paymentId: string,
+    overrides?: Record<string, string>,
+  ): Promise<RenderedDocument> {
     const pre = await withTenant({ tenantId, userId }, async (tx) =>
       this.loadReprintFacts(tx, tenantId, paymentId),
     );
-    const doc = buildReceiptDocument(pre.facts);
+    const facts = {
+      ...pre.facts,
+      ...(overrides?.clinicName ? { clinicName: overrides.clinicName } : {}),
+      ...(overrides?.branchName ? { branchName: overrides.branchName } : {}),
+      ...(overrides?.clinicAddress ? { clinicAddress: overrides.clinicAddress } : {}),
+      ...(overrides?.clinicPhone ? { clinicPhone: overrides.clinicPhone } : {}),
+      ...(overrides?.clinicEmail ? { clinicEmail: overrides.clinicEmail } : {}),
+      ...(overrides?.tin ? { tin: overrides.tin } : {}),
+      ...(overrides?.dohAccreditationNo ? { dohAccreditationNo: overrides.dohAccreditationNo } : {}),
+      ...(overrides?.philhealthAccreditationNo ? { philhealthAccreditationNo: overrides.philhealthAccreditationNo } : {}),
+      ...(overrides?.cashierName ? { cashierName: overrides.cashierName } : {}),
+    };
+    const doc = buildReceiptDocument(facts);
     return renderPdf(renderReceiptHtml(doc), { format: 'A4' });
+  }
+
+  async getPaymentPrintProfile(tenantId: string, userId: string, paymentId: string) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const pre = await this.loadReprintFacts(tx, tenantId, paymentId);
+      const tenantRes = await tx.query(
+        `SELECT t.name, t.tagline, t.address, t.phone, t.email, t.tin, t.doh_license_no, t.philhealth_accreditation_no
+         FROM tenants t WHERE t.id = $1`,
+        [tenantId],
+      );
+      const tenantInfo = tenantRes.rows[0] || {};
+      return {
+        payment: pre.facts,
+        clinic: {
+          name: pre.facts.clinicName || tenantInfo.name || 'Clinic',
+          branchName: pre.facts.branchName || '',
+          address: pre.facts.clinicAddress || tenantInfo.address || '',
+          phone: pre.facts.clinicPhone || tenantInfo.phone || '',
+          email: pre.facts.clinicEmail || tenantInfo.email || '',
+          tin: pre.facts.tin || tenantInfo.tin || '',
+          dohAccreditationNo: pre.facts.dohAccreditationNo || tenantInfo.doh_license_no || '',
+          philhealthAccreditationNo: pre.facts.philhealthAccreditationNo || tenantInfo.philhealth_accreditation_no || '',
+        },
+        cashier: {
+          name: pre.facts.cashierName,
+        },
+      };
+    });
+  }
+
+  async getInvoicePrintProfile(tenantId: string, userId: string, invoiceId: string) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const invoice = await this.getInvoiceByIdWithTx(tx, tenantId, invoiceId);
+      const tenantRes = await tx.query(
+        `SELECT t.name, t.tagline, t.address, t.phone, t.email, t.tin, t.doh_license_no, t.philhealth_accreditation_no
+         FROM tenants t WHERE t.id = $1`,
+        [tenantId],
+      );
+      const tenantInfo = tenantRes.rows[0] || {};
+
+      const branchRes = invoice.branch_id ? await tx.query(
+        `SELECT b.name, b.address, b.phone, b.email FROM branches b WHERE b.tenant_id = $1 AND b.id = $2`,
+        [tenantId, invoice.branch_id],
+      ) : { rows: [] };
+      const branchInfo = branchRes.rows[0] || {};
+
+      return {
+        invoice,
+        clinic: {
+          name: tenantInfo.name || invoice.branch_name || 'Clinic',
+          branchName: branchInfo.name || invoice.branch_name || '',
+          address: branchInfo.address || tenantInfo.address || '',
+          phone: branchInfo.phone || tenantInfo.phone || '',
+          email: branchInfo.email || tenantInfo.email || '',
+          tin: tenantInfo.tin || '',
+          dohLicenseNo: tenantInfo.doh_license_no || '',
+          philhealthAccreditationNo: tenantInfo.philhealth_accreditation_no || '',
+        },
+        billingOfficer: {
+          name: invoice.creator_name || 'Billing Officer',
+        },
+      };
+    });
+  }
+
+  async renderInvoicePdf(
+    tenantId: string,
+    userId: string,
+    invoiceId: string,
+    overrides?: Record<string, string>,
+  ): Promise<RenderedDocument> {
+    const profile = await this.getInvoicePrintProfile(tenantId, userId, invoiceId);
+    const inv = profile.invoice;
+    const clinic = profile.clinic;
+
+    const doc: InvoiceDocument = {
+      clinicName: overrides?.clinicName || clinic.name,
+      branchName: overrides?.branchName || clinic.branchName,
+      clinicAddress: overrides?.clinicAddress || clinic.address,
+      clinicPhone: overrides?.clinicPhone || clinic.phone,
+      clinicEmail: overrides?.clinicEmail || clinic.email,
+      tin: overrides?.tin || clinic.tin,
+      dohAccreditationNo: overrides?.dohLicenseNo || clinic.dohLicenseNo,
+      philhealthAccreditationNo: overrides?.philhealthNo || clinic.philhealthAccreditationNo,
+      invoiceNo: inv.invoice_no,
+      issuedAt: inv.issued_at || inv.created_at,
+      dueDate: inv.due_date,
+      status: inv.status,
+      patientName: inv.patient_first_name || inv.patient_last_name
+        ? `${inv.patient_last_name || ''}, ${inv.patient_first_name || ''}`.trim().replace(/^,|,$/g, '')
+        : 'Walk-in Patient',
+      patientNumber: inv.patient_number || undefined,
+      patientDob: inv.patient_dob || undefined,
+      payerType: inv.payer_type || undefined,
+      billingOfficer: overrides?.billingOfficer || profile.billingOfficer.name,
+      notes: overrides?.notes || undefined,
+      lines: (inv.lines || []).map((l: any) => ({
+        description: l.description,
+        qty: Number(l.qty),
+        unitPrice: Number(l.unit_price),
+        discountAmount: Number(l.discount_amount || 0),
+        netAmount: Number(l.net_amount),
+        isProfessionalFee: Boolean(l.is_professional_fee),
+      })),
+      discounts: (inv.discounts || []).map((d: any) => ({
+        name: d.discount_name || d.discount_code,
+        percentage: Number(d.percentage || 0),
+        amount: Number(d.amount || d.calculated_discount || 0),
+        idType: d.id_type,
+        idNumber: d.id_number,
+        legalBasis: d.legal_basis,
+      })),
+      payments: (inv.payments || []).map((p: any) => ({
+        paymentNo: p.payment_no,
+        receivedAt: p.received_at,
+        methodName: p.method_name,
+        reference: p.reference,
+        amount: Number(p.amount),
+      })),
+      subtotal: Number(inv.subtotal),
+      discountTotal: Number(inv.discount_total || 0),
+      taxTotal: Number(inv.tax_total || 0),
+      total: Number(inv.total),
+      paidAmount: Number(inv.paid_amount || 0),
+      balance: Number(inv.balance),
+    };
+
+    const html = renderInvoiceHtml(doc);
+    return renderPdf(html, { format: 'A4' });
   }
 
   /**
@@ -1277,7 +1425,15 @@ if (tenderedAmount < amount - 0.001) {
               p.payer_type, p.received_at, p.invoice_id, p.receipt_file_id,
               pm.name as method_name,
               u.id as cashier_id, u.name as cashier_name,
-              b.name as clinic_name,
+              COALESCE(t.name, b.name) as clinic_name,
+              b.name as branch_name,
+              COALESCE(b.address, t.address) as clinic_address,
+              COALESCE(b.phone, t.phone) as clinic_phone,
+              COALESCE(b.email, t.email) as clinic_email,
+              t.tin as clinic_tin,
+              t.doh_license_no as clinic_doh_license,
+              t.philhealth_accreditation_no as clinic_philhealth_no,
+              i.invoice_no, i.balance as invoice_balance,
               i.total as invoice_total, i.discount_total,
               pt.first_name as patient_first, pt.last_name as patient_last,
               (SELECT json_agg(json_build_object(
@@ -1290,7 +1446,8 @@ if (tenderedAmount < amount - 0.001) {
        FROM payments p
        JOIN payment_methods pm ON pm.tenant_id = p.tenant_id AND pm.id = p.method_id
        JOIN users u ON u.tenant_id = p.tenant_id AND u.id = p.received_by
-       JOIN branches b ON b.tenant_id = p.tenant_id AND b.id = p.branch_id
+       LEFT JOIN tenants t ON t.id = p.tenant_id
+       LEFT JOIN branches b ON b.tenant_id = p.tenant_id AND b.id = p.branch_id
        LEFT JOIN invoices i ON i.tenant_id = p.tenant_id AND i.id = p.invoice_id
        LEFT JOIN patients pt ON pt.tenant_id = p.tenant_id AND pt.id = p.patient_id
        WHERE p.tenant_id = $1 AND p.id = $2`,
@@ -1303,6 +1460,13 @@ if (tenderedAmount < amount - 0.001) {
       originalFileId: p.receipt_file_id ?? null,
       facts: {
         clinicName: p.clinic_name,
+        branchName: p.branch_name ?? undefined,
+        clinicAddress: p.clinic_address ?? undefined,
+        clinicPhone: p.clinic_phone ?? undefined,
+        clinicEmail: p.clinic_email ?? undefined,
+        tin: p.clinic_tin ?? undefined,
+        dohAccreditationNo: p.clinic_doh_license ?? undefined,
+        philhealthAccreditationNo: p.clinic_philhealth_no ?? undefined,
         receiptNo: p.payment_no,
         issuedAt: new Date(p.received_at).toISOString(),
         cashierName: p.cashier_name,
@@ -1310,6 +1474,9 @@ if (tenderedAmount < amount - 0.001) {
           p.patient_first && p.patient_last
             ? `${p.patient_last}, ${p.patient_first}`
             : undefined,
+        invoiceNo: p.invoice_no ?? undefined,
+        paymentMethod: p.method_name ?? undefined,
+        balanceDue: p.invoice_balance != null ? Number(p.invoice_balance) : undefined,
         lines: p.invoice_lines ?? [],
         invoiceTotal: p.invoice_total != null ? Number(p.invoice_total) : null,
         discountTotal: p.discount_total != null ? Number(p.discount_total) : null,

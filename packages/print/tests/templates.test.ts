@@ -4,11 +4,13 @@ import {
   renderCertificateHtml,
   renderLabReportHtml,
   renderReceiptHtml,
+  renderInvoiceHtml,
   renderPrescriptionHtml,
   renderLabRequisitionHtml,
   renderEncounterOrdersHtml,
   type PrescriptionDocument,
   type LabRequisitionDocument,
+  type InvoiceDocument,
 } from "../src/templates.js";
 
 
@@ -518,6 +520,129 @@ describe("renderEncounterOrdersHtml", () => {
     expect(html).toContain("Paracetamol");
     expect(html).toContain("Urinalysis Routine");
     expect(html).toContain("Drink plenty of water and rest.");
+  });
+});
+
+describe("renderInvoiceHtml", () => {
+  const baseInvoice: InvoiceDocument = {
+    clinicName: "La Salette Medical Center",
+    branchName: "Main Facility - Ermita",
+    clinicAddress: "100 Medical Center Way, Ermita, Manila",
+    clinicPhone: "(02) 8524-1000",
+    clinicEmail: "billing@lasalette.ph",
+    tin: "009-876-543-000",
+    dohAccreditationNo: "DOH-LTO-01449-NCR",
+    philhealthAccreditationNo: "PHIC-ACC-98765-PCP",
+    invoiceNo: "INV-2026-00088",
+    issuedAt: "2026-10-08",
+    dueDate: "2026-10-22",
+    status: "OPEN",
+    patientName: "Dela Cruz, Juan",
+    patientNumber: "P-000123",
+    patientDob: "1980-05-15",
+    payerType: "PRIVATE_CASH",
+    billingOfficer: "Maria Clara, RMT / Cashier",
+    lines: [
+      {
+        description: "Specialist Consultation (Internal Medicine)",
+        qty: 1,
+        unitPrice: 1000,
+        netAmount: 800,
+        discountAmount: 200,
+        isProfessionalFee: true,
+      },
+      {
+        description: "Complete Blood Count (CBC) w/ Platelet",
+        qty: 1,
+        unitPrice: 500,
+        netAmount: 500,
+        isProfessionalFee: false,
+      },
+    ],
+    discounts: [
+      {
+        name: "Senior Citizen (RA 9994)",
+        percentage: 20,
+        amount: 200,
+        idType: "OSCA_ID",
+        idNumber: "OSCA-MNL-2019-994",
+        legalBasis: "RA 9994 Expanded Senior Citizens Act of 2010",
+      },
+    ],
+    payments: [
+      {
+        paymentNo: "OR-000456",
+        receivedAt: "2026-10-08",
+        methodName: "Cash",
+        amount: 500,
+      },
+    ],
+    subtotal: 1500,
+    discountTotal: 200,
+    total: 1300,
+    paidAmount: 500,
+    balance: 800,
+    notes: "Please settle remaining balance before next outpatient follow-up.",
+    verificationHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  };
+
+  it("renders an official billing invoice with tenant letterhead and itemized charges", () => {
+    const html = renderInvoiceHtml(baseInvoice);
+
+    expect(html).toContain("La Salette Medical Center");
+    expect(html).toContain("Main Facility - Ermita");
+    expect(html).toContain("100 Medical Center Way");
+    expect(html).toContain("009-876-543-000");
+    expect(html).toContain("DOH-LTO-01449-NCR");
+    expect(html).toContain("PHIC-ACC-98765-PCP");
+    expect(html).toContain("INV-2026-00088");
+    expect(html).toContain("Dela Cruz, Juan");
+    expect(html).toContain("P-000123");
+    expect(html).toContain("Specialist Consultation");
+    expect(html).toContain("PROFESSIONAL FEE (Q-17)");
+    expect(html).toContain("Complete Blood Count");
+    expect(html).toContain("Senior Citizen (RA 9994)");
+    expect(html).toContain("OSCA-MNL-2019-994");
+    expect(html).toContain("OR-000456");
+    expect(html).toContain("1,500.00");
+    expect(html).toContain("1,300.00");
+    expect(html).toContain("500.00");
+    expect(html).toContain("800.00");
+    expect(html).toContain("Maria Clara");
+    expect(html).toContain("Please settle remaining balance");
+    expect(html).toContain("e3b0c44298fc1c14");
+  });
+
+  it("omits optional elements when none provided and adheres to Q-17", () => {
+    const minimal: InvoiceDocument = {
+      clinicName: "General Clinic",
+      invoiceNo: "INV-9999",
+      issuedAt: "2026-10-08",
+      status: "PAID",
+      lines: [
+        {
+          description: "Routine Checkup",
+          qty: 1,
+          unitPrice: 500,
+          netAmount: 500,
+        },
+      ],
+      subtotal: 500,
+      discountTotal: 0,
+      total: 500,
+      paidAmount: 500,
+      balance: 0,
+    };
+
+    const html = renderInvoiceHtml(minimal);
+
+    expect(html).toContain("General Clinic");
+    expect(html).toContain("INV-9999");
+    expect(html).toContain("Routine Checkup");
+    expect(html).toContain("500.00");
+    expect(html).not.toMatch(/pf_share|revenue.?share|profit.?share|percentage/i);
+    expect(html).not.toContain("PROFESSIONAL FEE (Q-17)");
+    expect(html).not.toContain("TIN:");
   });
 });
 
