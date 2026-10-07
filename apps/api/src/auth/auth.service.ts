@@ -71,10 +71,17 @@ export class AuthService {
     @Inject(TenantResolverService) private readonly resolver: TenantResolverService,
   ) {}
 
-  // ---- login -----------------------------------------------------------
-
   async login(dto: LoginRequest, meta: RequestMeta): Promise<LoginResult> {
-    const slug = dto.tenant ?? meta.headerTenant ?? slugFromHost(meta.hostname ?? "");
+    let slug = dto.tenant ?? meta.headerTenant ?? slugFromHost(meta.hostname ?? "");
+    if (!slug && dto.email && dto.email.includes("@")) {
+      const emailDomain = dto.email.split("@")[1]?.toLowerCase().trim();
+      if (emailDomain) {
+        const inferredTenant = await this.resolver.resolveBySlug(emailDomain);
+        if (inferredTenant) {
+          slug = inferredTenant.slug;
+        }
+      }
+    }
     if (!slug) {
       // Anti-enumeration: unknown tenant = same generic failure as unknown user.
       throw new ProblemException("INVALID_CREDENTIALS");
@@ -386,7 +393,16 @@ export class AuthService {
 
   async forgotPassword(dto: ForgotPasswordRequest, meta: RequestMeta): Promise<{ accepted: true; devResetToken?: string }> {
     const cfg = getConfig();
-    const slug = dto.tenant ?? meta.headerTenant ?? slugFromHost(meta.hostname ?? "");
+    let slug = dto.tenant ?? meta.headerTenant ?? slugFromHost(meta.hostname ?? "");
+    if (!slug && dto.email && dto.email.includes("@")) {
+      const emailDomain = dto.email.split("@")[1]?.toLowerCase().trim();
+      if (emailDomain) {
+        const inferredTenant = await this.resolver.resolveBySlug(emailDomain);
+        if (inferredTenant) {
+          slug = inferredTenant.slug;
+        }
+      }
+    }
     if (!hitRateLimit(`forgot:${meta.ip ?? "unknown"}:${dto.email.toLowerCase()}`, 5, 900).allowed) {
       throw new ProblemException("RATE_LIMITED", { detail: "too many requests — retry later" });
     }

@@ -81,13 +81,11 @@ export function RolesPage() {
     [selectedRole, pending],
   );
 
-  const toggle = async (code: string) => {
-    if (!selectedRole || selectedRole.isSystem || !canEdit || pending.size > 0) return;
-    const currentlyGranted = selectedRole.permissions.includes(code);
-    const nextPermissions = currentlyGranted
-      ? selectedRole.permissions.filter((c) => c !== code)
-      : [...selectedRole.permissions, code];
-    setPending(new Set([code]));
+  const [isSaving, setIsSaving] = useState(false);
+
+  const saveRolePermissions = async (nextPermissions: string[], notifyMessage?: string) => {
+    if (!selectedRole || !canEdit || isSaving) return;
+    setIsSaving(true);
     setError(null);
     setInfo(null);
     try {
@@ -97,18 +95,57 @@ export function RolesPage() {
         rowVersion: selectedRole.rowVersion,
       });
       setRoles((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-      setInfo(currentlyGranted ? `Revoked ${code}` : `Granted ${code}`);
+      setInfo(notifyMessage ?? `Permissions for ${selectedRole.name} saved successfully.`);
     } catch (err) {
-      // Surface the server's problem verbatim: SEGREGATION_OF_DUTIES details
-      // name the conflicting pair and rationale (rbac.service.assertNoSoDConflicts).
       setError(
         err instanceof ApiError
           ? err.problem.detail ?? err.problem.title ?? err.problem.code
-          : "Could not update the role.",
+          : "Could not update role permissions.",
       );
     } finally {
+      setIsSaving(false);
       setPending(new Set());
     }
+  };
+
+  const toggle = async (code: string) => {
+    if (!selectedRole || !canEdit || isSaving || pending.size > 0) return;
+    if (selectedRole.code === "tenant_admin" && (code === "admin.role.update" || code === "admin.role.read")) {
+      setError("Cannot revoke core role administration permissions from the Tenant Administrator.");
+      return;
+    }
+    const currentlyGranted = selectedRole.permissions.includes(code);
+    const nextPermissions = currentlyGranted
+      ? selectedRole.permissions.filter((c) => c !== code)
+      : [...selectedRole.permissions, code];
+    setPending(new Set([code]));
+    await saveRolePermissions(
+      nextPermissions,
+      currentlyGranted ? `Revoked ${code} — Saved` : `Granted ${code} — Saved`,
+    );
+  };
+
+  const grantAllVisible = async () => {
+    if (!selectedRole || !canEdit || isSaving) return;
+    const visibleCodes = visibleMatrix.flatMap((g) => g.permissions.map((p) => p.code));
+    const merged = Array.from(new Set([...selectedRole.permissions, ...visibleCodes]));
+    await saveRolePermissions(
+      merged,
+      `Granted all visible ${searchModule === "ALL" ? "" : searchModule + " "}permissions — Saved`,
+    );
+  };
+
+  const revokeAllVisible = async () => {
+    if (!selectedRole || !canEdit || isSaving) return;
+    const visibleCodes = new Set(visibleMatrix.flatMap((g) => g.permissions.map((p) => p.code)));
+    const remaining = selectedRole.permissions.filter((c) => {
+      if (selectedRole.code === "tenant_admin" && (c === "admin.role.update" || c === "admin.role.read")) return true;
+      return !visibleCodes.has(c);
+    });
+    await saveRolePermissions(
+      remaining,
+      `Revoked all visible ${searchModule === "ALL" ? "" : searchModule + " "}permissions — Saved`,
+    );
   };
 
   return (
@@ -200,7 +237,7 @@ export function RolesPage() {
           </div>
         </div>
 
-        {/* Right: Selected Role Permission Matrix (editable for custom roles) */}
+        {/* Right: Selected Role Permission Matrix */}
         <div className="col-lg-7">
           {selectedRole ? (
             <div className="clinic-card">
@@ -224,27 +261,83 @@ export function RolesPage() {
               </div>
 
               <div className="p-3">
-                <div className="alert alert-info py-2 px-3 small d-flex align-items-center justify-content-between mb-3">
+                <div className="alert alert-info py-2 px-3 small d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
                   <span>
                     This role holds <strong>{selectedRole.permissions.length} permissions</strong> — tick to grant, untick to revoke
-                    {selectedRole.isSystem ? "" : canEdit ? "" : " (requires admin.role.update)"}.
+                    {canEdit ? "" : " (requires admin.role.update)"}.
                   </span>
-                  {selectedRole.isSystem ? (
-                    <span className="badge bg-info text-dark">Immutable Template</span>
-                  ) : canEdit ? (
-                    <span className="badge bg-success">Editable</span>
-                  ) : (
-                    <span className="badge bg-secondary">Read-only for you</span>
-                  )}
+                  <div className="d-flex align-items-center gap-2">
+                    {selectedRole.code === "tenant_admin" ? (
+                      <span className="badge bg-info text-dark">Immutable Template</span>
+                    ) : canEdit ? (
+                      <span className="badge bg-success">Editable</span>
+                    ) : (
+                      <span className="badge bg-secondary">Read-only for you</span>
+                    )}
+                    {canEdit && (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-primary py-1 px-3 fw-semibold shadow-sm"
+                        onClick={() => saveRolePermissions(selectedRole.permissions, `Permissions for ${selectedRole.name} saved successfully.`)}
+                        disabled={isSaving}
+                      >
+                        {isSaving ? (
+                          <>
+                            <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />
+                            Saving...
+                          </>
+                        ) : (
+                          "💾 Save Changes"
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                {selectedRole.isSystem ? (
+                {selectedRole.code === "tenant_admin" ? (
                   <div className="mb-3">
                     <AlertBanner severity="info">
                       System roles are template-managed. Clone this role (POST /admin/roles/:id/clone) to customize it.
                     </AlertBanner>
                   </div>
-                ) : null}
+                ) : (
+                  <div className="d-flex justify-content-between align-items-center mb-2 px-1 flex-wrap gap-2">
+                    <div className="small">
+                      {isSaving ? (
+                        <span className="text-primary fw-semibold">
+                          <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />
+                          Saving changes to database...
+                        </span>
+                      ) : (
+                        <span className="text-success small fw-semibold">
+                          ✓ Auto-saves instantly on toggle
+                        </span>
+                      )}
+                    </div>
+                    {canEdit && (
+                      <div className="d-flex gap-1">
+                        <button
+                          type="button"
+                          className="btn btn-outline-primary btn-sm py-0 px-2"
+                          style={{ fontSize: "0.75rem" }}
+                          onClick={grantAllVisible}
+                          disabled={isSaving}
+                        >
+                          Grant All Visible
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm py-0 px-2"
+                          style={{ fontSize: "0.75rem" }}
+                          onClick={revokeAllVisible}
+                          disabled={isSaving}
+                        >
+                          Revoke All Visible
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="table-responsive" style={{ maxHeight: "32rem", overflowY: "auto" }}>
                   <table className="table table-sm table-hover align-middle mb-0">
@@ -260,7 +353,8 @@ export function RolesPage() {
                       {visibleMatrix.map((group) =>
                         group.permissions.map((p) => {
                           const granted = isGranted(p.code);
-                          const editable = !selectedRole.isSystem && canEdit && pending.size === 0;
+                          const isLocked = selectedRole.code === "tenant_admin" && (p.code === "admin.role.update" || p.code === "admin.role.read");
+                          const editable = canEdit && pending.size === 0 && !isSaving && !isLocked;
                           return (
                             <tr key={p.code}>
                               <td>

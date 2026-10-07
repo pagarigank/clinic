@@ -51,13 +51,16 @@ export class PhiAccessInterceptor implements NestInterceptor {
         // Extract patientId
         const paramName = options.patientIdParam ?? "patientId";
         let patientId = (request.params as any)?.[paramName];
-        
-        if (!patientId && (request.params as any)?.id) {
-          patientId = (request.params as any).id;
+
+        if (responseBody && typeof responseBody === "object") {
+          patientId =
+            responseBody.patient_id ??
+            responseBody.patientId ??
+            (options.resource === "patient" ? responseBody.id ?? patientId : patientId);
         }
 
-        if (!patientId && responseBody && typeof responseBody === "object") {
-          patientId = responseBody.patientId ?? (options.resource === "patient" ? responseBody.id : undefined);
+        if (!patientId && (request.params as any)?.id && options.resource === "patient") {
+          patientId = (request.params as any).id;
         }
 
         const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -143,7 +143,15 @@ export class ClinicalController {
 
   @RequirePermission('clinical.appointment.update')
   @Patch('appointments/:id/reschedule')
+  @ApiOperation({ summary: 'Reschedule an appointment (CLN-T1)' })
   async reschedule(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(RescheduleAppointmentSchema)) dto: RescheduleAppointmentRequest) {
+    return this.svc.rescheduleAppointment(req.tenantId!, req.authContext!.userId!, id, dto);
+  }
+
+  @RequirePermission('clinical.appointment.update')
+  @Patch('appointments/:id')
+  @ApiOperation({ summary: 'Update/reschedule an appointment schedule (CLN-T1)' })
+  async updateAppointment(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(RescheduleAppointmentSchema)) dto: RescheduleAppointmentRequest) {
     return this.svc.rescheduleAppointment(req.tenantId!, req.authContext!.userId!, id, dto);
   }
 
@@ -197,7 +205,7 @@ async listVisits(
     }
 
   @RequirePermission('clinical.visit.read')
-  @PhiAccess({ resource: 'visit', patientIdParam: 'id' })
+  @PhiAccess({ resource: 'visit' })
   @Get('visits/:id')
   async getVisit(@Req() req: RequestWithAuth, @Param('id') id: string) {
     return this.svc.getVisit(req.tenantId!, req.authContext!.userId!, id);

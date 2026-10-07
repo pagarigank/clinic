@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router";
 import { AlertBanner, StatusPill } from "@clinic/ui";
-import { apiGet, apiPost, ApiError } from "../../shared/api/client.js";
+import { apiGet, apiPost, apiPatch, ApiError } from "../../shared/api/client.js";
 import { useSearchContext } from "../../shared/search/CommandPalette.js";
 
 interface PatientRecord {
@@ -9,6 +9,7 @@ interface PatientRecord {
   patientNo: string;
   firstName: string;
   lastName: string;
+  middleName?: string;
   dob: string;
   gender: string;
   phone: string;
@@ -19,6 +20,15 @@ interface PatientRecord {
   isEmergency?: boolean;
   status: "ACTIVE" | "INACTIVE" | "DECEASED";
   konsultaStatus?: "REGISTERED" | "PENDING" | "NOT_ENROLLED";
+  rowVersion: number;
+}
+
+function normalizeGender(g?: string): "M" | "F" | "OTHER" {
+  if (!g) return "F";
+  const s = String(g).toUpperCase();
+  if (s.startsWith("M")) return "M";
+  if (s.startsWith("F")) return "F";
+  return "OTHER";
 }
 
 const INITIAL_PATIENTS: PatientRecord[] = [
@@ -27,6 +37,7 @@ const INITIAL_PATIENTS: PatientRecord[] = [
     patientNo: "PAT-2026-0001",
     firstName: "Maria Elena",
     lastName: "Santos",
+    middleName: "Dela",
     dob: "1988-04-12",
     gender: "F",
     phone: "0917-555-0192",
@@ -36,12 +47,14 @@ const INITIAL_PATIENTS: PatientRecord[] = [
     allergies: ["Penicillin (Severe Urticaria)"],
     status: "ACTIVE",
     konsultaStatus: "REGISTERED",
+    rowVersion: 1,
   },
   {
     id: "p2000000-0000-4000-8000-000000000002",
     patientNo: "PAT-2026-0002",
     firstName: "Juan Carlos",
     lastName: "Dela Cruz",
+    middleName: "Bautista",
     dob: "1975-11-23",
     gender: "M",
     phone: "0918-555-0344",
@@ -49,24 +62,28 @@ const INITIAL_PATIENTS: PatientRecord[] = [
     philhealthNo: "09-876543210-9",
     status: "ACTIVE",
     konsultaStatus: "REGISTERED",
+    rowVersion: 1,
   },
   {
     id: "p3000000-0000-4000-8000-000000000003",
     patientNo: "PAT-2026-0003",
     firstName: "Angelita",
     lastName: "Reyes",
+    middleName: "Mendoza",
     dob: "1994-08-30",
     gender: "F",
     phone: "0920-555-0811",
     isEmergency: true,
     status: "ACTIVE",
     konsultaStatus: "PENDING",
+    rowVersion: 1,
   },
   {
     id: "p4000000-0000-4000-8000-000000000004",
     patientNo: "PAT-2026-0004",
     firstName: "Roberto",
     lastName: "Lim",
+    middleName: "Tan",
     dob: "1960-01-15",
     gender: "M",
     phone: "0917-555-0999",
@@ -74,6 +91,7 @@ const INITIAL_PATIENTS: PatientRecord[] = [
     allergies: ["Aspirin / NSAIDs"],
     status: "ACTIVE",
     konsultaStatus: "REGISTERED",
+    rowVersion: 1,
   },
 ];
 
@@ -92,6 +110,22 @@ export function PatientsPage() {
   const [revealModalTarget, setRevealModalTarget] = useState<{ patientId: string; field: string; label: string } | null>(null);
   const [revealReasonCode, setRevealReasonCode] = useState("BILLING_VERIFICATION");
   const [revealExplanation, setRevealExplanation] = useState("");
+
+  // Edit Patient Information Modal State
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editingPatient, setEditingPatient] = useState<PatientRecord | null>(null);
+  const [editFirstName, setEditFirstName] = useState("");
+  const [editLastName, setEditLastName] = useState("");
+  const [editMiddleName, setEditMiddleName] = useState("");
+  const [editDob, setEditDob] = useState("");
+  const [editGender, setEditGender] = useState("F");
+  const [editPhone, setEditPhone] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editPhilhealthNo, setEditPhilhealthNo] = useState("");
+  const [editStatus, setEditStatus] = useState<"ACTIVE" | "INACTIVE" | "DECEASED">("ACTIVE");
+  const [deactivateReason, setDeactivateReason] = useState("");
+  const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   // Registration Form State
   const [firstName, setFirstName] = useState("");
@@ -132,13 +166,15 @@ export function PatientsPage() {
               patientNo: item.patientNo || item.patient_no || `PAT-2026-${String(idx + 1).padStart(4, "0")}`,
               firstName: item.firstName || item.first_name || item.name?.split(", ")[1] || "Patient",
               lastName: item.lastName || item.last_name || item.name?.split(", ")[0] || "Record",
+              middleName: item.middleName || item.middle_name || "",
               dob: formattedDob,
-              gender: item.gender || "F",
+              gender: normalizeGender(item.gender),
               phone: item.phone || "N/A",
               email: item.email,
               philhealthNo: item.philhealthNo || item.philhealth_no,
               status: item.status || "ACTIVE",
               konsultaStatus: item.konsultaStatus || item.konsulta_status || "NOT_ENROLLED",
+              rowVersion: item.rowVersion ?? item.row_version ?? 1,
             };
           });
           setPatients(mapped);
@@ -275,6 +311,7 @@ export function PatientsPage() {
             isEmergency,
             status: "ACTIVE",
             konsultaStatus: philhealthNo.trim() ? "REGISTERED" : "NOT_ENROLLED",
+            rowVersion: 1,
           };
 
           setPatients([newPatient, ...patients]);
@@ -331,6 +368,219 @@ export function PatientsPage() {
     setRevealedIds((prev) => ({ ...prev, [key]: true }));
     setRevealModalTarget(null);
     setRevealExplanation("");
+  };
+
+  // Keep selectedPatient up-to-date with server state and contacts
+  useEffect(() => {
+    if (!selectedPatient?.id) return;
+    let active = true;
+    (async () => {
+      try {
+        const full = await apiGet<any>(`/patients/${selectedPatient.id}`);
+        if (!active || !full) return;
+        const contacts = Array.isArray(full.contacts) ? full.contacts : [];
+        const phoneContact = contacts.find((c: any) => c.type === "PHONE" || c.type === "MOBILE");
+        const emailContact = contacts.find((c: any) => c.type === "EMAIL");
+        const allergies = Array.isArray(full.allergies)
+          ? full.allergies.map((a: any) => a.substance || a.name).filter(Boolean)
+          : undefined;
+
+        setSelectedPatient((prev) => {
+          if (!prev || prev.id !== selectedPatient.id) return prev;
+          return {
+            ...prev,
+            firstName: full.first_name || full.firstName || prev.firstName,
+            lastName: full.last_name || full.lastName || prev.lastName,
+            middleName: full.middle_name ?? full.middleName ?? prev.middleName,
+            dob: full.date_of_birth ? full.date_of_birth.split("T")[0] : prev.dob,
+            gender: normalizeGender(full.gender || prev.gender),
+            phone: phoneContact?.value || prev.phone,
+            email: emailContact?.value || prev.email,
+            status: full.status || prev.status,
+            rowVersion: full.row_version ?? full.rowVersion ?? prev.rowVersion,
+            allergies: allergies && allergies.length > 0 ? allergies : prev.allergies,
+          };
+        });
+      } catch {
+        // Mock patient or offline mode fallback
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [selectedPatient?.id]);
+
+  const handleOpenEdit = async (patient: PatientRecord) => {
+    setEditingPatient(patient);
+    setEditFirstName(patient.firstName);
+    setEditLastName(patient.lastName);
+    setEditMiddleName(patient.middleName || "");
+    setEditDob(patient.dob);
+    setEditGender(normalizeGender(patient.gender));
+    setEditPhone(patient.phone && patient.phone !== "N/A" ? patient.phone : "");
+    setEditEmail(patient.email || "");
+    setEditPhilhealthNo(patient.philhealthNo || "");
+    setEditStatus(patient.status);
+    setDeactivateReason("");
+    setEditError(null);
+    setIsEditOpen(true);
+
+    try {
+      const full = await apiGet<any>(`/patients/${patient.id}`);
+      if (full) {
+        const contacts = Array.isArray(full.contacts) ? full.contacts : [];
+        const phoneContact = contacts.find((c: any) => c.type === "PHONE" || c.type === "MOBILE");
+        const emailContact = contacts.find((c: any) => c.type === "EMAIL");
+        if (typeof full.row_version === "number") {
+          setEditingPatient((prev) => (prev && prev.id === patient.id ? { ...prev, rowVersion: full.row_version } : prev));
+        }
+        if (full.middle_name !== undefined) {
+          setEditMiddleName(full.middle_name || "");
+        }
+        if (phoneContact?.value) {
+          setEditPhone(phoneContact.value);
+        }
+        if (emailContact?.value) {
+          setEditEmail(emailContact.value);
+        }
+      }
+    } catch {
+      // Keep initialized values
+    }
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPatient) return;
+    if (!editFirstName.trim() || !editLastName.trim() || !editDob) {
+      setEditError("First name, last name, and date of birth are required.");
+      return;
+    }
+
+    setIsSubmittingEdit(true);
+    setEditError(null);
+
+    try {
+      let currentRowVersion = editingPatient.rowVersion ?? 1;
+
+      // 1. Update demographics via PATCH /patients/:id
+      try {
+        const patchRes = await apiPatch<{ id: string; row_version?: number }>(
+          `/patients/${editingPatient.id}`,
+          {
+            firstName: editFirstName.trim(),
+            lastName: editLastName.trim(),
+            middleName: editMiddleName.trim() || null,
+            dateOfBirth: editDob,
+            gender: editGender,
+            rowVersion: currentRowVersion,
+          },
+        );
+        if (patchRes && typeof patchRes.row_version === "number") {
+          currentRowVersion = patchRes.row_version;
+        } else {
+          currentRowVersion += 1;
+        }
+      } catch (err: any) {
+        const problem = err instanceof ApiError ? err.problem : undefined;
+        const detail =
+          problem?.detail ??
+          (problem?.errors?.length
+            ? problem.errors.map((e: any) => `${e.path}: ${e.message}`).join("; ")
+            : undefined) ??
+          err?.message ??
+          "Failed to update patient demographics";
+        throw new Error(`Demographics update failed: ${detail}`);
+      }
+
+      // 2. Update Phone Contact if changed
+      if (editPhone.trim() && editPhone.trim() !== (editingPatient.phone || "")) {
+        try {
+          await apiPost(`/patients/${editingPatient.id}/contacts`, {
+            type: "MOBILE",
+            value: editPhone.trim(),
+            isPrimary: true,
+          });
+        } catch (err) {
+          console.warn("Contact phone update error:", err);
+        }
+      }
+
+      // 3. Update Email Contact if changed
+      if (editEmail.trim() && editEmail.trim() !== (editingPatient.email || "")) {
+        try {
+          await apiPost(`/patients/${editingPatient.id}/contacts`, {
+            type: "EMAIL",
+            value: editEmail.trim(),
+            isPrimary: false,
+          });
+        } catch (err) {
+          console.warn("Contact email update error:", err);
+        }
+      }
+
+      // 4. Update PhilHealth PIN if changed
+      if (editPhilhealthNo.trim() && editPhilhealthNo.trim() !== (editingPatient.philhealthNo || "")) {
+        try {
+          await apiPost(`/patients/${editingPatient.id}/philhealth`, {
+            pin: editPhilhealthNo.trim(),
+            membershipCategory: "MEMBER",
+            konsultaStatus: "REGISTERED",
+          });
+        } catch (err) {
+          console.warn("PhilHealth update error:", err);
+        }
+      }
+
+      // 5. Deactivate if status changed to INACTIVE
+      if (editStatus === "INACTIVE" && editingPatient.status === "ACTIVE") {
+        try {
+          const deactRes = await apiPost<{ row_version?: number }>(
+            `/patients/${editingPatient.id}/deactivate`,
+            {
+              reason: deactivateReason.trim() || "Administrative deactivation from patient registry",
+              rowVersion: currentRowVersion,
+            },
+          );
+          if (deactRes && typeof deactRes.row_version === "number") {
+            currentRowVersion = deactRes.row_version;
+          }
+        } catch (err) {
+          console.warn("Deactivation error:", err);
+        }
+      }
+
+      // Updated record
+      const updatedRecord: PatientRecord = {
+        ...editingPatient,
+        firstName: editFirstName.trim(),
+        lastName: editLastName.trim(),
+        middleName: editMiddleName.trim() || undefined,
+        dob: editDob,
+        gender: editGender,
+        phone: editPhone.trim() || "N/A",
+        email: editEmail.trim() || undefined,
+        philhealthNo: editPhilhealthNo.trim() || undefined,
+        status: editStatus,
+        konsultaStatus: editPhilhealthNo.trim() ? "REGISTERED" : editingPatient.konsultaStatus,
+        rowVersion: currentRowVersion,
+      };
+
+      setPatients((prev) => prev.map((p) => (p.id === updatedRecord.id ? updatedRecord : p)));
+
+      if (selectedPatient && selectedPatient.id === updatedRecord.id) {
+        setSelectedPatient(updatedRecord);
+      }
+
+      setIsEditOpen(false);
+      setMessage(
+        `Patient ${updatedRecord.lastName}, ${updatedRecord.firstName} (${updatedRecord.patientNo}) information modified successfully.`,
+      );
+    } catch (err: any) {
+      setEditError(err.message || "Failed to modify patient information. Please try again.");
+    } finally {
+      setIsSubmittingEdit(false);
+    }
   };
 
   return (
@@ -539,18 +789,29 @@ export function PatientsPage() {
                         <StatusPill tone="normal" label={p.status} />
                       </td>
                       <td className="text-end">
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-primary"
-                          onClick={() => {
-                            setSelectedPatient(p);
-                            // Recents power the command palette; memory only — no
-                            // PHI in storage (frontend §9).
-                            rememberPatient({ id: p.id, name: `${p.lastName}, ${p.firstName}`, patientNo: p.patientNo });
-                          }}
-                        >
-                          Open Chart
-                        </button>
+                        <div className="d-flex justify-content-end gap-1">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1"
+                            onClick={() => handleOpenEdit(p)}
+                            title="Modify patient information"
+                          >
+                            <span>✏️</span>
+                            <span>Edit</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-primary"
+                            onClick={() => {
+                              setSelectedPatient(p);
+                              // Recents power the command palette; memory only — no
+                              // PHI in storage (frontend §9).
+                              rememberPatient({ id: p.id, name: `${p.lastName}, ${p.firstName}`, patientNo: p.patientNo });
+                            }}
+                          >
+                            Open Chart
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -569,13 +830,24 @@ export function PatientsPage() {
               <div className="modal-header">
                 <div>
                   <h5 className="modal-title text-dark fw-bold">
-                    Patient Chart: {selectedPatient.lastName}, {selectedPatient.firstName}
+                    Patient Chart: {selectedPatient.lastName}, {selectedPatient.firstName} {selectedPatient.middleName ? `${selectedPatient.middleName} ` : ""}
                   </h5>
                   <div className="small text-muted">
-                    Record: <span className="font-monospace text-primary fw-semibold">{selectedPatient.patientNo}</span> · Status: {selectedPatient.status}
+                    Record: <span className="font-monospace text-primary fw-semibold">{selectedPatient.patientNo}</span> · Status: {selectedPatient.status} · Ver: #{selectedPatient.rowVersion}
                   </div>
                 </div>
-                <button type="button" className="btn-close" onClick={() => setSelectedPatient(null)} />
+                <div className="d-flex align-items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-primary d-flex align-items-center gap-1"
+                    onClick={() => handleOpenEdit(selectedPatient)}
+                    title="Modify patient information"
+                  >
+                    <span>✏️</span>
+                    <span>Edit Information</span>
+                  </button>
+                  <button type="button" className="btn-close" onClick={() => setSelectedPatient(null)} />
+                </div>
               </div>
 
               <div className="modal-body">
@@ -692,9 +964,18 @@ export function PatientsPage() {
                 <span className="small text-muted">
                   Note: Patient records are permanent and append-only. No delete affordance exists per regulatory law.
                 </span>
-                <button type="button" className="btn btn-secondary" onClick={() => setSelectedPatient(null)}>
-                  Close Chart
-                </button>
+                <div className="d-flex gap-2">
+                  <button
+                    type="button"
+                    className="btn btn-outline-primary"
+                    onClick={() => handleOpenEdit(selectedPatient)}
+                  >
+                    ✏️ Edit Information
+                  </button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setSelectedPatient(null)}>
+                    Close Chart
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -914,6 +1195,201 @@ export function PatientsPage() {
                     disabled={duplicateCandidates.length > 0 && !duplicateAcknowledged}
                   >
                     Save & Create Patient Record
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Modify Patient Information Modal */}
+      {isEditOpen && editingPatient && (
+        <div className="modal show d-block" tabIndex={-1} style={{ backgroundColor: "rgba(0,0,0,0.5)", zIndex: 1055 }}>
+          <div className="modal-dialog modal-dialog-centered modal-lg">
+            <div className="modal-content">
+              <form onSubmit={handleSaveEdit}>
+                <div className="modal-header">
+                  <div>
+                    <h5 className="modal-title fw-bold text-dark d-flex align-items-center gap-2">
+                      <span>✏️ Modify Patient Information</span>
+                      <span className="badge bg-primary-subtle text-primary border border-primary-subtle font-monospace">
+                        {editingPatient.patientNo}
+                      </span>
+                    </h5>
+                    <div className="small text-muted">
+                      Optimistic Concurrency Version #{editingPatient.rowVersion} · Audited PHI modification
+                    </div>
+                  </div>
+                  <button type="button" className="btn-close" onClick={() => setIsEditOpen(false)} />
+                </div>
+
+                <div className="modal-body">
+                  {editError && (
+                    <div className="alert alert-danger py-2 small mb-3">
+                      <strong>Error:</strong> {editError}
+                    </div>
+                  )}
+
+                  <div className="alert alert-light border small text-muted mb-3 d-flex align-items-center gap-2">
+                    <span>🔒</span>
+                    <span>
+                      Demographic modifications are versioned and logged in the immutable audit ledger. Patient records are permanent and append-only.
+                    </span>
+                  </div>
+
+                  <h6 className="fw-bold text-dark mb-2 pb-1 border-bottom small text-uppercase text-secondary">
+                    1. Demographics & Identification
+                  </h6>
+                  <div className="row g-3 mb-3">
+                    <div className="col-md-4">
+                      <label className="form-label small fw-semibold">FIRST NAME *</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="e.g. Maria"
+                        value={editFirstName}
+                        onChange={(e) => setEditFirstName(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="col-md-4">
+                      <label className="form-label small fw-semibold">MIDDLE NAME</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="e.g. Elena"
+                        value={editMiddleName}
+                        onChange={(e) => setEditMiddleName(e.target.value)}
+                      />
+                    </div>
+                    <div className="col-md-4">
+                      <label className="form-label small fw-semibold">LAST NAME *</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="e.g. Santos"
+                        value={editLastName}
+                        onChange={(e) => setEditLastName(e.target.value)}
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="row g-3 mb-3">
+                    <div className="col-md-6">
+                      <label className="form-label small fw-semibold">DATE OF BIRTH *</label>
+                      <input
+                        type="date"
+                        className="form-control"
+                        value={editDob}
+                        onChange={(e) => setEditDob(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="col-md-6">
+                      <label className="form-label small fw-semibold">GENDER *</label>
+                      <select
+                        className="form-select"
+                        value={editGender}
+                        onChange={(e) => setEditGender(e.target.value)}
+                      >
+                        <option value="F">Female</option>
+                        <option value="M">Male</option>
+                        <option value="OTHER">Other</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <h6 className="fw-bold text-dark mb-2 pb-1 border-bottom small text-uppercase text-secondary">
+                    2. Contact Information
+                  </h6>
+                  <div className="row g-3 mb-3">
+                    <div className="col-md-6">
+                      <label className="form-label small fw-semibold">MOBILE NO.</label>
+                      <input
+                        type="tel"
+                        className="form-control"
+                        placeholder="0917-000-0000"
+                        value={editPhone}
+                        onChange={(e) => setEditPhone(e.target.value)}
+                      />
+                    </div>
+                    <div className="col-md-6">
+                      <label className="form-label small fw-semibold">EMAIL ADDRESS</label>
+                      <input
+                        type="email"
+                        className="form-control"
+                        placeholder="patient@example.com"
+                        value={editEmail}
+                        onChange={(e) => setEditEmail(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <h6 className="fw-bold text-dark mb-2 pb-1 border-bottom small text-uppercase text-secondary">
+                    3. Statutory Coverage
+                  </h6>
+                  <div className="row g-3 mb-3">
+                    <div className="col-md-12">
+                      <label className="form-label small fw-semibold">PHILHEALTH IDENTIFICATION NO. (PIN)</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="12-digit PhilHealth PIN (e.g. 12-345678901-2)"
+                        value={editPhilhealthNo}
+                        onChange={(e) => setEditPhilhealthNo(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <h6 className="fw-bold text-dark mb-2 pb-1 border-bottom small text-uppercase text-secondary">
+                    4. Status & Record Lifecycle
+                  </h6>
+                  <div className="row g-3">
+                    <div className="col-md-6">
+                      <label className="form-label small fw-semibold">PATIENT STATUS</label>
+                      <select
+                        className="form-select"
+                        value={editStatus}
+                        onChange={(e) => setEditStatus(e.target.value as "ACTIVE" | "INACTIVE" | "DECEASED")}
+                      >
+                        <option value="ACTIVE">ACTIVE - Enrolled and in good standing</option>
+                        <option value="INACTIVE">INACTIVE - Suspended or archived</option>
+                        <option value="DECEASED">DECEASED - Patient marked deceased</option>
+                      </select>
+                    </div>
+                    {editStatus === "INACTIVE" && (
+                      <div className="col-md-6">
+                        <label className="form-label small fw-semibold text-danger">DEACTIVATION REASON *</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          placeholder="Clinical or administrative reason..."
+                          value={deactivateReason}
+                          onChange={(e) => setDeactivateReason(e.target.value)}
+                          required
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="modal-footer">
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setIsEditOpen(false)}
+                    disabled={isSubmittingEdit}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-cerulean d-flex align-items-center gap-2"
+                    disabled={isSubmittingEdit}
+                  >
+                    {isSubmittingEdit && <span className="spinner-border spinner-border-sm" aria-hidden="true" />}
+                    <span>Save Changes</span>
                   </button>
                 </div>
               </form>

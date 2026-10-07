@@ -123,66 +123,69 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> {
+async function fetchWithAuth(
+  method: string,
+  path: string,
+  body?: unknown,
+  signal?: AbortSignal,
+  customHeaders?: HeadersInit,
+): Promise<Response> {
   const isJsdom = typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
-  const res = await fetch(`${apiBase()}${path}`, {
-    method: "GET",
-    headers: buildHeaders(),
+  const url = `${apiBase()}${path}`;
+  const headers = buildHeaders(
+    body !== undefined ? { "Content-Type": "application/json", ...customHeaders } : customHeaders,
+  );
+
+  let res = await fetch(url, {
+    method,
+    headers,
     credentials: "include",
+    body: body !== undefined ? JSON.stringify(body) : undefined,
     ...(signal && !isJsdom ? { signal } : {}),
   });
+
+  // Automatic token refresh retry on 401 for non-auth endpoints when token expired
+  if (res.status === 401 && !path.startsWith("/auth/") && inMemoryAccessToken) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      const retryHeaders = buildHeaders(
+        body !== undefined ? { "Content-Type": "application/json", ...customHeaders } : customHeaders,
+      );
+      res = await fetch(url, {
+        method,
+        headers: retryHeaders,
+        credentials: "include",
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        ...(signal && !isJsdom ? { signal } : {}),
+      });
+    }
+  }
+
+  return res;
+}
+
+export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetchWithAuth("GET", path, undefined, signal);
   return handleResponse<T>(res);
 }
 
 export async function apiPost<T, B = unknown>(path: string, body?: B, signal?: AbortSignal): Promise<T> {
-  const isJsdom = typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
-  // Only advertise a JSON body when we actually send one: the API rejects an
-  // empty body with Content-Type: application/json (e.g. POST /auth/refresh).
-  const headers = buildHeaders(body !== undefined ? { "Content-Type": "application/json" } : undefined);
-  const res = await fetch(`${apiBase()}${path}`, {
-    method: "POST",
-    headers,
-    credentials: "include",
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    ...(signal && !isJsdom ? { signal } : {}),
-  });
+  const res = await fetchWithAuth("POST", path, body, signal);
   return handleResponse<T>(res);
 }
 
 export async function apiPatch<T, B = unknown>(path: string, body?: B, signal?: AbortSignal): Promise<T> {
-  const isJsdom = typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
-  const headers = buildHeaders(body !== undefined ? { "Content-Type": "application/json" } : undefined);
-  const res = await fetch(`${apiBase()}${path}`, {
-    method: "PATCH",
-    headers,
-    credentials: "include",
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    ...(signal && !isJsdom ? { signal } : {}),
-  });
+  const res = await fetchWithAuth("PATCH", path, body, signal);
   return handleResponse<T>(res);
 }
 
 export async function apiPut<T, B = unknown>(path: string, body?: B, signal?: AbortSignal): Promise<T> {
-  const isJsdom = typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
-  const headers = buildHeaders(body !== undefined ? { "Content-Type": "application/json" } : undefined);
-  const res = await fetch(`${apiBase()}${path}`, {
-    method: "PUT",
-    headers,
-    credentials: "include",
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    ...(signal && !isJsdom ? { signal } : {}),
-  });
+  const res = await fetchWithAuth("PUT", path, body, signal);
   return handleResponse<T>(res);
 }
 
 export async function apiDelete<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const isJsdom = typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
-  const res = await fetch(`${apiBase()}${path}`, {
-    method: "DELETE",
-    headers: buildHeaders(),
-    credentials: "include",
-    ...(signal && !isJsdom ? { signal } : {}),
-  });
+  const res = await fetchWithAuth("DELETE", path, undefined, signal);
   return handleResponse<T>(res);
 }
 

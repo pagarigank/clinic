@@ -138,4 +138,43 @@ describe("PublicBookingPage (Independent Patient Scheduling)", () => {
     expect(screen.getByText("Juan Dela Cruz")).toBeInTheDocument();
     expect(screen.getByText(/CONFIRMED \(ONLINE BOOKING\)/i)).toBeInTheDocument();
   });
+
+  it("ensures only doctors are displayed in the selection, filtering out any administrative managers", async () => {
+    useStubHandler((req, res) => {
+      const url = req.url ?? "";
+      if (url.includes("/public/booking/clinic")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            clinic: { id: "11111111-1111-4111-8111-111111111111", name: "Metro Health Demo Clinic", slug: "demo-a" },
+            branches: [{ id: "b1", name: "Main Branch", code: "MAIN" }],
+            practitioners: [
+              { id: "doc-1", name: "Dr. Maria Elena Reyes", title: "Attending Physician", specialization: "Internal Medicine" },
+              { id: "mgr-1", name: "Demo A — Tenant Admin", title: "Clinic Manager", specialization: "General Practice" },
+              { id: "admin-2", name: "System Administrator", title: "Operations Manager", specialization: "Administration" },
+            ],
+          }),
+        );
+        return;
+      }
+      publicBookingHandler(req, res);
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/book?slug=demo-a"]}>
+        <Routes>
+          <Route path="/book" element={<PublicBookingPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // Dr. Maria Elena Reyes must be shown
+    const docNames = await screen.findAllByText("Dr. Maria Elena Reyes");
+    expect(docNames.length).toBeGreaterThan(0);
+
+    // Clinic Manager and Operations Manager must NOT be present in doctor selection
+    expect(screen.queryByText("Demo A — Tenant Admin")).not.toBeInTheDocument();
+    expect(screen.queryByText("Clinic Manager")).not.toBeInTheDocument();
+    expect(screen.queryByText("System Administrator")).not.toBeInTheDocument();
+  });
 });

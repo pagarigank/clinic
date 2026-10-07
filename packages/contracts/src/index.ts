@@ -758,6 +758,8 @@ export const RescheduleAppointmentSchema = z
     startsAt: z.string(),
     endsAt: z.string(),
     rowVersion: z.number().int().positive(),
+    practitionerId: z.string().uuid().optional(),
+    notes: z.string().max(1000).optional(),
   })
   .refine((v) => new Date(v.startsAt) < new Date(v.endsAt), {
     message: 'startsAt must be before endsAt',

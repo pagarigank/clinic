@@ -279,21 +279,18 @@ export class ClinicalService {
          LEFT JOIN user_roles ur ON ur.user_id = u.id AND ur.tenant_id = u.tenant_id
          LEFT JOIN roles r ON r.id = ur.role_id AND r.tenant_id = u.tenant_id
          WHERE u.tenant_id = $1 AND u.status = 'ACTIVE'
-           AND (r.code IN ('doctor', 'tenant_admin') OR e.job_title ILIKE '%doctor%' OR e.job_title ILIKE '%physician%' OR u.name ILIKE 'Dr.%')
+           AND (
+             r.code = 'doctor'
+             OR e.job_title ILIKE '%doctor%'
+             OR e.job_title ILIKE '%physician%'
+             OR u.name ILIKE 'Dr.%'
+             OR u.email ILIKE 'doctor@%'
+           )
+           AND (e.job_title IS NULL OR (e.job_title NOT ILIKE '%manager%' AND e.job_title NOT ILIKE '%administrator%'))
          GROUP BY u.id, u.name, u.email, e.job_title, e.specialization
          ORDER BY u.name`,
         [tenantId],
       );
-      if (res.rows.length === 0) {
-        const fallback = await tx.query(
-          `SELECT u.id, u.name, u.email,
-                  'Physician' AS title,
-                  'General Practice' AS specialization
-           FROM users u WHERE u.tenant_id = $1 AND u.status = 'ACTIVE' ORDER BY u.name`,
-          [tenantId],
-        );
-        return { data: fallback.rows };
-      }
       return { data: res.rows };
     });
   }
@@ -320,19 +317,20 @@ export class ClinicalService {
          LEFT JOIN user_roles ur ON ur.user_id = u.id AND ur.tenant_id = u.tenant_id
          LEFT JOIN roles r ON r.id = ur.role_id AND r.tenant_id = u.tenant_id
          WHERE u.tenant_id = $1 AND u.status = 'ACTIVE'
-           AND (r.code IN ('doctor', 'tenant_admin') OR e.job_title ILIKE '%doctor%' OR e.job_title ILIKE '%physician%' OR u.name ILIKE 'Dr.%')
+           AND (
+             r.code = 'doctor'
+             OR e.job_title ILIKE '%doctor%'
+             OR e.job_title ILIKE '%physician%'
+             OR u.name ILIKE 'Dr.%'
+             OR u.email ILIKE 'doctor@%'
+           )
+           AND (e.job_title IS NULL OR (e.job_title NOT ILIKE '%manager%' AND e.job_title NOT ILIKE '%administrator%'))
          GROUP BY u.id, u.name, u.email, e.job_title, e.specialization
          ORDER BY u.name`,
         [tenantId],
       );
 
-      const practitioners = practRes.rows.length > 0
-        ? practRes.rows
-        : (await tx.query(
-            `SELECT u.id, u.name, u.email, 'Physician' AS title, 'General Practice' AS specialization
-             FROM users u WHERE u.tenant_id = $1 AND u.status = 'ACTIVE' ORDER BY u.name`,
-            [tenantId],
-          )).rows;
+      const practitioners = practRes.rows;
 
       return {
         clinic,
@@ -518,16 +516,36 @@ export class ClinicalService {
     return withTenant({ tenantId, userId }, async (tx) => {
       const res = await tx.query(
         `UPDATE appointments SET starts_at = $3::timestamptz, ends_at = $4::timestamptz,
+                practitioner_id = COALESCE($6::uuid, practitioner_id),
+                notes = CASE WHEN $7::text IS NOT NULL THEN $7 ELSE notes END,
                 updated_at = now(), row_version = row_version + 1
          WHERE tenant_id = $1 AND id = $2 AND row_version = $5
            AND status IN ('BOOKED','CONFIRMED')
          RETURNING *`,
-        [tenantId, id, dto.startsAt, dto.endsAt, dto.rowVersion],
+        [
+          tenantId,
+          id,
+          dto.startsAt,
+          dto.endsAt,
+          dto.rowVersion,
+          dto.practitionerId ?? null,
+          dto.notes !== undefined ? dto.notes : null,
+        ],
       ).catch((err: { code?: string }) => {
         if (err.code === '23P01') throw new ProblemException('APPOINTMENT_CONFLICT', { detail: 'Target slot is taken.' });
         throw err;
       });
       if ((res.rowCount ?? 0) === 0) {
+        const check = await tx.query(`SELECT status FROM appointments WHERE tenant_id = $1 AND id = $2`, [tenantId, id]);
+        if ((check.rowCount ?? 0) === 0) {
+          throw new ProblemException('NOT_FOUND', { detail: 'Appointment not found.' });
+        }
+        const currentStatus = check.rows[0].status;
+        if (currentStatus !== 'BOOKED' && currentStatus !== 'CONFIRMED') {
+          throw new ProblemException('CONFLICT', {
+            detail: `Cannot reschedule appointment with status ${currentStatus}. Only BOOKED or CONFIRMED appointments can be rescheduled.`,
+          });
+        }
         throw new ProblemException('STALE_ROW_VERSION', { detail: 'Appointment changed elsewhere; refresh and retry.' });
       }
       return res.rows[0];
@@ -653,6 +671,10 @@ export class ClinicalService {
   }
 
   async getVisit(tenantId: string, userId: string, visitId: string) {
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_REGEX.test(visitId)) {
+      throw new ProblemException('NOT_FOUND', { detail: 'Visit not found' });
+    }
     return withTenant({ tenantId, userId }, async (tx) => {
       const v = await tx.query(
         `SELECT v.*, p.first_name || ' ' || p.last_name AS patient_name, p.date_of_birth, p.gender,

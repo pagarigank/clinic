@@ -132,6 +132,147 @@ interface CertificateRow {
   issuer_name?: string;
 }
 
+const DEMO_CHART_DATA: Record<string, any> = {
+  v1: {
+    id: "v1",
+    visit_no: "V-20261002-00001",
+    patient_id: "demo-p1",
+    patient_name: "Santos, Maria Elena",
+    date_of_birth: "1988-04-12",
+    gender: "F",
+    status: "IN_PROGRESS",
+    branch_name: "Main Branch",
+    clinic_name: "La Salette Medical Clinic and Laboratory",
+    chief_complaint: "Fever x 3 days, cough",
+    practitioner_name: "Lara Giene Dimaapi Dela Cruz, MD",
+    practitioner_job_title: "Attending Physician",
+    practitioner_specialization: "General Practice",
+    practitioner_prc_no: "0123456",
+    practitioner_ptr_no: "PTR-9876543",
+    practitioner_s2_no: "S2-12345678",
+    allergies: [{ substance: "Penicillin", severity: "MODERATE" }],
+    vitals: [
+      { id: "vt-demo-1", recordedAt: "Today 08:35", bpSys: 115, bpDia: 75, heartRate: 88, temperatureC: "38.2", spo2: 99, flags: ["FEVER"] },
+    ],
+    notes: [
+      {
+        id: "note-demo-1",
+        noteType: "SOAP",
+        subjective: "Patient reports 3-day history of moderate fever peaking at 38.5°C, non-productive cough, and malaise. No shortness of breath or chest pain.",
+        objective: "Awake, alert, febrile. Temp 38.2°C, BP 115/75 mmHg, HR 88 bpm. Hyperemic posterior pharyngeal wall. Clear breath sounds bilaterally.",
+        assessment: "Acute Upper Respiratory Tract Infection (URTI)",
+        plan: "1. Paracetamol 500mg tab q4h PRN for fever.\n2. Increased oral fluid intake and adequate bed rest.\n3. Return for follow-up if symptoms persist beyond 5 days.",
+        status: "DRAFT",
+        version: 1,
+      },
+    ],
+    diagnoses: [
+      { id: "dx-demo-1", icd10Code: "J06.9", description: "Acute upper respiratory infection, unspecified", dxType: "PRIMARY", certainty: "CONFIRMED" },
+    ],
+    prescriptions: [
+      {
+        id: "rx-demo-1",
+        rxNo: "RX-20261002-00001",
+        status: "ISSUED",
+        isControlled: false,
+        prescriberName: "Lara Giene Dimaapi Dela Cruz, MD",
+        notes: "Paracetamol 500mg tab — Take 1 tablet every 4 hours for fever as needed",
+        items: [
+          { genericName: "Paracetamol", brandName: "Biogesic", strength: "500mg", form: "Tablet", route: "Oral", sigDose: "1 tablet", sigFrequency: "Every 4 hours PRN", sigDuration: "5 days", qtyPrescribed: 15 },
+        ],
+      },
+    ],
+  },
+  v2: {
+    id: "v2",
+    visit_no: "V-20261002-00002",
+    patient_id: "demo-p2",
+    patient_name: "Dela Cruz, Juan Carlos",
+    date_of_birth: "1975-11-23",
+    gender: "M",
+    status: "OPEN",
+    branch_name: "Main Branch",
+    clinic_name: "La Salette Medical Clinic and Laboratory",
+    chief_complaint: "Routine hypertension check",
+    practitioner_name: "Lara Giene Dimaapi Dela Cruz, MD",
+    practitioner_job_title: "Attending Physician",
+    practitioner_specialization: "Internal Medicine / Cardiology",
+    practitioner_prc_no: "0123456",
+    practitioner_ptr_no: "PTR-9876543",
+    practitioner_s2_no: "S2-12345678",
+    allergies: [],
+    vitals: [
+      { id: "vt-demo-2", recordedAt: "Today 09:20", bpSys: 130, bpDia: 85, heartRate: 72, temperatureC: "36.6", spo2: 98, flags: [] },
+    ],
+    notes: [
+      {
+        id: "note-demo-2",
+        noteType: "SOAP",
+        subjective: "Patient presents for routine hypertension follow-up. Currently taking maintenance Amlodipine 5mg OD. Denies chest pain, palpitation, or headache.",
+        objective: "Alert, comfortable. BP 130/85 mmHg, HR 72 bpm regular. S1/S2 distinct, no murmurs. Lungs clear to auscultation.",
+        assessment: "Essential (primary) hypertension, benign, adequately controlled",
+        plan: "1. Continue Amlodipine 5mg 1 tab OD in the morning.\n2. Low-salt diet; regular aerobic exercise.\n3. Return for BP check in 1 month.",
+        status: "DRAFT",
+        version: 1,
+      },
+    ],
+    diagnoses: [
+      { id: "dx-demo-2", icd10Code: "I10", description: "Essential (primary) hypertension", dxType: "PRIMARY", certainty: "CONFIRMED" },
+    ],
+    prescriptions: [
+      {
+        id: "rx-demo-2",
+        rxNo: "RX-20261002-00002",
+        status: "ISSUED",
+        isControlled: false,
+        prescriberName: "Lara Giene Dimaapi Dela Cruz, MD",
+        notes: "Amlodipine 5mg tab — Take 1 tablet once daily in the morning",
+        items: [
+          { genericName: "Amlodipine", brandName: "Norvasc", strength: "5mg", form: "Tablet", route: "Oral", sigDose: "1 tablet", sigFrequency: "Once daily (morning)", sigDuration: "30 days", qtyPrescribed: 30 },
+        ],
+      },
+    ],
+  },
+  v3: {
+    id: "v3",
+    visit_no: "V-20261001-00012",
+    patient_id: "demo-p3",
+    patient_name: "Lim, Roberto",
+    date_of_birth: "1965-02-18",
+    gender: "M",
+    status: "CLOSED",
+    branch_name: "Main Branch",
+    clinic_name: "La Salette Medical Clinic and Laboratory",
+    chief_complaint: "Post-op wound check — clean",
+    practitioner_name: "Lara Giene Dimaapi Dela Cruz, MD",
+    practitioner_job_title: "Attending Physician",
+    practitioner_specialization: "General Surgery",
+    practitioner_prc_no: "0123456",
+    practitioner_ptr_no: "PTR-9876543",
+    practitioner_s2_no: "S2-12345678",
+    allergies: [],
+    vitals: [
+      { id: "vt-demo-3", recordedAt: "Yesterday 14:05", bpSys: 120, bpDia: 80, heartRate: 70, temperatureC: "36.5", spo2: 99, flags: [] },
+    ],
+    notes: [
+      {
+        id: "note-demo-3",
+        noteType: "SOAP",
+        subjective: "Post-operative follow-up day 7 post minor excision. Reports no throbbing pain, bleeding, or purulent drainage.",
+        objective: "Surgical wound clean, dry, well-approximated with sutures in place. No erythema or warmth.",
+        assessment: "Post-procedural wound healing, clean and unremarkable",
+        plan: "1. Sutures removed cleanly.\n2. Sterile dressing applied.\n3. Discharge from surgical follow-up.",
+        status: "SIGNED",
+        version: 1,
+      },
+    ],
+    diagnoses: [
+      { id: "dx-demo-3", icd10Code: "Z48.0", description: "Attention to surgical dressings and sutures", dxType: "PRIMARY", certainty: "CONFIRMED" },
+    ],
+    prescriptions: [],
+  },
+};
+
 export function VisitChartPage() {
   const { visitId = "" } = useParams();
   const navigate = useNavigate();
@@ -292,80 +433,91 @@ export function VisitChartPage() {
   useEffect(() => {
     if (!visitId) return;
     setLoading(true);
+    setError(null);
+
+    const applyVisitData = (v: any) => {
+      if (v?.id) {
+        setVisit({
+          id: v.id,
+          visitNo: v.visit_no || v.visitNo || "",
+          patientId: v.patient_id || v.patientId || "",
+          patientName: v.patient_name || v.patientName || "",
+          dateOfBirth: v.date_of_birth ? v.date_of_birth.split("T")[0] : undefined,
+          sex: v.gender || v.sex || undefined,
+          status: v.status || "IN_PROGRESS",
+          branchId: v.branch_id || v.branchId || undefined,
+          branchName: v.branch_name || v.branchName || undefined,
+          clinicName: v.clinic_name || v.clinicName || undefined,
+          chiefComplaint: v.chief_complaint || v.chiefComplaint || "",
+          practitionerName: v.practitioner_name || v.practitionerName || undefined,
+          allergies: Array.isArray(v.allergies) ? v.allergies : [],
+        } as any);
+      }
+      if (Array.isArray(v?.vitals) && v.vitals.length > 0) setVitals(v.vitals);
+      if (Array.isArray(v?.notes)) {
+        setNotes(v.notes);
+        if (v.notes.length > 0) {
+          const latestNote = v.notes[0];
+          setNoteId(latestNote.id);
+          setNoteStatus(latestNote.status || "DRAFT");
+          setSubjective(latestNote.subjective || "");
+          setObjective(latestNote.objective || "");
+          setAssessment(latestNote.assessment || "");
+          setPlan(latestNote.plan || "");
+          if (latestNote.plan) {
+            setRxNotes((prev) => prev || latestNote.plan || "");
+          }
+        }
+      }
+      if (Array.isArray(v?.diagnoses)) {
+        setDiagnoses(
+          v.diagnoses.map((d: any) => ({
+            id: d.id,
+            icd10Code: d.icd10_code || d.icd10Code || "",
+            description: d.description || d.icd10_description || "",
+            dxType: d.dx_type || d.dxType || "PRIMARY",
+            certainty: d.certainty || d.certainty || "CONFIRMED",
+          })),
+        );
+      }
+      if (Array.isArray(v?.prescriptions)) {
+        const mappedRxs = v.prescriptions.map((rx: any) => ({
+          id: rx.id,
+          rxNo: rx.rx_no || rx.rxNo || "RX",
+          status: rx.status || "ISSUED",
+          isControlled: Boolean(rx.is_controlled ?? rx.isControlled),
+          specialRxNo: rx.special_rx_no || rx.specialRxNo,
+          qtyWords: rx.qty_words || rx.qtyWords,
+          validUntil: rx.valid_until || rx.validUntil,
+          prescriberName: rx.prescriber_name || rx.prescriberName,
+          notes: rx.notes,
+          items: rx.items,
+        }));
+        setPrescriptions(mappedRxs);
+        const firstWithNotes = mappedRxs.find((r: any) => r.notes?.trim());
+        if (firstWithNotes?.notes) {
+          setRxNotes((prev) => prev || firstWithNotes.notes);
+        }
+      }
+      if (Array.isArray(v?.labOrders)) setLabOrders(v.labOrders);
+      if (Array.isArray(v?.supplies)) setSupplies(v.supplies);
+    };
+
     (async () => {
       try {
         const v = await apiGet<any>(`/clinical/visits/${visitId}`);
-        if (v?.id) {
-          setVisit({
-            id: v.id,
-            visitNo: v.visit_no || v.visitNo || "",
-            patientId: v.patient_id || v.patientId || "",
-            patientName: v.patient_name || v.patientName || "",
-            dateOfBirth: v.date_of_birth ? v.date_of_birth.split("T")[0] : undefined,
-            sex: v.gender || v.sex || undefined,
-            status: v.status || "IN_PROGRESS",
-            branchId: v.branch_id || v.branchId || undefined,
-            branchName: v.branch_name || v.branchName || undefined,
-            clinicName: v.clinic_name || v.clinicName || undefined,
-            chiefComplaint: v.chief_complaint || v.chiefComplaint || "",
-            practitionerName: v.practitioner_name || v.practitionerName || undefined,
-            allergies: Array.isArray(v.allergies) ? v.allergies : [],
-          } as any);
-        }
-        if (Array.isArray(v?.vitals) && v.vitals.length > 0) setVitals(v.vitals);
-        if (Array.isArray(v?.notes)) {
-          setNotes(v.notes);
-          if (v.notes.length > 0) {
-            const latestNote = v.notes[0];
-            setNoteId(latestNote.id);
-            setNoteStatus(latestNote.status || "DRAFT");
-            setSubjective(latestNote.subjective || "");
-            setObjective(latestNote.objective || "");
-            setAssessment(latestNote.assessment || "");
-            setPlan(latestNote.plan || "");
-            if (latestNote.plan) {
-              setRxNotes((prev) => prev || latestNote.plan || "");
-            }
-          }
-        }
-        if (Array.isArray(v?.diagnoses)) {
-          setDiagnoses(
-            v.diagnoses.map((d: any) => ({
-              id: d.id,
-              icd10Code: d.icd10_code || d.icd10Code || "",
-              description: d.description || d.icd10_description || "",
-              dxType: d.dx_type || d.dxType || "PRIMARY",
-              certainty: d.certainty || d.certainty || "CONFIRMED",
-            })),
-          );
-        }
-        if (Array.isArray(v?.prescriptions)) {
-          const mappedRxs = v.prescriptions.map((rx: any) => ({
-            id: rx.id,
-            rxNo: rx.rx_no || rx.rxNo || "RX",
-            status: rx.status || "ISSUED",
-            isControlled: Boolean(rx.is_controlled ?? rx.isControlled),
-            specialRxNo: rx.special_rx_no || rx.specialRxNo,
-            qtyWords: rx.qty_words || rx.qtyWords,
-            validUntil: rx.valid_until || rx.validUntil,
-            prescriberName: rx.prescriber_name || rx.prescriberName,
-            notes: rx.notes,
-            items: rx.items,
-          }));
-          setPrescriptions(mappedRxs);
-          const firstWithNotes = mappedRxs.find((r: any) => r.notes?.trim());
-          if (firstWithNotes?.notes) {
-            setRxNotes((prev) => prev || firstWithNotes.notes);
-          }
-        }
-        if (Array.isArray(v?.labOrders)) setLabOrders(v.labOrders);
-        if (Array.isArray(v?.supplies)) setSupplies(v.supplies);
+        applyVisitData(v);
         try {
           const certs = await apiGet<{ data?: CertificateRow[] }>(`/clinical/visits/${visitId}/certificates`);
           if (Array.isArray(certs?.data)) setCertificates(certs.data);
         } catch { /* certificates are optional on the chart */ }
       } catch {
-        setError("Could not load visit chart. The visit may not exist or you may not have access.");
+        if (visitId && DEMO_CHART_DATA[visitId]) {
+          applyVisitData(DEMO_CHART_DATA[visitId]);
+          setNotice("Demonstration encounter chart — preview mode.");
+        } else {
+          setError("Could not load visit chart. The visit may not exist or you may not have access.");
+        }
       } finally {
         setLoading(false);
       }
@@ -374,6 +526,15 @@ export function VisitChartPage() {
 
   const addVitals = async () => {
     setError(null);
+    if (visitId && DEMO_CHART_DATA[visitId]) {
+      setVitals((prev) => [
+        { id: `vt-${Date.now()}`, recordedAt: "just now", bpSys: Number(bpSys) || null, bpDia: Number(bpDia) || null, heartRate: Number(hr) || null, temperatureC: temp || null, spo2: Number(spo2) || null },
+        ...prev,
+      ]);
+      setNotice("Vitals recorded (demonstration mode).");
+      setBpSys(""); setBpDia(""); setHr(""); setTemp(""); setSpo2("");
+      return;
+    }
     try {
       const res = await apiPost<{ id: string; flags?: string[] }>(`/clinical/visits/${visitId}/vitals`, {
         ...(bpSys ? { bpSys: Number(bpSys) } : {}),
@@ -400,6 +561,31 @@ export function VisitChartPage() {
   const saveNote = async () => {
     setError(null);
     const body = { noteType: "SOAP", subjective, objective, assessment, plan };
+    if (visitId && DEMO_CHART_DATA[visitId]) {
+      const newId = noteId || `note-${Date.now()}`;
+      setNoteId(newId);
+      const updatedNote: NoteRow = {
+        id: newId,
+        noteType: "SOAP",
+        subjective,
+        objective,
+        assessment,
+        plan,
+        status: noteStatus,
+        version: 1,
+      };
+      setNotes((prev) => {
+        const idx = prev.findIndex((n) => n.id === newId);
+        if (idx >= 0) {
+          const copy = [...prev];
+          copy[idx] = updatedNote;
+          return copy;
+        }
+        return [updatedNote, ...prev];
+      });
+      setNotice("SOAP draft saved (demonstration mode).");
+      return;
+    }
     try {
       const res = await apiPost<NoteRow>(`/clinical/visits/${visitId}/notes`, body);
       const newId = res?.id ?? noteId ?? `note-${Date.now()}`;
@@ -500,6 +686,30 @@ export function VisitChartPage() {
     }
     if (rxControlled && (!specialRxNo.trim() || !qtyWords.trim())) {
       setError("Controlled Rx needs the special-Rx serial and the quantity in words.");
+      return;
+    }
+    if (visitId && DEMO_CHART_DATA[visitId]) {
+      setPrescriptions((prev) => [
+        {
+          id: `rx-${Date.now()}`,
+          rxNo: `RX-DEMO-${Date.now().toString().slice(-4)}`,
+          status: "ISSUED",
+          isControlled: rxControlled,
+          specialRxNo: rxControlled ? specialRxNo.trim() : undefined,
+          qtyWords: rxControlled ? qtyWords.trim() : undefined,
+          prescriberName: visit?.practitionerName || "Attending Physician",
+          notes: rxNotes.trim() || undefined,
+          items: [{
+            generic_name: rxGeneric.trim(),
+            sig_dose: rxSigDose.trim(),
+            sig_frequency: rxFrequency.trim(),
+            qty_prescribed: Number(rxQty),
+          }],
+        },
+        ...prev,
+      ]);
+      setNotice(`Prescription issued (demonstration mode).`);
+      setRxGeneric(""); setRxSigDose(""); setRxFrequency(""); setRxQty(""); setRxControlled(false); setSpecialRxNo(""); setQtyWords("");
       return;
     }
     try {
@@ -807,14 +1017,25 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
     return (
       <div className="p-4">
         <div className="page-header d-flex justify-content-between align-items-center mb-3">
-          <h1 className="page-title">Visit Not Found</h1>
-          <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => navigate("/clinical/visits")}>
-            Back to list
+          <div>
+            <h1 className="page-title">Visit Not Found</h1>
+            <div className="page-subtitle">The requested clinical visit could not be loaded</div>
+          </div>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => navigate("/clinical/visits")}>
+            ← Back to Consultations & Visits
           </button>
         </div>
         <AlertBanner severity="warning">
           {error || "Could not load visit chart. The visit may not exist or you may not have access."}
         </AlertBanner>
+        <div className="mt-3 p-4 bg-light border rounded text-center">
+          <p className="text-muted small mb-3">
+            Visit identifier: <code className="fw-semibold">{visitId}</code>
+          </p>
+          <button type="button" className="btn btn-outline-primary btn-sm" onClick={() => navigate("/clinical/visits")}>
+            View Active Consultations
+          </button>
+        </div>
       </div>
     );
   }

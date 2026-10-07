@@ -259,6 +259,91 @@ describe("SchedulingPage (todo §3.1, CLN-T1)", () => {
     expect(await screen.findByText("Dela Cruz, Juan")).toBeInTheDocument();
     expect(screen.getByText(/Online/i)).toBeInTheDocument();
   });
+
+  it("opens reschedule modal for a booked patient and modifies the schedule", async () => {
+    let patchCalled = false;
+    let patchBody: any = null;
+
+    useStubHandler((req, res) => {
+      const url = req.url ?? "";
+      if (req.method === "PATCH" && url.includes("/clinical/appointments/a1/reschedule")) {
+        patchCalled = true;
+        let body = "";
+        req.on("data", (chunk) => {
+          body += chunk;
+        });
+        req.on("end", () => {
+          patchBody = JSON.parse(body);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ id: "a1", status: "CONFIRMED" }));
+        });
+        return;
+      }
+      baseHandler(req, res);
+    });
+
+    renderAt("*", <SchedulingPage />);
+    expect(await screen.findByText("Santos, Maria Elena")).toBeInTheDocument();
+
+    const rescheduleBtn = await screen.findByRole("button", { name: /Reschedule/i });
+    fireEvent.click(rescheduleBtn);
+
+    expect(await screen.findByText(/Modify Appointment Schedule/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Start Time/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/End Time/i)).toBeInTheDocument();
+
+    // Change start and end times
+    fireEvent.change(screen.getByLabelText(/Start Time/i), { target: { value: "11:00" } });
+    fireEvent.change(screen.getByLabelText(/End Time/i), { target: { value: "11:30" } });
+
+    // Submit reschedule
+    fireEvent.click(screen.getByRole("button", { name: /Save New Schedule/i }));
+
+    await waitFor(() => {
+      expect(patchCalled).toBe(true);
+    });
+    expect(patchBody.startsAt).toMatch(/T\d{2}:00:00/);
+    expect(patchBody.endsAt).toMatch(/T\d{2}:30:00/);
+    expect(await screen.findByText(/Schedule modified for Santos, Maria Elena/i)).toBeInTheDocument();
+  });
+
+  it("opens cancel modal and cancels appointment with reason", async () => {
+    let cancelCalled = false;
+    let cancelBody: any = null;
+
+    useStubHandler((req, res) => {
+      const url = req.url ?? "";
+      if (req.method === "PATCH" && url.includes("/clinical/appointments/a1/cancel")) {
+        cancelCalled = true;
+        let body = "";
+        req.on("data", (chunk) => {
+          body += chunk;
+        });
+        req.on("end", () => {
+          cancelBody = JSON.parse(body);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ id: "a1", status: "CANCELLED" }));
+        });
+        return;
+      }
+      baseHandler(req, res);
+    });
+
+    renderAt("*", <SchedulingPage />);
+    expect(await screen.findByText("Santos, Maria Elena")).toBeInTheDocument();
+
+    const cancelBtn = await screen.findByRole("button", { name: /Cancel/i });
+    fireEvent.click(cancelBtn);
+
+    expect(await screen.findByText(/Reason for Cancellation/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Confirm Cancellation/i }));
+
+    await waitFor(() => {
+      expect(cancelCalled).toBe(true);
+    });
+    expect(cancelBody.reason).toBe("Patient requested cancellation");
+    expect(await screen.findByText(/Appointment for Santos, Maria Elena has been cancelled/i)).toBeInTheDocument();
+  });
 });
 
 describe("QueueBoardPage (CLN-T2)", () => {

@@ -125,12 +125,26 @@ export function PublicBookingPage() {
     setConfigError(null);
     try {
       const data = await apiGet<ClinicConfig>(`/public/booking/clinic?slug=${encodeURIComponent(clinicSlug)}`);
-      setConfig(data);
-      if (data.branches?.length > 0 && data.branches[0]) {
-        setSelectedBranchId(data.branches[0].id);
+      // Strictly ensure only doctors/physicians are selectable (filter out administrative/manager accounts)
+      const doctorsOnly = (data.practitioners ?? []).filter((p) => {
+        const titleLower = (p.title || "").toLowerCase();
+        const nameLower = (p.name || "").toLowerCase();
+        const isManager = titleLower.includes("manager") || titleLower.includes("admin") || nameLower.includes("admin");
+        const isDoc = nameLower.startsWith("dr.") || titleLower.includes("doctor") || titleLower.includes("physician");
+        return !isManager || isDoc;
+      });
+      const filteredConfig: ClinicConfig = {
+        ...data,
+        practitioners: doctorsOnly,
+      };
+      setConfig(filteredConfig);
+      if (filteredConfig.branches?.length > 0 && filteredConfig.branches[0]) {
+        setSelectedBranchId(filteredConfig.branches[0].id);
       }
-      if (data.practitioners?.length > 0 && data.practitioners[0]) {
-        setSelectedPractitionerId(data.practitioners[0].id);
+      if (filteredConfig.practitioners?.length > 0 && filteredConfig.practitioners[0]) {
+        setSelectedPractitionerId(filteredConfig.practitioners[0].id);
+      } else {
+        setSelectedPractitionerId("");
       }
     } catch (err) {
       setConfigError(
@@ -521,10 +535,17 @@ export function PublicBookingPage() {
                           SELECT PRACTITIONER / PHYSICIAN
                         </label>
                         <div className="row g-3">
-                          {config.practitioners.map((doc) => {
-                            const isSelected = doc.id === selectedPractitionerId;
-                            return (
-                              <div key={doc.id} className="col-sm-6">
+                          {config.practitioners.length === 0 ? (
+                            <div className="col-12">
+                              <div className="alert alert-warning py-3 px-3 mb-0 small">
+                                No doctors are currently available for online booking at this clinic.
+                              </div>
+                            </div>
+                          ) : (
+                            config.practitioners.map((doc) => {
+                              const isSelected = doc.id === selectedPractitionerId;
+                              return (
+                                <div key={doc.id} className="col-sm-6">
                                 <div
                                   role="button"
                                   tabIndex={0}
@@ -578,7 +599,7 @@ export function PublicBookingPage() {
                                 </div>
                               </div>
                             );
-                          })}
+                          }))}
                         </div>
                       </div>
                     </div>

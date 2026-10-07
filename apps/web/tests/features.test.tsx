@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { AuthProvider } from "../src/shared/auth/AuthContext.js";
 import { PermissionsProvider } from "../src/shared/auth/PermissionsContext.js";
@@ -232,6 +232,41 @@ describe("Phase 1 & 2 Frontend Feature Screens", () => {
     // Now unmasked and marked as audited (async state update after audit api call)
     await screen.findByText(/Unmasked & Audited/i);
     expect(screen.getByText(/12-345678901-2/i)).toBeInTheDocument();
+  });
+
+  it("PatientsPage allows modifying patient information via edit modal", async () => {
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <PatientsPage />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText(/Patient Registry & Master Patient Index/i)).toBeInTheDocument();
+
+    // Click Edit button on the first patient row
+    const editButtons = screen.getAllByRole("button", { name: /Edit/i });
+    expect(editButtons.length).toBeGreaterThan(0);
+    fireEvent.click(editButtons[0]!);
+
+    // Modal opens
+    expect(screen.getByText(/Modify Patient Information/i)).toBeInTheDocument();
+    expect(screen.getByText(/Optimistic Concurrency Version/i)).toBeInTheDocument();
+
+    // Modify first name
+    const firstNameInput = screen.getByDisplayValue("Maria Elena");
+    fireEvent.change(firstNameInput, { target: { value: "Maria Theresa" } });
+
+    // Submit changes
+    const saveButton = screen.getByRole("button", { name: /Save Changes/i });
+    fireEvent.click(saveButton);
+
+    // Verify modal closes and updated patient name appears
+    await waitFor(() => {
+      expect(screen.queryByText(/Modify Patient Information/i)).not.toBeInTheDocument();
+    });
+    expect(screen.getAllByText(/Santos, Maria Theresa/i).length).toBeGreaterThan(0);
   });
 
   it("DashboardPage renders live working data KPI cards, operational tabs, and department workbenches", async () => {

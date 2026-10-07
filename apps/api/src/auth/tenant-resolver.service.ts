@@ -20,7 +20,7 @@ export function slugFromHost(hostname: string): string | null {
   const labels = host.split(".").filter(Boolean);
   // demo-a.clinic.test → demo-a ; demo-b.localhost → demo-b (dev loopback);
   // bare localhost / reserved first labels → none.
-  const RESERVED = new Set(["www", "api", "app", "admin", "127", "0"]);
+  const RESERVED = new Set(["www", "api", "app", "admin", "clinic", "platform", "portal", "127", "0"]);
   const isLocalhost = host === "localhost" || host.endsWith(".localhost");
   if (isLocalhost) {
     return labels.length >= 2 && !RESERVED.has(labels[0]!) ? labels[0]! : null;
@@ -34,11 +34,36 @@ export function slugFromHost(hostname: string): string | null {
 @Injectable()
 export class TenantResolverService {
   async resolveBySlug(slug: string): Promise<DirectoryTenant | null> {
-    const result = await getAppPool().query<DirectoryTenant>(
+    if (!slug) return null;
+    const raw = slug.toLowerCase().trim();
+    // 1. Direct match
+    let result = await getAppPool().query<DirectoryTenant>(
       `SELECT id, slug, status::text AS status FROM tenant_directory WHERE slug = $1`,
-      [slug.toLowerCase()],
+      [raw],
     );
-    return result.rows[0] ?? null;
+    if (result.rows[0]) return result.rows[0];
+
+    // 2. Strip common domain suffixes (e.g. la-salette.emr -> la-salette)
+    const stripped = raw.replace(/\.(emr|test|clinic\.ph|clinic|ph|com|local|org|net)$/i, "").trim();
+    if (stripped && stripped !== raw) {
+      result = await getAppPool().query<DirectoryTenant>(
+        `SELECT id, slug, status::text AS status FROM tenant_directory WHERE slug = $1`,
+        [stripped],
+      );
+      if (result.rows[0]) return result.rows[0];
+    }
+
+    // 3. Normalize spaces or underscores to hyphens (e.g. "la salette" -> "la-salette")
+    const hyphenated = (stripped || raw).replace(/[\s_]+/g, "-");
+    if (hyphenated && hyphenated !== raw && hyphenated !== stripped) {
+      result = await getAppPool().query<DirectoryTenant>(
+        `SELECT id, slug, status::text AS status FROM tenant_directory WHERE slug = $1`,
+        [hyphenated],
+      );
+      if (result.rows[0]) return result.rows[0];
+    }
+
+    return null;
   }
 
   async resolveById(id: string): Promise<DirectoryTenant | null> {

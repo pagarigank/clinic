@@ -172,6 +172,50 @@ describe.skipIf(!hasDb)('ClinicalService (Phase 3)', () => {
       expect(aptRebooked.status).toBe('BOOKED');
       cleanupAppointmentIds.push(aptRebooked.id);
     });
+
+    it('reschedules an appointment with updated times, practitioner, and notes', async () => {
+      const patient = await patientsSvc.createPatient(TENANT_A, USER_A, {
+        firstName: 'Reschedule',
+        lastName: 'Patient',
+        dateOfBirth: '1990-01-01',
+        gender: 'M',
+      });
+      cleanupPatientIds.push(patient.id);
+
+      const apt = await clinicalSvc.bookAppointment(TENANT_A, USER_A, {
+        branchId: BRANCH_A,
+        patientId: patient.id,
+        practitionerId: DOCTOR_A,
+        startsAt: '2026-11-17T09:00:00.000Z',
+        endsAt: '2026-11-17T09:30:00.000Z',
+        channel: 'FRONT_DESK',
+      });
+      cleanupAppointmentIds.push(apt.id);
+
+      // Reschedule to later that day with notes
+      const rescheduled = await clinicalSvc.rescheduleAppointment(TENANT_A, USER_A, apt.id, {
+        startsAt: '2026-11-17T11:00:00.000Z',
+        endsAt: '2026-11-17T11:30:00.000Z',
+        rowVersion: apt.row_version,
+        notes: 'Rescheduled by patient request',
+      });
+
+      expect(new Date(rescheduled.starts_at).toISOString()).toBe('2026-11-17T11:00:00.000Z');
+      expect(new Date(rescheduled.ends_at).toISOString()).toBe('2026-11-17T11:30:00.000Z');
+      expect(rescheduled.notes).toBe('Rescheduled by patient request');
+      expect(rescheduled.row_version).toBe(apt.row_version + 1);
+
+      // Stale row version check
+      await expect(
+        clinicalSvc.rescheduleAppointment(TENANT_A, USER_A, apt.id, {
+          startsAt: '2026-11-17T14:00:00.000Z',
+          endsAt: '2026-11-17T14:30:00.000Z',
+          rowVersion: apt.row_version, // old version
+        }),
+      ).rejects.toMatchObject({
+        response: { code: 'STALE_ROW_VERSION' },
+      });
+    });
   });
 
   describe('AC-5: Rx patient mismatch & allergy checking', () => {

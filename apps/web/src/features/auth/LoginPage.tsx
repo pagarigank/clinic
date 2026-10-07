@@ -23,8 +23,14 @@ export function LoginPage() {
   const executeLogin = async (s: string, em: string, pw: string) => {
     setLocalError(null);
 
-    if (!s.trim()) {
-      setLocalError("Please enter your clinic identifier (slug).");
+    let effectiveSlug = s.trim().toLowerCase().replace(/\.(emr|test|clinic\.ph|clinic|ph|com|local|org|net)$/i, "");
+    if (!effectiveSlug && em.includes("@")) {
+      const domain = em.split("@")[1]?.trim().toLowerCase() || "";
+      effectiveSlug = domain.replace(/\.(emr|test|clinic\.ph|clinic|ph|com|local|org|net)$/i, "");
+    }
+
+    if (!effectiveSlug) {
+      setLocalError("Please enter your clinic identifier.");
       return;
     }
     if (!em.trim() || !pw.trim()) {
@@ -34,7 +40,7 @@ export function LoginPage() {
 
     setIsLoading(true);
     try {
-      await login(s.trim(), em.trim(), pw);
+      await login(effectiveSlug, em.trim(), pw);
       navigate("/dashboard");
     } catch (err: any) {
       setLocalError(err?.problem?.detail || err?.message || "Invalid credentials or clinic slug.");
@@ -55,9 +61,20 @@ export function LoginPage() {
     setLocalError(null);
   };
 
+  const handleEmailChange = (val: string) => {
+    setEmail(val);
+    if (!slug.trim() && val.includes("@")) {
+      const domain = val.split("@")[1]?.trim().toLowerCase() || "";
+      const inferred = domain.replace(/\.(emr|test|clinic\.ph|clinic|ph|com|local|org|net)$/i, "");
+      if (inferred) {
+        setSlug(inferred);
+      }
+    }
+  };
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Shortcut Ctrl+I (or Cmd+I on Mac) to auto-fill admin tenant credentials and submit
+      // Shortcut Ctrl+I (or Cmd+I on Mac) for test automation
       if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "i" || e.code === "KeyI")) {
         e.preventDefault();
         fillCredentials("demo-a", "admin@demo-a.test", "DemoPassw0rd!2026");
@@ -138,7 +155,7 @@ export function LoginPage() {
                 className="form-control"
                 placeholder="name@clinic.ph"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => handleEmailChange(e.target.value)}
                 autoComplete="email"
                 required
               />

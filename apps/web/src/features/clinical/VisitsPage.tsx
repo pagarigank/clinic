@@ -72,7 +72,7 @@ const DEMO_VISITS: VisitRow[] = [
 export function VisitsPage() {
   const navigate = useNavigate();
   const { session } = useAuth();
-  const [visits, setVisits] = useState<VisitRow[]>(DEMO_VISITS);
+  const [visits, setVisits] = useState<VisitRow[]>([]);
   const [visitsLoading, setVisitsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [error, setError] = useState<string | null>(null);
@@ -177,12 +177,15 @@ export function VisitsPage() {
     setVisitsLoading(true);
     try {
       const res = await apiGet<{ data?: Array<Record<string, unknown>> }>("/clinical/visits");
-      if (Array.isArray(res?.data) && res.data.length > 0) {
+      if (Array.isArray(res?.data)) {
         setVisits(res.data.map(mapVisit));
+      } else {
+        setVisits([]);
       }
       setError(null);
     } catch {
-      setError("Live visit list unavailable.");
+      setError("Live visit list unavailable. Showing demonstration encounters.");
+      setVisits(DEMO_VISITS);
     } finally {
       setVisitsLoading(false);
     }
@@ -254,8 +257,18 @@ export function VisitsPage() {
     setIsSubmitting(true);
     setFormError(null);
     try {
-      const branchId = session?.branchId || "b1000000-0000-4000-8000-000000000001";
-      const practitionerId = session?.userId || "u-doctor-1";
+      const branchId = session?.branchId || session?.assignedBranches?.[0]?.id;
+      if (!branchId) {
+        setFormError("Active branch could not be determined.");
+        setIsSubmitting(false);
+        return;
+      }
+      const practitionerId = session?.userId;
+      if (!practitionerId) {
+        setFormError("Practitioner could not be determined. Please sign in again.");
+        setIsSubmitting(false);
+        return;
+      }
       const res = await apiPost<{ id: string; visitNo: string }>("/clinical/visits", {
         branchId,
         patientId: selectedPatientId,
@@ -529,7 +542,18 @@ export function VisitsPage() {
                   <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />Loading visits…
                 </td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={6} className="text-center text-muted py-4">No visits match this filter.</td></tr>
+                <tr>
+                  <td colSpan={6} className="text-center text-muted py-4">
+                    <div className="mb-2">No visits match this filter.</div>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-primary"
+                      onClick={() => setShowRegister(true)}
+                    >
+                      + Register Visit
+                    </button>
+                  </td>
+                </tr>
               ) : null}
             </tbody>
           </table>

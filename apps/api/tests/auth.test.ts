@@ -176,6 +176,8 @@ describe("slugFromHost (tenant resolution, arch §5.6)", () => {
   });
   it("returns null for reserved/non-subdomain hosts", () => {
     expect(slugFromHost("localhost")).toBeNull();
+    expect(slugFromHost("clinic.sititsolutions.com")).toBeNull();
+    expect(slugFromHost("platform.clinic.example.com")).toBeNull();
     expect(slugFromHost("app.clinic.example.com")).toBeNull();
     expect(slugFromHost("api.example.com")).toBeNull();
   });

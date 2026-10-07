@@ -180,10 +180,17 @@ export class RbacService {
 
     return withTenant({ tenantId, userId }, async (tx) => {
       const role = await this.findRole(tx, roleId);
-      if (role.is_system) {
+      if (role.is_system && input.name !== undefined && input.name !== role.name) {
         throw new ProblemException("CONFLICT", {
           detail: "system roles are template-managed; create a custom role instead",
         });
+      }
+      if (role.code === "tenant_admin" && input.permissions) {
+        if (!input.permissions.includes("admin.role.update") || !input.permissions.includes("admin.role.read")) {
+          throw new ProblemException("VALIDATION_FAILED", {
+            detail: "cannot revoke core administration permissions from tenant administrator",
+          });
+        }
       }
       if (rowVersion !== undefined && rowVersion !== role.row_version) {
         throw new ProblemException("STALE_ROW_VERSION");

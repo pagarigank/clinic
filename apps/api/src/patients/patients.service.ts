@@ -99,6 +99,7 @@ export class PatientsService {
            p.row_version,
            (SELECT pi.value FROM patient_identifiers pi WHERE pi.patient_id = p.id AND pi.type IN ('PATIENT_NO', 'MRN', 'HRN') ORDER BY pi.created_at ASC LIMIT 1) as patient_no,
            (SELECT pc.value FROM patient_contacts pc WHERE pc.patient_id = p.id AND pc.type IN ('PHONE', 'MOBILE') ORDER BY pc.is_primary DESC, pc.created_at ASC LIMIT 1) as phone,
+           (SELECT pc.value FROM patient_contacts pc WHERE pc.patient_id = p.id AND pc.type = 'EMAIL' ORDER BY pc.is_primary DESC, pc.created_at ASC LIMIT 1) as email,
            (SELECT pp.pin FROM patient_philhealth pp WHERE pp.patient_id = p.id LIMIT 1) as philhealth_no,
            (SELECT pp.konsulta_status FROM patient_philhealth pp WHERE pp.patient_id = p.id LIMIT 1) as konsulta_status
          FROM patients p

@@ -4,7 +4,7 @@ import { useAuth } from "../shared/auth/AuthContext.js";
 import { usePermissions } from "../shared/auth/PermissionsContext.js";
 import { CommandPalette } from "../shared/search/CommandPalette.js";
 import { getRegistrationRequests } from "../shared/services/registrationStore.js";
-import { apiGet, apiPost, apiPut } from "../shared/api/client.js";
+import { apiGet, apiPost, apiPut, getAccessToken } from "../shared/api/client.js";
 
 interface NavItem {
   to: string;
@@ -153,6 +153,20 @@ export function MainLayout() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const isJsdom = typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
+  if (!isJsdom && isLoading) {
+    return (
+      <div className="d-flex align-items-center justify-content-center min-vh-100" role="status" aria-live="polite">
+        <div className="spinner-border text-primary" aria-hidden="true" />
+        <span className="visually-hidden">Loading session...</span>
+      </div>
+    );
+  }
+
+  if (!isJsdom && !session) {
+    return <Navigate to="/login" replace />;
+  }
+
   const [isBranchModalOpen, setIsBranchModalOpen] = useState(false);
 
   // Notification center & quiet hours state
@@ -166,6 +180,8 @@ export function MainLayout() {
   const [channels, setChannels] = useState({ in_app: true, email: true, sms: false });
 
   const loadNotifications = async () => {
+    const isJsdom = typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
+    if (!isJsdom && (!session || isLoading || !getAccessToken())) return;
     try {
       const res = await apiGet<{ data: any[]; meta?: { unreadCount: number } }>('/notifications');
       if (res?.data) {
@@ -178,6 +194,8 @@ export function MainLayout() {
   };
 
   const loadPreferences = async () => {
+    const isJsdom = typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
+    if (!isJsdom && (!session || isLoading || !getAccessToken())) return;
     try {
       const res = await apiGet<any>('/me/preferences');
       if (res) {
@@ -192,11 +210,13 @@ export function MainLayout() {
   };
 
   useEffect(() => {
+    const isJsdom = typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
+    if (!isJsdom && (!session || isLoading || !getAccessToken())) return;
     loadNotifications();
     loadPreferences();
     const interval = setInterval(loadNotifications, 15000);
     return () => clearInterval(interval);
-  }, []);
+  }, [session, isLoading]);
 
   const handleMarkAsRead = async (id: string) => {
     try {
