@@ -1343,6 +1343,51 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
             </div>
           </div>
 
+          {/* ── Clinical Notes / Memo ────────────────────────────────────── */}
+          <div className="clinic-card mb-4">
+            <div className="clinic-card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+              <div>
+                <span className="fw-bold">Clinical Notes / Physician's Memo</span>
+                <span className="small text-muted ms-2">(printed on prescription pad just before footer)</span>
+              </div>
+              {(plan || assessment) ? (
+                <button
+                  type="button"
+                  className="btn btn-link btn-sm p-0 text-decoration-none"
+                  style={{ fontSize: "0.8rem" }}
+                  onClick={() => setClinicalMemo([assessment ? `Assessment: ${assessment}` : "", plan ? `Plan: ${plan}` : ""].filter(Boolean).join("\n"))}
+                >
+                  📋 Copy from SOAP Assessment &amp; Plan
+                </button>
+              ) : null}
+            </div>
+            <div className="p-3">
+              <textarea
+                id="rx-clinical-memo"
+                className="form-control form-control-sm"
+                rows={3}
+                placeholder="e.g. Patient advised on dietary and lifestyle modification. Follow up for repeat laboratory tests in 5 days."
+                value={clinicalMemo}
+                onChange={(e) => setClinicalMemo(e.target.value)}
+              />
+              <div className="d-flex justify-content-between align-items-center mt-2">
+                <span className="small text-muted">
+                  Included automatically on prescription and consultation order printouts.
+                </span>
+                {clinicalMemo ? (
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary btn-sm py-0 px-2"
+                    style={{ fontSize: "0.78rem" }}
+                    onClick={() => setClinicalMemo("")}
+                  >
+                    Clear memo
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+
           {/* ── Prescription (CLN-T5) ───────────────────────────────────── */}
           <div className="clinic-card mb-4">
             <div className="clinic-card-header d-flex justify-content-between align-items-center">
@@ -1492,32 +1537,6 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
                   placeholder="e.g. Take after meals. Increase oral fluid intake. Complete 7-day course. Return for follow-up if symptoms persist."
                   value={rxNotes}
                   onChange={(e) => setRxNotes(e.target.value)}
-                />
-              </div>
-              <div className="mb-3">
-                <div className="d-flex justify-content-between align-items-center mb-1">
-                  <label className="form-label small mb-0 fw-semibold text-dark" htmlFor="rx-clinical-memo">
-                    <strong>📋 Clinical Notes / Memo Entry</strong>
-                    <span className="text-muted fw-normal ms-1">(printed on prescription pad just before footer)</span>
-                  </label>
-                  {(plan || assessment) ? (
-                    <button
-                      type="button"
-                      className="btn btn-link btn-sm p-0 text-decoration-none"
-                      style={{ fontSize: "0.78rem" }}
-                      onClick={() => setClinicalMemo([assessment ? `Assessment: ${assessment}` : "", plan ? `Plan: ${plan}` : ""].filter(Boolean).join("\n"))}
-                    >
-                      📋 Copy from SOAP Assessment &amp; Plan
-                    </button>
-                  ) : null}
-                </div>
-                <textarea
-                  id="rx-clinical-memo"
-                  className="form-control form-control-sm"
-                  rows={2}
-                  placeholder="e.g. Patient advised on dietary and lifestyle modification. Follow up for repeat laboratory tests in 5 days."
-                  value={clinicalMemo}
-                  onChange={(e) => setClinicalMemo(e.target.value)}
                 />
               </div>
               <button type="button" className="btn btn-sm btn-cerulean" onClick={() => void createAndIssueRx()}>
