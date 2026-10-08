@@ -129,6 +129,7 @@ export function PatientsPage() {
 
   // Registration Form State
   const [firstName, setFirstName] = useState("");
+  const [middleName, setMiddleName] = useState("");
   const [lastName, setLastName] = useState("");
   const [dob, setDob] = useState("1990-01-01");
   const [gender, setGender] = useState("F");
@@ -269,11 +270,13 @@ export function PatientsPage() {
             patient_no: string;
             first_name: string;
             last_name: string;
+            middle_name?: string | null;
             date_of_birth: string;
             gender: string;
           }>("/patients", {
             firstName: firstName.trim(),
             lastName: lastName.trim(),
+            ...(middleName.trim() ? { middleName: middleName.trim() } : {}),
             dateOfBirth: dob,
             gender,
             // Q-11: emergency intake is expressed as registrationType, not a
@@ -299,6 +302,7 @@ export function PatientsPage() {
             patientNo: created.patient_no,
             firstName: created.first_name,
             lastName: created.last_name,
+            ...(created.middle_name ? { middleName: created.middle_name } : {}),
             dob: created.date_of_birth,
             gender: created.gender as PatientRecord["gender"],
             phone: phone.trim() || "N/A",
@@ -317,6 +321,7 @@ export function PatientsPage() {
           setPatients([newPatient, ...patients]);
           setIsRegisterOpen(false);
           setFirstName("");
+          setMiddleName("");
           setLastName("");
           setDob("");
           setPhone("");
@@ -1050,7 +1055,7 @@ export function PatientsPage() {
                 </div>
                 <div className="modal-body">
                   <div className="row g-3 mb-3">
-                    <div className="col-md-6">
+                    <div className="col-md-4">
                       <label className="form-label small fw-semibold">FIRST NAME *</label>
                       <input
                         type="text"
@@ -1061,7 +1066,20 @@ export function PatientsPage() {
                         required
                       />
                     </div>
-                    <div className="col-md-6">
+                    <div className="col-md-4">
+                      {/* Optional, matching CreatePatientSchema. Kept out of the
+                          required set so emergency intake never blocks on it. */}
+                      <label className="form-label small fw-semibold">MIDDLE NAME</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="e.g. Reyes"
+                        value={middleName}
+                        onChange={(e) => setMiddleName(e.target.value)}
+                        aria-label="Middle name"
+                      />
+                    </div>
+                    <div className="col-md-4">
                       <label className="form-label small fw-semibold">LAST NAME *</label>
                       <input
                         type="text"

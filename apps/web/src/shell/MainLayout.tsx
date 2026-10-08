@@ -153,20 +153,12 @@ export function MainLayout() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const isJsdom = typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
-  if (!isJsdom && isLoading) {
-    return (
-      <div className="d-flex align-items-center justify-content-center min-vh-100" role="status" aria-live="polite">
-        <div className="spinner-border text-primary" aria-hidden="true" />
-        <span className="visually-hidden">Loading session...</span>
-      </div>
-    );
-  }
-
-  if (!isJsdom && !session) {
-    return <Navigate to="/login" replace />;
-  }
-
+  // Hooks must run on every render, so the loading / no-session exits below
+  // are deliberately placed after all of them rather than here. Early-returning
+  // before the useState/useMemo block counted a different number of hooks on
+  // the loading render than on the one that followed, which threw "Rendered
+  // more hooks than during the previous render" and took the whole shell down
+  // — every route under this layout, not just the one being visited.
   const [isBranchModalOpen, setIsBranchModalOpen] = useState(false);
 
   // Notification center & quiet hours state
@@ -354,6 +346,20 @@ export function MainLayout() {
     await logout();
     navigate("/login");
   };
+
+  const isJsdom = typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
+  if (!isJsdom && isLoading) {
+    return (
+      <div className="d-flex align-items-center justify-content-center min-vh-100" role="status" aria-live="polite">
+        <div className="spinner-border text-primary" aria-hidden="true" />
+        <span className="visually-hidden">Loading session...</span>
+      </div>
+    );
+  }
+
+  if (!isJsdom && !session) {
+    return <Navigate to="/login" replace />;
+  }
 
   return (
     <div className="app-container">

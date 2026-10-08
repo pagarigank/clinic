@@ -128,7 +128,7 @@ export class PatientsService {
       const res = await tx.query(
         `INSERT INTO patients (tenant_id, first_name, last_name, middle_name, date_of_birth, gender, status)
          VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE')
-         RETURNING id, first_name, last_name, date_of_birth, gender, status, row_version, created_at`,
+         RETURNING id, first_name, last_name, middle_name, date_of_birth, gender, status, row_version, created_at`,
         [tenantId, dto.firstName, dto.lastName, dto.middleName ?? null, dto.dateOfBirth, dto.gender],
       );
       const patient = res.rows[0];
