@@ -148,7 +148,6 @@ export function GrnPrintModal({
 
   useEffect(() => {
     void fetchPdfPreview();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isOpen,
     grnId,

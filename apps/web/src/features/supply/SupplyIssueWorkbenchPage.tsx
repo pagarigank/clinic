@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { Alert, Badge, Button, EmptyState, Form, SkeletonTable, StatusPill } from "@clinic/ui";
-import { ApiError, apiGetBlob } from "../../shared/api/client.js";
+import { ApiError } from "../../shared/api/client.js";
 import { supplyApi } from "./api.js";
 import type { SupplyItemRow, SupplyLocation, SupplyStockRow } from "./api.js";
 import { ConsumptionPrintModal } from "./ConsumptionPrintModal.js";

@@ -226,7 +226,7 @@ export async function apiGetBlob(path: string): Promise<Blob> {
 export async function apiPostBlob<B = unknown>(path: string, body?: B, signal?: AbortSignal): Promise<Blob> {
   const headers = buildHeaders();
   if (body !== undefined) {
-    headers["Content-Type"] = "application/json";
+    headers.set("Content-Type", "application/json");
   }
   const res = await fetch(`${apiBase()}${path}`, {
     method: "POST",

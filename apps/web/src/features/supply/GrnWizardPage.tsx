@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router";
 import { AlertBanner, Button, Form } from "@clinic/ui";
 import { apiPost } from "../../shared/api/client.js";
+import { GrnPrintModal } from "./GrnPrintModal.js";
 
 interface GrnLineItem {
   id: string;
@@ -55,6 +56,7 @@ export function GrnWizardPage() {
 
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
   const calculateDaysRemaining = (expiryDateStr: string) => {
     if (!expiryDateStr) return 999;
@@ -171,9 +173,19 @@ export function GrnWizardPage() {
             SUP-T2 &amp; AC-8: Receive supplier deliveries, enforce lot &amp; shelf-life rules, and post atomic ledger updates.
           </p>
         </div>
-        <Button variant="outline-secondary" size="sm" onClick={() => navigate("/supply/dashboard")}>
-          Cancel
-        </Button>
+        <div className="d-flex align-items-center gap-2">
+          <Button
+            variant="outline-primary"
+            size="sm"
+            onClick={() => setIsPrintModalOpen(true)}
+            disabled={lines.length === 0}
+          >
+            🖨️ Print / Preview GRN
+          </Button>
+          <Button variant="outline-secondary" size="sm" onClick={() => navigate("/supply/dashboard")}>
+            Cancel
+          </Button>
+        </div>
       </div>
 
       {errorBanner && (
@@ -414,7 +426,15 @@ export function GrnWizardPage() {
             </table>
           </div>
         </div>
-        <div className="card-footer bg-white py-3 text-end">
+        <div className="card-footer bg-white py-3 d-flex justify-content-between align-items-center">
+          <Button
+            variant="outline-primary"
+            size="sm"
+            onClick={() => setIsPrintModalOpen(true)}
+            disabled={lines.length === 0}
+          >
+            🖨️ Preview &amp; Print Receiving Slip
+          </Button>
           <Button
             variant="success"
             size="lg"
@@ -425,6 +445,28 @@ export function GrnWizardPage() {
           </Button>
         </div>
       </div>
+
+      <GrnPrintModal
+        isOpen={isPrintModalOpen}
+        onClose={() => setIsPrintModalOpen(false)}
+        draftGrn={{
+          grnNo: `GRN-DRAFT-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
+          supplierName: supplierId === "sup-1" ? "Metro Pharma Distribution Inc. (SUP-001)" : "Direct Medical Supplier",
+          locationName: locationId === "loc-central" ? "Central Pharmacy Store" : "Central Supply Store",
+          deliveryNoteNo: deliveryNote,
+          lines: lines.map((l) => ({
+            itemCode: l.itemId,
+            itemName: l.itemName,
+            lotNo: l.lotNo,
+            expiryDate: l.expiryDate,
+            qtyReceived: l.qtyReceived,
+            uomCode: l.uomCode,
+            unitCost: l.unitCost,
+            inspectionResult: l.inspectionResult,
+            overrideReason: l.overrideReason,
+          })),
+        }}
+      />
     </div>
   );
 }

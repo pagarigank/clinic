@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router";
 import { AlertBanner, StatusPill, Button, Modal, Form } from "@clinic/ui";
-import { apiGet, apiPost } from "../../shared/api/client.js";
+import { apiGet } from "../../shared/api/client.js";
+import { ConsumptionPrintModal } from "./ConsumptionPrintModal.js";
 
 interface StockBalanceItem {
   id: string;
@@ -112,6 +113,9 @@ export function StockExplorerPage() {
   // Quarantine modal
   const [quarantineBatch, setQuarantineBatch] = useState<StockBalanceItem | null>(null);
   const [quarantineReason, setQuarantineReason] = useState("");
+
+  // Print modal
+  const [showPrintModal, setShowPrintModal] = useState(false);
   const [alert, setAlert] = useState<string | null>(null);
 
   useEffect(() => {
@@ -216,6 +220,15 @@ export function StockExplorerPage() {
           <p className="text-muted small mb-0">
             Real-time on-hand balances, batch tracking, FEFO shelf-life, and immutable audit trail.
           </p>
+        </div>
+        <div className="d-flex align-items-center gap-2">
+          <Button
+            variant="outline-primary"
+            size="sm"
+            onClick={() => setShowPrintModal(true)}
+          >
+            🖨️ Print Stock / Consumption Register
+          </Button>
         </div>
       </div>
 
@@ -475,6 +488,11 @@ export function StockExplorerPage() {
           </Modal.Footer>
         </Modal>
       )}
+
+      <ConsumptionPrintModal
+        isOpen={showPrintModal}
+        onClose={() => setShowPrintModal(false)}
+      />
     </div>
   );
 }
