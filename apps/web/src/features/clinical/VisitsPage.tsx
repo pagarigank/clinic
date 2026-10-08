@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { AlertBanner, StatusPill } from "@clinic/ui";
 import { apiGet, apiPost } from "../../shared/api/client.js";
 import { useAuth } from "../../shared/auth/AuthContext.js";
+import { ClinicalSketchpad } from "./ClinicalSketchpad.js";
 
 /**
  * Visits list — frontend.md §14.4, todo.md §3.2. Entry point to the encounter
@@ -76,6 +77,7 @@ export function VisitsPage() {
   const [visitsLoading, setVisitsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"QUEUE" | "SKETCH">("QUEUE");
 
   // Quick Register Form State
   const [showRegister, setShowRegister] = useState(false);
@@ -288,16 +290,51 @@ export function VisitsPage() {
 
   return (
     <div>
-      <div className="page-header d-flex justify-content-between align-items-center">
+      <div className="page-header d-flex justify-content-between align-items-center mb-3">
         <div>
-          <h1 className="page-title">Consultations & Chart</h1>
+          <h1 className="page-title">Consultations &amp; Chart</h1>
           <div className="page-subtitle">Encounters, vitals, SOAP notes, diagnoses, prescriptions, and orders</div>
         </div>
-        <button className="btn btn-cerulean" onClick={() => setShowRegister(!showRegister)}>
-          {showRegister ? "Cancel" : "Register Visit"}
-        </button>
+        {activeTab === "QUEUE" && (
+          <button className="btn btn-cerulean" onClick={() => setShowRegister(!showRegister)}>
+            {showRegister ? "Cancel" : "Register Visit"}
+          </button>
+        )}
       </div>
 
+      {/* Tabs Switcher for Consultations Queue vs Clinical Sketchpad */}
+      <div className="border-bottom mb-3">
+        <ul className="nav nav-tabs border-bottom-0">
+          <li className="nav-item">
+            <button
+              type="button"
+              className={`nav-link fw-semibold ${activeTab === "QUEUE" ? "active text-primary" : "text-secondary"}`}
+              onClick={() => setActiveTab("QUEUE")}
+            >
+              📋 Consultations Queue ({visits.length})
+            </button>
+          </li>
+          <li className="nav-item">
+            <button
+              type="button"
+              className={`nav-link fw-semibold ${activeTab === "SKETCH" ? "active text-primary" : "text-secondary"}`}
+              onClick={() => setActiveTab("SKETCH")}
+            >
+              ✏️ Clinical Sketchpad
+            </button>
+          </li>
+        </ul>
+      </div>
+
+      {activeTab === "SKETCH" ? (
+        <div className="mb-4">
+          <div className="alert alert-info py-2 small mb-3">
+            <strong>Clinical Scratchpad &amp; Drawing:</strong> Freehand sketching canvas for anatomical diagrams, lesion marks, clinical annotations, or rapid consultation sketches. Supports stylus, pen, and touch.
+          </div>
+          <ClinicalSketchpad storageKey="clinic_visits_page_sketch" height={520} title="Clinical &amp; Consultation Sketchpad" />
+        </div>
+      ) : (
+        <>
       {error && !showRegister ? (
         <div className="mb-3"><AlertBanner severity="warning" title="Offline data">{error}</AlertBanner></div>
       ) : null}
@@ -559,6 +596,8 @@ export function VisitsPage() {
           </table>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

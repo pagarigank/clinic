@@ -5,6 +5,7 @@ import { apiGet, apiPost, apiGetBlob, ApiError } from "../../shared/api/client.j
 import { useStepUp, isStepUpRequired } from "../../shared/auth/StepUpContext.js";
 import { PrescriptionPrintModal } from "./PrescriptionPrintModal.js";
 import { MedicalCertificatePrintModal } from "./MedicalCertificatePrintModal.js";
+import { ClinicalSketchpad } from "./ClinicalSketchpad.js";
 
 /**
  * Visit chart — frontend.md §14.4, todo.md §3.2 (CLN-T4/T5), LAB-T1, SUP-T10.
@@ -298,7 +299,7 @@ export function VisitChartPage() {
   const [pastVisits, setPastVisits] = useState<any[]>([]);
   const [patientProblems, setPatientProblems] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [activeRightRailTab, setActiveRightRailTab] = useState<"TIMELINE" | "PAST_VISITS">("TIMELINE");
+  const [activeRightRailTab, setActiveRightRailTab] = useState<"TIMELINE" | "PAST_VISITS" | "SKETCH">("TIMELINE");
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
 
   // Certificate form (CLN-T8)
@@ -1095,6 +1096,14 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
         <div className="d-flex align-items-center gap-2">
           <button
             type="button"
+            className={`btn btn-sm fw-semibold ${activeRightRailTab === "SKETCH" ? "btn-primary" : "btn-outline-secondary"}`}
+            onClick={() => setActiveRightRailTab("SKETCH")}
+            title="Open clinical sketchpad"
+          >
+            ✏️ Sketchpad
+          </button>
+          <button
+            type="button"
             className="btn btn-outline-primary btn-sm fw-semibold"
             onClick={() => setHistoryModalOpen(true)}
             title="View patient's prior encounters and diagnoses"
@@ -1778,6 +1787,15 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
                     🩺 Past Visits &amp; Dx {loadingHistory ? "..." : `(${pastVisits.length})`}
                   </button>
                 </li>
+                <li className="nav-item">
+                  <button
+                    type="button"
+                    className={`nav-link py-1 px-3 fw-semibold ${activeRightRailTab === "SKETCH" ? "active text-primary" : "text-secondary"}`}
+                    onClick={() => setActiveRightRailTab("SKETCH")}
+                  >
+                    ✏️ Sketchpad
+                  </button>
+                </li>
               </ul>
             </div>
             <div className="p-3">
@@ -1786,6 +1804,14 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
                   <h2 className="h6 mb-3">Encounter timeline</h2>
                   <Timeline entries={history} />
                 </>
+              ) : activeRightRailTab === "SKETCH" ? (
+                <div>
+                  <ClinicalSketchpad
+                    storageKey={`clinic_visit_sketch_${visit.id}`}
+                    height={460}
+                    title="Encounter Sketch &amp; Diagram"
+                  />
+                </div>
               ) : (
                 <div>
                   <div className="d-flex justify-content-between align-items-center mb-2">
