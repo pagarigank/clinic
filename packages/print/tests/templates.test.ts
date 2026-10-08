@@ -8,9 +8,13 @@ import {
   renderPrescriptionHtml,
   renderLabRequisitionHtml,
   renderEncounterOrdersHtml,
+  renderGrnHtml,
+  renderRequisitionHtml,
   type PrescriptionDocument,
   type LabRequisitionDocument,
   type InvoiceDocument,
+  type GrnDocument,
+  type RequisitionDocument,
 } from "../src/templates.js";
 
 
@@ -658,4 +662,123 @@ describe("renderInvoiceHtml", () => {
     expect(html).not.toContain("TIN:");
   });
 });
+
+describe("renderGrnHtml", () => {
+  const baseGrn: GrnDocument = {
+    clinicName: "La Salette Medical Center",
+    branchName: "Central Warehouse",
+    clinicAddress: "100 Medical Center Way, Manila",
+    clinicPhone: "(02) 8524-1000",
+    clinicEmail: "supplies@lasalette.ph",
+    grnNo: "GRN-2026-00045",
+    receivedAt: "2026-10-08",
+    supplierName: "Metro Pharma Distribution Inc.",
+    locationName: "Central Pharmacy Store",
+    deliveryNoteNo: "DR-2026-9901",
+    poNo: "PO-2026-0012",
+    receivedBy: "John Doe, Materials Clerk",
+    verifiedBy: "Dr. Jane Smith, RPh",
+    status: "POSTED",
+    temperatureCelsius: 4.5,
+    temperatureOk: true,
+    inspectionNotes: "Cold chain verified intact upon truck unloading.",
+    lines: [
+      {
+        itemCode: "MED-AMOX-500",
+        itemName: "Amoxicillin 500mg Capsule",
+        lotNo: "LOT-AMX-2026B",
+        expiryDate: "2028-06-30",
+        qtyReceived: 500,
+        uom: "CAP",
+        unitCost: 8.5,
+        totalCost: 4250,
+        inspectionResult: "PASS",
+      },
+      {
+        itemCode: "MED-PCM-500",
+        itemName: "Paracetamol 500mg Tablet",
+        lotNo: "LOT-PCM-998",
+        expiryDate: "2027-12-31",
+        qtyReceived: 1000,
+        uom: "TAB",
+        unitCost: 1.5,
+        totalCost: 1500,
+        inspectionResult: "PASS",
+        overrideReason: "Emergency buffer stock",
+      },
+    ],
+    notes: "Accepted in good order and condition.",
+  };
+
+  it("renders official Goods Receipt Note with complete receiving fields", () => {
+    const html = renderGrnHtml(baseGrn);
+
+    expect(html).toContain("GOODS RECEIPT NOTE (GRN)");
+    expect(html).toContain("GRN-2026-00045");
+    expect(html).toContain("Metro Pharma Distribution Inc.");
+    expect(html).toContain("Central Pharmacy Store");
+    expect(html).toContain("DR-2026-9901");
+    expect(html).toContain("PO-2026-0012");
+    expect(html).toContain("4.5 °C (PASSED)");
+    expect(html).toContain("Amoxicillin 500mg Capsule");
+    expect(html).toContain("LOT-AMX-2026B");
+    expect(html).toContain("2028-06-30");
+    expect(html).toContain("500 CAP");
+    expect(html).toContain("Emergency buffer stock");
+    expect(html).toContain("John Doe, Materials Clerk");
+    expect(html).toContain("Dr. Jane Smith, RPh");
+    expect(html).toContain("Accepted in good order and condition.");
+  });
+
+  it("handles empty lines cleanly", () => {
+    const html = renderGrnHtml({
+      ...baseGrn,
+      lines: [],
+    });
+    expect(html).toContain("No items on this goods receipt note.");
+  });
+});
+
+describe("renderRequisitionHtml", () => {
+  const baseReq: RequisitionDocument = {
+    clinicName: "La Salette Medical Center",
+    branchName: "Main Branch",
+    reqNo: "REQ-2026-0089",
+    createdAt: "2026-10-08",
+    fromLocation: "Emergency Department",
+    toLocation: "Central Supply Store",
+    requestedBy: "Nurse Joy",
+    approvedBy: "Head Nurse Sarah",
+    issuedBy: "Storekeeper Bob",
+    receivedBy: "Nurse Joy",
+    status: "ACKNOWLEDGED",
+    lines: [
+      {
+        itemCode: "SUP-GLV-M",
+        itemName: "Latex Examination Gloves (M)",
+        qtyRequested: 50,
+        qtyIssued: 50,
+        qtyReceived: 50,
+        uom: "BOX",
+        notes: "Routine replenish",
+      },
+    ],
+    notes: "Urgent restocking for ER duty.",
+  };
+
+  it("renders requisition slip with departments and items", () => {
+    const html = renderRequisitionHtml(baseReq);
+
+    expect(html).toContain("DEPARTMENT REQUISITION SLIP");
+    expect(html).toContain("REQ-2026-0089");
+    expect(html).toContain("Emergency Department");
+    expect(html).toContain("Central Supply Store");
+    expect(html).toContain("Nurse Joy");
+    expect(html).toContain("Head Nurse Sarah");
+    expect(html).toContain("Latex Examination Gloves (M)");
+    expect(html).toContain("50 BOX");
+    expect(html).toContain("Urgent restocking for ER duty.");
+  });
+});
+
 

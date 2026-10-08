@@ -4,6 +4,7 @@ import { Alert, Badge, Button, EmptyState, Form, SkeletonTable, StatusPill } fro
 import { ApiError, apiGetBlob } from "../../shared/api/client.js";
 import { supplyApi } from "./api.js";
 import type { SupplyItemRow, SupplyLocation, SupplyStockRow } from "./api.js";
+import { ConsumptionPrintModal } from "./ConsumptionPrintModal.js";
 
 type RefType = "VISIT" | "LAB" | "PROCEDURE" | "HOUSE_USE";
 
@@ -59,34 +60,7 @@ export function SupplyIssueWorkbenchPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [isDownloadingConsumptionPdf, setIsDownloadingConsumptionPdf] = useState(false);
-
-  const downloadConsumptionPdf = async () => {
-    setIsDownloadingConsumptionPdf(true);
-    try {
-      const to = new Date();
-      const from = new Date(to.getTime() - 29 * 24 * 3600 * 1000);
-      const iso = (d: Date) => d.toISOString().slice(0, 10);
-      const params = new URLSearchParams({ from: iso(from), to: iso(to) });
-      if (locationId) params.set("locationId", locationId);
-      const blob = await apiGetBlob(`/supply/consumption/pdf?${params.toString()}`);
-      const blobUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.target = "_blank";
-      a.rel = "noopener";
-      a.download = `Supply-Consumption-${iso(from)}_${iso(to)}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(blobUrl);
-    } catch (err) {
-      console.warn("Consumption list PDF download failed, falling back to window.print():", err);
-      window.print();
-    } finally {
-      setIsDownloadingConsumptionPdf(false);
-    }
-  };
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
   const selectedItem = items.find((i) => i.id === itemId) ?? null;
   const selectedLocation = locations.find((l) => l.id === locationId) ?? null;
@@ -257,10 +231,9 @@ export function SupplyIssueWorkbenchPage() {
           <Button
             variant="outline-primary"
             size="sm"
-            onClick={() => void downloadConsumptionPdf()}
-            disabled={isDownloadingConsumptionPdf}
+            onClick={() => setIsPrintModalOpen(true)}
           >
-            {isDownloadingConsumptionPdf ? "Preparing…" : "Consumption List (PDF)"}
+            🖨️ Print Consumption List
           </Button>
           <Link to="/supply/stock">
             <Button variant="outline-secondary" size="sm">
@@ -532,6 +505,13 @@ export function SupplyIssueWorkbenchPage() {
           </div>
         </div>
       )}
+
+      <ConsumptionPrintModal
+        isOpen={isPrintModalOpen}
+        onClose={() => setIsPrintModalOpen(false)}
+        defaultLocationId={locationId}
+        defaultLocationName={selectedLocation?.name}
+      />
     </div>
   );
 }

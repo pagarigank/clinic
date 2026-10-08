@@ -221,6 +221,41 @@ export async function apiGetBlob(path: string): Promise<Blob> {
 }
 
 /**
+ * Send a POST payload and receive a binary Blob (e.g. draft preview PDF).
+ */
+export async function apiPostBlob<B = unknown>(path: string, body?: B, signal?: AbortSignal): Promise<Blob> {
+  const headers = buildHeaders();
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+  const res = await fetch(`${apiBase()}${path}`, {
+    method: "POST",
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    credentials: "include",
+    signal,
+  });
+  if (!res.ok) {
+    let problem: ApiProblem | undefined;
+    try {
+      problem = (await res.json()) as ApiProblem;
+    } catch {
+      // non-JSON error body
+    }
+    throw new ApiError(
+      problem ?? {
+        type: "about:blank",
+        title: res.statusText || "Request Failed",
+        status: res.status,
+        code: "UPSTREAM_UNAVAILABLE",
+      },
+      res.status,
+    );
+  }
+  return res.blob();
+}
+
+/**
  * Fetch an official PDF and send it straight to the printer: the bytes are
  * loaded into a hidden iframe as a blob and the *browser's PDF viewer* is
  * what prints, so what lands on paper is the server-rendered document

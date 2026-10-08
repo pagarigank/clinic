@@ -1,7 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { withTenant, getAppPool } from '@clinic/db';
-import type { ConsumptionListDocument } from '@clinic/print';
+import {
+  renderPdf,
+  renderConsumptionListHtml,
+  renderGrnHtml,
+  renderRequisitionHtml,
+  type ConsumptionListDocument,
+  type GrnDocument,
+  type RequisitionDocument,
+  type RenderedDocument,
+} from '@clinic/print';
 import { ProblemException } from '../http/problem.exception.js';
 import { resolveServicePrice } from '../common/pricing.js';
 import type {
@@ -2438,11 +2447,59 @@ export class SupplyService {
     });
   }
 
+  async getSupplyPrintProfile(tenantId: string, userId: string) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const tRes = await tx.query(
+        `SELECT name, address, phone, email, tin, doh_license_no, philhealth_accreditation_no
+         FROM tenants WHERE id = $1`,
+        [tenantId],
+      );
+      const uRes = await tx.query(
+        `SELECT name FROM users WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, userId],
+      );
+      const bRes = await tx.query(
+        `SELECT id, name, address, phone, email FROM branches WHERE tenant_id = $1 ORDER BY name ASC LIMIT 1`,
+        [tenantId],
+      );
+      const locRes = await tx.query(
+        `SELECT id, name, type FROM stock_locations WHERE tenant_id = $1 ORDER BY name ASC`,
+        [tenantId],
+      );
+      const tenant = tRes.rows[0] || {};
+      const branch = bRes.rows[0] || {};
+      const user = uRes.rows[0] || {};
+
+      return {
+        clinic: {
+          name: tenant.name || 'Clinic Medical Center',
+          branchName: branch.name || 'Central Pharmacy & Supply Store',
+          address: branch.address || tenant.address || '',
+          phone: branch.phone || tenant.phone || '',
+          email: branch.email || tenant.email || '',
+          tin: tenant.tin || '',
+        },
+        officer: {
+          name: user.name || 'Materials & Supply Officer',
+        },
+        locations: locRes.rows,
+      };
+    });
+  }
+
   /** Map consumption rows to the printable document (no HTTP needed to test). */
   async getConsumptionListDocument(
     tenantId: string,
     filters: { from?: string; to?: string; locationId?: string } = {},
-    meta: { clinicName?: string; branchName?: string; generatedBy?: string } = {},
+    meta: {
+      clinicName?: string;
+      branchName?: string;
+      clinicAddress?: string;
+      clinicPhone?: string;
+      clinicEmail?: string;
+      generatedBy?: string;
+      notes?: string;
+    } = {},
   ): Promise<ConsumptionListDocument> {
     const rows = (await this.listConsumption(tenantId, filters)) as Array<{
       qty: string | number;
@@ -2466,14 +2523,40 @@ export class SupplyService {
       );
       locationName = locRes.rows[0]?.name;
     }
+
+    let clinicName = meta.clinicName;
+    let branchName = meta.branchName;
+    let clinicAddress = meta.clinicAddress;
+    let clinicPhone = meta.clinicPhone;
+    let clinicEmail = meta.clinicEmail;
+
+    if (!clinicName) {
+      const tenantRes = await withTenant({ tenantId }, async (tx) =>
+        tx.query<{ name: string; address: string; phone: string; email: string }>(
+          `SELECT name, address, phone, email FROM tenants WHERE id = $1`,
+          [tenantId],
+        ),
+      );
+      if (tenantRes.rows[0]) {
+        clinicName = tenantRes.rows[0].name;
+        clinicAddress = clinicAddress ?? tenantRes.rows[0].address;
+        clinicPhone = clinicPhone ?? tenantRes.rows[0].phone;
+        clinicEmail = clinicEmail ?? tenantRes.rows[0].email;
+      }
+    }
+
     return {
-      clinicName: meta.clinicName ?? 'Clinic Medical Center',
-      branchName: meta.branchName,
+      clinicName: clinicName ?? 'Clinic Medical Center',
+      branchName,
+      clinicAddress,
+      clinicPhone,
+      clinicEmail,
       locationName,
       fromDate: filters.from,
       toDate: filters.to,
       generatedAt: formatDateTime(new Date()),
       generatedBy: meta.generatedBy,
+      notes: meta.notes,
       rows: rows.map((r) => ({
         loggedAt: formatDateTime(new Date(r.logged_at)),
         itemCode: r.item_code,
@@ -2487,6 +2570,158 @@ export class SupplyService {
         loggedBy: r.logged_by_name,
       })),
     };
+  }
+
+  async getGrnPrintProfile(tenantId: string, userId: string, grnId: string) {
+    const profile = await this.getSupplyPrintProfile(tenantId, userId);
+    const grn = await this.getGoodsReceipt(tenantId, grnId);
+    return {
+      ...profile,
+      grn,
+    };
+  }
+
+  async renderGrnPdf(
+    tenantId: string,
+    userId: string,
+    grnId: string,
+    overrides?: Record<string, string>,
+  ): Promise<RenderedDocument> {
+    const profile = await this.getGrnPrintProfile(tenantId, userId, grnId);
+    const grn = profile.grn;
+    const clinic = profile.clinic;
+
+    const doc: GrnDocument = {
+      clinicName: overrides?.clinicName || clinic.name,
+      branchName: overrides?.branchName || clinic.branchName,
+      clinicAddress: overrides?.clinicAddress || clinic.address,
+      clinicPhone: overrides?.clinicPhone || clinic.phone,
+      clinicEmail: overrides?.clinicEmail || clinic.email,
+      grnNo: grn.grn_no,
+      receivedAt: grn.created_at,
+      supplierName: grn.supplier_name,
+      locationName: grn.location_name,
+      deliveryNoteNo: grn.delivery_note_no,
+      poNo: grn.po_no,
+      receivedBy: overrides?.receivedBy || grn.received_by_name || profile.officer.name,
+      verifiedBy: overrides?.verifiedBy || undefined,
+      status: grn.status,
+      temperatureCelsius: grn.temperature_celsius,
+      temperatureOk: grn.temperature_ok,
+      inspectionNotes: grn.inspection_notes,
+      notes: overrides?.notes || undefined,
+      lines: (grn.lines || []).map((l: any) => ({
+        itemCode: l.item_code,
+        itemName: l.item_name,
+        lotNo: l.lot_no,
+        expiryDate: l.expiry_date,
+        qtyReceived: Number(l.qty_received),
+        qtyAccepted: l.qty_accepted != null ? Number(l.qty_accepted) : undefined,
+        qtyRejected: l.qty_rejected != null ? Number(l.qty_rejected) : undefined,
+        uom: l.uom_code || 'PCS',
+        unitCost: l.unit_cost != null ? Number(l.unit_cost) : undefined,
+        inspectionResult: l.inspection_result,
+        rejectionReason: l.rejection_reason,
+        overrideReason: l.override_reason,
+      })),
+    };
+
+    return renderPdf(renderGrnHtml(doc), { format: 'A4' });
+  }
+
+  async renderGrnPreviewPdf(
+    tenantId: string,
+    userId: string,
+    previewData: any,
+    overrides?: Record<string, string>,
+  ): Promise<RenderedDocument> {
+    const profile = await this.getSupplyPrintProfile(tenantId, userId);
+    const clinic = profile.clinic;
+
+    const doc: GrnDocument = {
+      clinicName: overrides?.clinicName || clinic.name,
+      branchName: overrides?.branchName || clinic.branchName,
+      clinicAddress: overrides?.clinicAddress || clinic.address,
+      clinicPhone: overrides?.clinicPhone || clinic.phone,
+      clinicEmail: overrides?.clinicEmail || clinic.email,
+      grnNo: previewData.grnNo || 'GRN-DRAFT',
+      receivedAt: previewData.receivedAt || new Date().toISOString(),
+      supplierName: previewData.supplierName || 'Metro Pharma Distribution Inc.',
+      locationName: previewData.locationName || 'Central Supply Store',
+      deliveryNoteNo: previewData.deliveryNoteNo || null,
+      poNo: previewData.poNo || null,
+      receivedBy: overrides?.receivedBy || previewData.receivedBy || profile.officer.name,
+      verifiedBy: overrides?.verifiedBy || null,
+      status: previewData.status || 'DRAFT',
+      temperatureCelsius: previewData.temperatureCelsius ?? null,
+      temperatureOk: previewData.temperatureOk ?? true,
+      inspectionNotes: previewData.inspectionNotes || null,
+      notes: overrides?.notes || previewData.notes || null,
+      lines: (previewData.lines || []).map((l: any) => ({
+        itemCode: l.itemCode,
+        itemName: l.itemName,
+        lotNo: l.lotNo,
+        expiryDate: l.expiryDate,
+        qtyReceived: Number(l.qtyReceived),
+        uom: l.uomCode || l.uom || 'PCS',
+        unitCost: l.unitCost != null ? Number(l.unitCost) : undefined,
+        inspectionResult: l.inspectionResult || 'PASS',
+        overrideReason: l.overrideReason || null,
+        rejectionReason: l.rejectionReason || null,
+      })),
+    };
+
+    return renderPdf(renderGrnHtml(doc), { format: 'A4' });
+  }
+
+  async getRequisitionPrintProfile(tenantId: string, userId: string, reqId: string) {
+    const profile = await this.getSupplyPrintProfile(tenantId, userId);
+    const requisition = await this.getRequisition(tenantId, reqId);
+    return {
+      ...profile,
+      requisition,
+    };
+  }
+
+  async renderRequisitionPdf(
+    tenantId: string,
+    userId: string,
+    reqId: string,
+    overrides?: Record<string, string>,
+  ): Promise<RenderedDocument> {
+    const profile = await this.getRequisitionPrintProfile(tenantId, userId, reqId);
+    const req = profile.requisition;
+    const clinic = profile.clinic;
+
+    const doc: RequisitionDocument = {
+      clinicName: overrides?.clinicName || clinic.name,
+      branchName: overrides?.branchName || clinic.branchName,
+      clinicAddress: overrides?.clinicAddress || clinic.address,
+      clinicPhone: overrides?.clinicPhone || clinic.phone,
+      clinicEmail: overrides?.clinicEmail || clinic.email,
+      reqNo: req.req_no,
+      createdAt: req.created_at,
+      fromLocation: req.from_location_name,
+      toLocation: req.to_location_name,
+      requestedBy: overrides?.requestedBy || req.requested_by_name || profile.officer.name,
+      approvedBy: overrides?.approvedBy || req.approved_by_name || null,
+      issuedBy: overrides?.issuedBy || null,
+      receivedBy: overrides?.receivedBy || null,
+      status: req.status,
+      neededBy: req.needed_by,
+      notes: overrides?.notes || null,
+      lines: (req.items || []).map((it: any) => ({
+        itemCode: it.item_code,
+        itemName: it.item_name,
+        qtyRequested: Number(it.qty_requested),
+        qtyIssued: it.qty_issued != null ? Number(it.qty_issued) : null,
+        qtyReceived: it.qty_received != null ? Number(it.qty_received) : null,
+        uom: it.uom_code || 'PCS',
+        notes: it.notes,
+      })),
+    };
+
+    return renderPdf(renderRequisitionHtml(doc), { format: 'A4' });
   }
 
   async getValuationSnapshot(tenantId: string, asOf?: string) {

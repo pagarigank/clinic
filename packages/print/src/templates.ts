@@ -1514,11 +1514,15 @@ export function renderRxQueueHtml(doc: RxQueueDocument): string {
 export interface ConsumptionListDocument {
   clinicName: string;
   branchName?: string;
+  clinicAddress?: string;
+  clinicPhone?: string;
+  clinicEmail?: string;
   locationName?: string;
   fromDate?: string;
   toDate?: string;
   generatedAt: string;
   generatedBy?: string;
+  notes?: string;
   rows: Array<{
     loggedAt: string;
     itemCode?: string | null;
@@ -1579,6 +1583,7 @@ export function renderConsumptionListHtml(doc: ConsumptionListDocument): string 
             <div class="muted">
               ${[doc.branchName, doc.locationName].filter(Boolean).map(escapeHtml).join(" &middot; ")}
             </div>
+            ${doc.clinicAddress ? `<div class="muted" style="font-size:8pt; margin-top:0.5mm;">${escapeHtml(doc.clinicAddress)}${doc.clinicPhone ? ` &middot; Tel: ${escapeHtml(doc.clinicPhone)}` : ""}${doc.clinicEmail ? ` &middot; ${escapeHtml(doc.clinicEmail)}` : ""}</div>` : ""}
           </td>
           <td style="border:none; padding:0; vertical-align:top; text-align:right;">
             <div class="field"><div class="k">Period</div><div class="v">${period}</div></div>
@@ -1618,6 +1623,8 @@ export function renderConsumptionListHtml(doc: ConsumptionListDocument): string 
         : ""
     }
 
+    ${doc.notes ? `<div style="margin-top:3mm; font-size:8.5pt; color:#475569; background:#f8fafc; padding:2mm 3mm; border-radius:3px;"><strong>Notes / Remarks:</strong> ${escapeHtml(doc.notes)}</div>` : ""}
+
     ${
       doc.generatedBy
         ? `<div class="sig"><div class="sig-line">Prepared by ${escapeHtml(doc.generatedBy)}</div></div>`
@@ -1631,6 +1638,322 @@ export function renderConsumptionListHtml(doc: ConsumptionListDocument): string 
   `;
 
   return shell("Consumption Issuance List", body);
+}
+
+// ── Goods Receipt Note (GRN) & Supply Receiving ────────────────────────────
+
+export interface GrnLineItemDocument {
+  itemCode?: string | null;
+  itemName: string;
+  lotNo: string;
+  expiryDate: string;
+  qtyReceived: number | string;
+  qtyAccepted?: number | string | null;
+  qtyRejected?: number | string | null;
+  uom: string;
+  unitCost?: number | string | null;
+  totalCost?: number | string | null;
+  inspectionResult?: string | null;
+  rejectionReason?: string | null;
+  overrideReason?: string | null;
+}
+
+export interface GrnDocument {
+  clinicName: string;
+  branchName?: string;
+  clinicAddress?: string;
+  clinicPhone?: string;
+  clinicEmail?: string;
+  grnNo: string;
+  receivedAt: string;
+  supplierName: string;
+  locationName: string;
+  deliveryNoteNo?: string | null;
+  poNo?: string | null;
+  receivedBy?: string | null;
+  verifiedBy?: string | null;
+  status: string;
+  temperatureCelsius?: number | string | null;
+  temperatureOk?: boolean;
+  inspectionNotes?: string | null;
+  lines: GrnLineItemDocument[];
+  totalAmount?: number | string | null;
+  notes?: string | null;
+  verificationHash?: string | null;
+}
+
+/**
+ * Official Goods Receipt Note (GRN) vector printout.
+ *
+ * Provides legal warehouse receiving documentation with lot tracking,
+ * expiration dates, quality inspection status, unit valuation, and dual signoff.
+ */
+export function renderGrnHtml(doc: GrnDocument): string {
+  const totalQty = doc.lines.reduce((sum, l) => {
+    const n = typeof l.qtyReceived === "number" ? l.qtyReceived : Number.parseFloat(String(l.qtyReceived));
+    return sum + (Number.isFinite(n) ? n : 0);
+  }, 0);
+
+  const calculatedTotalAmount = doc.lines.reduce((sum, l) => {
+    if (l.totalCost != null) {
+      const tc = typeof l.totalCost === "number" ? l.totalCost : Number.parseFloat(String(l.totalCost));
+      return sum + (Number.isFinite(tc) ? tc : 0);
+    }
+    const q = typeof l.qtyReceived === "number" ? l.qtyReceived : Number.parseFloat(String(l.qtyReceived));
+    const u = typeof l.unitCost === "number" ? l.unitCost : Number.parseFloat(String(l.unitCost ?? 0));
+    return sum + (Number.isFinite(q) && Number.isFinite(u) ? q * u : 0);
+  }, 0);
+
+  const finalAmount = doc.totalAmount != null ? doc.totalAmount : calculatedTotalAmount;
+
+  const rows =
+    doc.lines.length === 0
+      ? `<tr><td colspan="8" style="text-align:center; color:#64748b; font-style:italic; padding:6mm 0;">No items on this goods receipt note.</td></tr>`
+      : doc.lines
+          .map((l, idx) => {
+            const cost = l.unitCost != null ? Number(l.unitCost) : null;
+            const lineTotal =
+              l.totalCost != null
+                ? Number(l.totalCost)
+                : cost != null
+                ? Number(l.qtyReceived) * cost
+                : null;
+            const pass = l.inspectionResult === "PASS";
+            const badgeColor = pass ? "#166534" : "#9a3412";
+            const badgeBg = pass ? "#dcfce7" : "#ffedd5";
+
+            return `<tr>
+              <td class="num">${idx + 1}</td>
+              <td>
+                ${l.itemCode ? `<span class="doc-no" style="font-size:8pt;">${escapeHtml(l.itemCode)}</span> ` : ""}<strong style="color:#0f172a;">${escapeHtml(l.itemName)}</strong>
+                ${l.overrideReason ? `<div style="font-size:7.5pt; color:#b45309; margin-top:0.5mm;">Override: ${escapeHtml(l.overrideReason)}</div>` : ""}
+                ${l.rejectionReason ? `<div style="font-size:7.5pt; color:#dc2626; margin-top:0.5mm;">Reason: ${escapeHtml(l.rejectionReason)}</div>` : ""}
+              </td>
+              <td><code>${escapeHtml(l.lotNo)}</code></td>
+              <td>${escapeHtml(l.expiryDate ? String(l.expiryDate).slice(0, 10) : "—")}</td>
+              <td class="num" style="font-weight:600;">${escapeHtml(qty(l.qtyReceived))} ${escapeHtml(l.uom)}</td>
+              <td class="num">${cost != null ? money(cost) : "—"}</td>
+              <td class="num" style="font-weight:600;">${lineTotal != null ? money(lineTotal) : "—"}</td>
+              <td style="text-align:center;">
+                <span style="display:inline-block; font-size:7.5pt; font-weight:700; color:${badgeColor}; background:${badgeBg}; padding:0.5mm 2mm; border-radius:3px;">
+                  ${escapeHtml(l.inspectionResult || "RECEIVED")}
+                </span>
+              </td>
+            </tr>`;
+          })
+          .join("");
+
+  const statusTone = doc.status === "POSTED" ? "#15803d" : doc.status === "VOID" ? "#dc2626" : "#0284c7";
+
+  const body = `
+    <header style="border-bottom: 2pt solid #0f2942; padding-bottom: 4mm; margin-bottom: 4mm;">
+      <table style="width:100%; border:none; margin:0;">
+        <tr>
+          <td style="border:none; padding:0; vertical-align:top;">
+            <div class="clinic" style="font-size: 15pt; font-weight: 800; color: #0f2942; letter-spacing: -0.2pt; text-transform: uppercase;">${escapeHtml(doc.clinicName)}</div>
+            ${doc.branchName ? `<div style="font-size: 9.5pt; font-weight: 600; color: #0284c7; text-transform: uppercase; margin-top: 1mm;">${escapeHtml(doc.branchName)}</div>` : ""}
+            ${doc.clinicAddress ? `<div class="muted" style="font-size: 8.5pt; color: #64748b; margin-top: 0.5mm;">${escapeHtml(doc.clinicAddress)}${doc.clinicPhone ? ` &middot; Tel: ${escapeHtml(doc.clinicPhone)}` : ""}${doc.clinicEmail ? ` &middot; ${escapeHtml(doc.clinicEmail)}` : ""}</div>` : ""}
+          </td>
+          <td style="border:none; padding:0; vertical-align:top; text-align:right; width:220px;">
+            <div style="display: inline-block; background: #0f2942; color: #fff; font-size: 9pt; font-weight: 700; padding: 1.5mm 3.5mm; border-radius: 4px; letter-spacing: 0.5pt;">
+              GOODS RECEIPT NOTE (GRN)
+            </div>
+            <div class="doc-no" style="font-family: Consolas, monospace; font-size: 11pt; font-weight: 800; color: #0f172a; margin-top: 2mm;">${escapeHtml(doc.grnNo)}</div>
+            <div style="font-size: 8.5pt; color: #64748b; margin-top: 0.5mm;">Date: ${escapeHtml(doc.receivedAt ? String(doc.receivedAt).slice(0, 10) : "")}</div>
+            <div style="margin-top: 1.5mm;"><span style="display: inline-block; font-size: 8pt; font-weight: 800; color: ${statusTone}; border: 1pt solid ${statusTone}; padding: 0.5mm 2.5mm; border-radius: 3px; text-transform: uppercase;">${escapeHtml(doc.status)}</span></div>
+          </td>
+        </tr>
+      </table>
+    </header>
+
+    <div class="grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 2mm 5mm; margin-bottom: 4mm; background: #f8fafc; border: 0.5pt solid #e2e8f0; border-radius: 4px; padding: 3mm 4mm;">
+      ${field("Supplier", doc.supplierName)}
+      ${field("Receiving Store", doc.locationName)}
+      ${field("Delivery Note / DR #", doc.deliveryNoteNo || "—")}
+      ${field("Purchase Order #", doc.poNo || "—")}
+      ${field("Received By", doc.receivedBy || "Warehouse Staff")}
+      ${field("Cold Chain / Temp", doc.temperatureCelsius != null ? `${escapeHtml(doc.temperatureCelsius)} °C (${doc.temperatureOk === false ? "DEFECTIVE" : "PASSED"})` : "Ambient (Controlled)")}
+    </div>
+
+    ${doc.inspectionNotes ? `<div style="margin-bottom:3mm; font-size:8.5pt; color:#334155; background:#f1f5f9; padding:2mm 3mm; border-radius:3px;"><strong>Receiving Inspection Notes:</strong> ${escapeHtml(doc.inspectionNotes)}</div>` : ""}
+
+    <table>
+      <thead>
+        <tr>
+          <th class="num" style="width:7mm;">#</th>
+          <th>Item Description</th>
+          <th>Lot / Batch #</th>
+          <th>Expiry</th>
+          <th class="num">Qty</th>
+          <th class="num">Unit Cost</th>
+          <th class="num">Total Cost</th>
+          <th style="text-align:center;">Inspection</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+
+    <div class="totals" style="margin-top: 4mm; margin-left: auto; width: 75mm; background: #f8fafc; border: 0.5pt solid #e2e8f0; border-radius: 4px; padding: 2.5mm 3.5mm;">
+      <div><span style="color:#64748b;">Total Line Items</span><span>${escapeHtml(doc.lines.length)}</span></div>
+      <div><span style="color:#64748b;">Total Units Received</span><span>${escapeHtml(qty(totalQty))}</span></div>
+      <div class="grand" style="border-top:1.5pt solid #0f2942; margin-top:2mm; padding-top:2mm; font-size:11pt; font-weight:800; color:#0f2942;"><span>Total Valuation</span><span>${money(finalAmount)}</span></div>
+    </div>
+
+    ${doc.notes ? `<div style="margin-top:3mm; font-size:8.5pt; color:#475569; background:#f8fafc; padding:2mm 3mm; border-radius:3px;"><strong>Remarks:</strong> ${escapeHtml(doc.notes)}</div>` : ""}
+
+    <div style="margin-top: 8mm; display: flex; justify-content: space-between;">
+      <div style="width: 65mm;">
+        <div style="border-top: 0.5pt solid #475569; padding-top: 1.5mm; font-size: 8.5pt; color: #334155; text-align: center;">
+          Received By: <strong>${escapeHtml(doc.receivedBy || "Receiving Officer")}</strong>
+          <div style="font-size: 7.5pt; color: #64748b;">Central Supply &amp; Materials Management</div>
+        </div>
+      </div>
+      <div style="width: 65mm;">
+        <div style="border-top: 0.5pt solid #475569; padding-top: 1.5mm; font-size: 8.5pt; color: #334155; text-align: center;">
+          Inspected &amp; Verified By: <strong>${escapeHtml(doc.verifiedBy || "Quality / QA Officer")}</strong>
+          <div style="font-size: 7.5pt; color: #64748b;">Pharmacist-in-Charge / Store Supervisor</div>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <span>${escapeHtml(doc.clinicName)} &middot; Goods Receipt Note &middot; ${escapeHtml(doc.grnNo)}${doc.verificationHash ? ` &middot; Hash: ${escapeHtml(doc.verificationHash.slice(0, 16))}…` : ""}</span>
+      <span>EMR Document &middot; Page 1 of 1</span>
+    </footer>
+  `;
+
+  return shell(`Goods Receipt Note ${doc.grnNo}`, body);
+}
+
+// ── Department Requisitions & Store Transfers ──────────────────────────────
+
+export interface RequisitionLineItemDocument {
+  itemCode?: string | null;
+  itemName: string;
+  qtyRequested: number | string;
+  qtyIssued?: number | string | null;
+  qtyReceived?: number | string | null;
+  uom: string;
+  notes?: string | null;
+}
+
+export interface RequisitionDocument {
+  clinicName: string;
+  branchName?: string;
+  clinicAddress?: string;
+  clinicPhone?: string;
+  clinicEmail?: string;
+  reqNo: string;
+  createdAt: string;
+  fromLocation: string;
+  toLocation: string;
+  requestedBy?: string | null;
+  approvedBy?: string | null;
+  issuedBy?: string | null;
+  receivedBy?: string | null;
+  status: string;
+  neededBy?: string | null;
+  notes?: string | null;
+  lines: RequisitionLineItemDocument[];
+  verificationHash?: string | null;
+}
+
+export function renderRequisitionHtml(doc: RequisitionDocument): string {
+  const rows =
+    doc.lines.length === 0
+      ? `<tr><td colspan="6" style="text-align:center; color:#64748b; font-style:italic; padding:6mm 0;">No items on this requisition slip.</td></tr>`
+      : doc.lines
+          .map(
+            (l, idx) => `<tr>
+        <td class="num">${idx + 1}</td>
+        <td>
+          ${l.itemCode ? `<span class="doc-no" style="font-size:8pt;">${escapeHtml(l.itemCode)}</span> ` : ""}<strong style="color:#0f172a;">${escapeHtml(l.itemName)}</strong>
+          ${l.notes ? `<div style="font-size:7.5pt; color:#64748b; margin-top:0.5mm;">${escapeHtml(l.notes)}</div>` : ""}
+        </td>
+        <td class="num" style="font-weight:600;">${escapeHtml(qty(l.qtyRequested))} ${escapeHtml(l.uom)}</td>
+        <td class="num">${l.qtyIssued != null ? `${escapeHtml(qty(l.qtyIssued))} ${escapeHtml(l.uom)}` : "—"}</td>
+        <td class="num">${l.qtyReceived != null ? `${escapeHtml(qty(l.qtyReceived))} ${escapeHtml(l.uom)}` : "—"}</td>
+        <td style="font-size:8pt; color:#64748b;">${l.notes ? escapeHtml(l.notes) : "—"}</td>
+      </tr>`
+          )
+          .join("");
+
+  const statusTone = doc.status === "ACKNOWLEDGED" ? "#15803d" : doc.status === "DISCREPANCY" ? "#dc2626" : "#0284c7";
+
+  const body = `
+    <header style="border-bottom: 2pt solid #0f2942; padding-bottom: 4mm; margin-bottom: 4mm;">
+      <table style="width:100%; border:none; margin:0;">
+        <tr>
+          <td style="border:none; padding:0; vertical-align:top;">
+            <div class="clinic" style="font-size: 15pt; font-weight: 800; color: #0f2942; letter-spacing: -0.2pt; text-transform: uppercase;">${escapeHtml(doc.clinicName)}</div>
+            ${doc.branchName ? `<div style="font-size: 9.5pt; font-weight: 600; color: #0284c7; text-transform: uppercase; margin-top: 1mm;">${escapeHtml(doc.branchName)}</div>` : ""}
+            ${doc.clinicAddress ? `<div class="muted" style="font-size: 8.5pt; color: #64748b; margin-top: 0.5mm;">${escapeHtml(doc.clinicAddress)}${doc.clinicPhone ? ` &middot; Tel: ${escapeHtml(doc.clinicPhone)}` : ""}</div>` : ""}
+          </td>
+          <td style="border:none; padding:0; vertical-align:top; text-align:right; width:220px;">
+            <div style="display: inline-block; background: #0f2942; color: #fff; font-size: 9pt; font-weight: 700; padding: 1.5mm 3.5mm; border-radius: 4px; letter-spacing: 0.5pt;">
+              DEPARTMENT REQUISITION SLIP
+            </div>
+            <div class="doc-no" style="font-family: Consolas, monospace; font-size: 11pt; font-weight: 800; color: #0f172a; margin-top: 2mm;">${escapeHtml(doc.reqNo)}</div>
+            <div style="font-size: 8.5pt; color: #64748b; margin-top: 0.5mm;">Date: ${escapeHtml(doc.createdAt ? String(doc.createdAt).slice(0, 10) : "")}</div>
+            <div style="margin-top: 1.5mm;"><span style="display: inline-block; font-size: 8pt; font-weight: 800; color: ${statusTone}; border: 1pt solid ${statusTone}; padding: 0.5mm 2.5mm; border-radius: 3px; text-transform: uppercase;">${escapeHtml(doc.status)}</span></div>
+          </td>
+        </tr>
+      </table>
+    </header>
+
+    <div class="grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 2mm 5mm; margin-bottom: 4mm; background: #f8fafc; border: 0.5pt solid #e2e8f0; border-radius: 4px; padding: 3mm 4mm;">
+      ${field("Requesting Department", doc.fromLocation)}
+      ${field("Supplying Store", doc.toLocation)}
+      ${field("Requested By", doc.requestedBy || "Department Staff")}
+      ${field("Required By Date", doc.neededBy ? String(doc.neededBy).slice(0, 10) : "Immediate / Routine")}
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="num" style="width:7mm;">#</th>
+          <th>Item Description</th>
+          <th class="num">Requested</th>
+          <th class="num">Issued</th>
+          <th class="num">Received</th>
+          <th>Remarks</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+
+    ${doc.notes ? `<div style="margin-top:3mm; font-size:8.5pt; color:#475569; background:#f8fafc; padding:2mm 3mm; border-radius:3px;"><strong>Notes / Justification:</strong> ${escapeHtml(doc.notes)}</div>` : ""}
+
+    <div style="margin-top: 8mm; display: flex; justify-content: space-between;">
+      <div style="width: 50mm;">
+        <div style="border-top: 0.5pt solid #475569; padding-top: 1.5mm; font-size: 8pt; color: #334155; text-align: center;">
+          Requested By: <strong>${escapeHtml(doc.requestedBy || "Department Staff")}</strong>
+        </div>
+      </div>
+      <div style="width: 50mm;">
+        <div style="border-top: 0.5pt solid #475569; padding-top: 1.5mm; font-size: 8pt; color: #334155; text-align: center;">
+          Approved By: <strong>${escapeHtml(doc.approvedBy || "Supervisor")}</strong>
+        </div>
+      </div>
+      <div style="width: 50mm;">
+        <div style="border-top: 0.5pt solid #475569; padding-top: 1.5mm; font-size: 8pt; color: #334155; text-align: center;">
+          Issued By: <strong>${escapeHtml(doc.issuedBy || "Storekeeper")}</strong>
+        </div>
+      </div>
+      <div style="width: 50mm;">
+        <div style="border-top: 0.5pt solid #475569; padding-top: 1.5mm; font-size: 8pt; color: #334155; text-align: center;">
+          Received By: <strong>${escapeHtml(doc.receivedBy || "Conforme")}</strong>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <span>${escapeHtml(doc.clinicName)} &middot; Requisition Slip &middot; ${escapeHtml(doc.reqNo)}</span>
+      <span>EMR Document &middot; Page 1 of 1</span>
+    </footer>
+  `;
+
+  return shell(`Requisition Slip ${doc.reqNo}`, body);
 }
 
 

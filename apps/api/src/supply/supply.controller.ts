@@ -285,6 +285,13 @@ export class SupplyController {
   }
 
   @RequirePermission('supply.stock.read')
+  @Get('consumption/print-profile')
+  @ApiOperation({ summary: 'Get clinic letterhead & user profile for supply printouts' })
+  async getSupplyPrintProfile(@Req() req: RequestWithAuth) {
+    return this.svc.getSupplyPrintProfile(req.tenantId!, req.authContext!.userId!);
+  }
+
+  @RequirePermission('supply.stock.read')
   @Get('consumption/pdf')
   @ApiOperation({ summary: 'Render the consumption / issuance list as a PDF' })
   async getConsumptionPdf(
@@ -293,8 +300,19 @@ export class SupplyController {
     @Query('to') to: string,
     @Query('locationId') locationId: string,
     @Res() reply: FastifyReply,
+    @Query('clinicName') clinicName?: string,
+    @Query('branchName') branchName?: string,
+    @Query('clinicAddress') clinicAddress?: string,
+    @Query('clinicPhone') clinicPhone?: string,
+    @Query('clinicEmail') clinicEmail?: string,
+    @Query('generatedBy') generatedBy?: string,
+    @Query('notes') notes?: string,
   ) {
-    const doc = await this.svc.getConsumptionListDocument(req.tenantId!, { from, to, locationId });
+    const meta = { clinicName, branchName, clinicAddress, clinicPhone, clinicEmail, generatedBy, notes };
+    const cleanMeta = Object.fromEntries(
+      Object.entries(meta).filter(([_, v]) => typeof v === 'string' && v.trim().length > 0)
+    );
+    const doc = await this.svc.getConsumptionListDocument(req.tenantId!, { from, to, locationId }, cleanMeta);
     const rendered = await renderPdf(renderConsumptionListHtml(doc), { format: 'A4' });
     void sendPdf(reply, rendered, 'Consumption-List.pdf');
   }
@@ -313,6 +331,63 @@ export class SupplyController {
   @ApiOperation({ summary: 'Get goods receipt detail' })
   async getGoodsReceipt(@Req() req: RequestWithAuth, @Param('id') id: string) {
     return this.svc.getGoodsReceipt(req.tenantId!, id);
+  }
+
+  @RequirePermission('supply.grn.read')
+  @Get('goods-receipts/:id/print-profile')
+  @ApiOperation({ summary: 'Get Goods Receipt Note print profile with letterhead' })
+  async getGrnPrintProfile(@Req() req: RequestWithAuth, @Param('id') id: string) {
+    return this.svc.getGrnPrintProfile(req.tenantId!, req.authContext!.userId!, id);
+  }
+
+  @RequirePermission('supply.grn.read')
+  @Get('goods-receipts/:id/pdf')
+  @ApiOperation({ summary: 'Official Goods Receipt Note (GRN) as a true vector PDF' })
+  async getGrnPdf(
+    @Req() req: RequestWithAuth,
+    @Param('id') id: string,
+    @Res() reply: FastifyReply,
+    @Query('clinicName') clinicName?: string,
+    @Query('branchName') branchName?: string,
+    @Query('clinicAddress') clinicAddress?: string,
+    @Query('clinicPhone') clinicPhone?: string,
+    @Query('clinicEmail') clinicEmail?: string,
+    @Query('receivedBy') receivedBy?: string,
+    @Query('verifiedBy') verifiedBy?: string,
+    @Query('notes') notes?: string,
+  ) {
+    const overrides = { clinicName, branchName, clinicAddress, clinicPhone, clinicEmail, receivedBy, verifiedBy, notes };
+    const cleanOverrides = Object.fromEntries(
+      Object.entries(overrides).filter(([_, v]) => typeof v === 'string' && v.trim().length > 0)
+    ) as Record<string, string>;
+
+    const doc = await this.svc.renderGrnPdf(req.tenantId!, req.authContext!.userId!, id, cleanOverrides);
+    void sendPdf(reply, doc, `GRN-${id.slice(0, 8)}.pdf`);
+  }
+
+  @RequirePermission('supply.grn.read')
+  @Post('goods-receipts/preview-pdf')
+  @ApiOperation({ summary: 'Render Goods Receipt Note draft preview as a true vector PDF' })
+  async previewGrnPdf(
+    @Req() req: RequestWithAuth,
+    @Body() body: any,
+    @Res() reply: FastifyReply,
+    @Query('clinicName') clinicName?: string,
+    @Query('branchName') branchName?: string,
+    @Query('clinicAddress') clinicAddress?: string,
+    @Query('clinicPhone') clinicPhone?: string,
+    @Query('clinicEmail') clinicEmail?: string,
+    @Query('receivedBy') receivedBy?: string,
+    @Query('verifiedBy') verifiedBy?: string,
+    @Query('notes') notes?: string,
+  ) {
+    const overrides = { clinicName, branchName, clinicAddress, clinicPhone, clinicEmail, receivedBy, verifiedBy, notes };
+    const cleanOverrides = Object.fromEntries(
+      Object.entries(overrides).filter(([_, v]) => typeof v === 'string' && v.trim().length > 0)
+    ) as Record<string, string>;
+
+    const doc = await this.svc.renderGrnPreviewPdf(req.tenantId!, req.authContext!.userId!, body, cleanOverrides);
+    void sendPdf(reply, doc, 'GRN-Draft-Preview.pdf');
   }
 
   @RequirePermission('supply.grn.create')
@@ -469,6 +544,50 @@ export class SupplyController {
   @ApiOperation({ summary: 'List department requisitions' })
   async listRequisitions(@Req() req: RequestWithAuth) {
     return this.svc.listRequisitions(req.tenantId!);
+  }
+
+  @RequirePermission('supply.req.read')
+  @Get('requisitions/:id')
+  @ApiOperation({ summary: 'Get department requisition detail' })
+  async getRequisition(@Req() req: RequestWithAuth, @Param('id') id: string) {
+    return this.svc.getRequisition(req.tenantId!, id);
+  }
+
+  @RequirePermission('supply.req.read')
+  @Get('requisitions/:id/print-profile')
+  @ApiOperation({ summary: 'Get department requisition print profile with letterhead' })
+  async getRequisitionPrintProfile(@Req() req: RequestWithAuth, @Param('id') id: string) {
+    return this.svc.getRequisitionPrintProfile(req.tenantId!, req.authContext!.userId!, id);
+  }
+
+  @RequirePermission('supply.req.read')
+  @Get('requisitions/:id/pdf')
+  @ApiOperation({ summary: 'Official department requisition slip as a true vector PDF' })
+  async getRequisitionPdf(
+    @Req() req: RequestWithAuth,
+    @Param('id') id: string,
+    @Res() reply: FastifyReply,
+    @Query('clinicName') clinicName?: string,
+    @Query('branchName') branchName?: string,
+    @Query('clinicAddress') clinicAddress?: string,
+    @Query('clinicPhone') clinicPhone?: string,
+    @Query('clinicEmail') clinicEmail?: string,
+    @Query('requestedBy') requestedBy?: string,
+    @Query('approvedBy') approvedBy?: string,
+    @Query('issuedBy') issuedBy?: string,
+    @Query('receivedBy') receivedBy?: string,
+    @Query('notes') notes?: string,
+  ) {
+    const overrides = {
+      clinicName, branchName, clinicAddress, clinicPhone, clinicEmail,
+      requestedBy, approvedBy, issuedBy, receivedBy, notes,
+    };
+    const cleanOverrides = Object.fromEntries(
+      Object.entries(overrides).filter(([_, v]) => typeof v === 'string' && v.trim().length > 0)
+    ) as Record<string, string>;
+
+    const doc = await this.svc.renderRequisitionPdf(req.tenantId!, req.authContext!.userId!, id, cleanOverrides);
+    void sendPdf(reply, doc, `Requisition-${id.slice(0, 8)}.pdf`);
   }
 
   @RequirePermission('supply.req.create')
