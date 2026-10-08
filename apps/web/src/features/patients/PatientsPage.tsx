@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from "react";
-import { useSearchParams } from "react-router";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { useSearchParams, Link } from "react-router";
 import { AlertBanner, StatusPill } from "@clinic/ui";
 import { apiGet, apiPost, apiPatch, ApiError } from "../../shared/api/client.js";
 import { useSearchContext } from "../../shared/search/CommandPalette.js";
@@ -104,6 +104,40 @@ export function PatientsPage() {
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<PatientRecord | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  // Patient Chart Tabs & Past Visits History State
+  const [activeChartTab, setActiveChartTab] = useState<"OVERVIEW" | "VISITS">("OVERVIEW");
+  const [patientVisits, setPatientVisits] = useState<any[]>([]);
+  const [patientProblems, setPatientProblems] = useState<any[]>([]);
+  const [loadingPatientVisits, setLoadingPatientVisits] = useState(false);
+
+  const loadPatientHistory = useCallback(async (pId: string) => {
+    if (!pId) return;
+    setLoadingPatientVisits(true);
+    try {
+      const [visitsRes, problemsRes] = await Promise.all([
+        apiGet<{ data?: any[] }>(`/clinical/visits?patientId=${pId}`).catch(() => ({ data: [] })),
+        apiGet<{ data?: any[] }>(`/clinical/patients/${pId}/problems`).catch(() => ({ data: [] })),
+      ]);
+      setPatientVisits(Array.isArray(visitsRes?.data) ? visitsRes.data : []);
+      setPatientProblems(Array.isArray(problemsRes?.data) ? problemsRes.data : []);
+    } catch {
+      setPatientVisits([]);
+      setPatientProblems([]);
+    } finally {
+      setLoadingPatientVisits(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedPatient?.id) {
+      void loadPatientHistory(selectedPatient.id);
+    } else {
+      setPatientVisits([]);
+      setPatientProblems([]);
+      setActiveChartTab("OVERVIEW");
+    }
+  }, [selectedPatient?.id, loadPatientHistory]);
 
   // Masked identifier reveal state (audited reason gate per todo.md §257)
   const [revealedIds, setRevealedIds] = useState<Record<string, boolean>>({});
@@ -855,8 +889,34 @@ export function PatientsPage() {
                 </div>
               </div>
 
+              {/* Tabs Navigation */}
+              <div className="px-3 border-bottom bg-light">
+                <ul className="nav nav-tabs border-bottom-0">
+                  <li className="nav-item">
+                    <button
+                      type="button"
+                      className={`nav-link fw-semibold ${activeChartTab === "OVERVIEW" ? "active text-primary" : "text-secondary"}`}
+                      onClick={() => setActiveChartTab("OVERVIEW")}
+                    >
+                      📋 Demographics & Identifiers
+                    </button>
+                  </li>
+                  <li className="nav-item">
+                    <button
+                      type="button"
+                      className={`nav-link fw-semibold ${activeChartTab === "VISITS" ? "active text-primary" : "text-secondary"}`}
+                      onClick={() => setActiveChartTab("VISITS")}
+                    >
+                      🩺 Past Visits & Diagnoses {loadingPatientVisits ? "..." : `(${patientVisits.length})`}
+                    </button>
+                  </li>
+                </ul>
+              </div>
+
               <div className="modal-body">
-                {selectedPatient.isEmergency && (
+                {activeChartTab === "OVERVIEW" ? (
+                  <>
+                    {selectedPatient.isEmergency && (
                   <div className="alert alert-warning py-2 small mb-3">
                     <strong>⚠️ Emergency Registration (Deferred Consent):</strong> Consent capture must be completed at the next clinical encounter.
                   </div>
@@ -962,6 +1022,132 @@ export function PatientsPage() {
                   </div>
                 ) : (
                   <p className="small text-muted mb-3">No active clinical allergy flags recorded.</p>
+                )}
+                  </>
+                ) : (
+                  <div>
+                    {/* Active Problems / Diagnoses on File */}
+                    <div className="mb-4">
+                      <div className="d-flex justify-content-between align-items-center mb-2">
+                        <h6 className="fw-bold text-dark mb-0">📌 Active Problem List / Chronic Diagnoses</h6>
+                        <span className="badge bg-secondary">{patientProblems.length} recorded</span>
+                      </div>
+                      {patientProblems.length === 0 ? (
+                        <div className="text-muted small border rounded p-2 bg-light">No chronic problems or active problem list entries recorded.</div>
+                      ) : (
+                        <div className="table-responsive border rounded">
+                          <table className="table table-sm table-hover mb-0 small">
+                            <thead className="table-light">
+                              <tr>
+                                <th>ICD-10 Code</th>
+                                <th>Description / Diagnosis</th>
+                                <th>Status</th>
+                                <th>Onset Date</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {patientProblems.map((prob) => (
+                                <tr key={prob.id}>
+                                  <td className="font-monospace fw-bold text-primary">{prob.icd10Code}</td>
+                                  <td>{prob.icd10Description || prob.notes || "—"}</td>
+                                  <td>
+                                    <span className={`badge ${prob.status === "ACTIVE" ? "bg-warning text-dark" : "bg-secondary"}`}>
+                                      {prob.status}
+                                    </span>
+                                  </td>
+                                  <td>{prob.onsetDate || "—"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Past Encounters / Visits */}
+                    <div>
+                      <div className="d-flex justify-content-between align-items-center mb-2">
+                        <h6 className="fw-bold text-dark mb-0">🩺 Encounter History & Visit Diagnoses</h6>
+                        <span className="badge bg-primary">{patientVisits.length} visits</span>
+                      </div>
+
+                      {loadingPatientVisits ? (
+                        <div className="text-center py-4 text-muted small">
+                          <div className="spinner-border spinner-border-sm text-primary me-2" role="status" />
+                          Loading visit history and diagnoses...
+                        </div>
+                      ) : patientVisits.length === 0 ? (
+                        <div className="alert alert-info py-3 text-center small mb-0">
+                          No previous visits or consultations recorded for this patient.
+                        </div>
+                      ) : (
+                        <div className="d-flex flex-column gap-3">
+                          {patientVisits.map((v) => {
+                            const visitDate = v.startedAt || v.createdAt;
+                            const diagnoses = Array.isArray(v.diagnoses) ? v.diagnoses : [];
+                            return (
+                              <div key={v.id} className="card shadow-sm border">
+                                <div className="card-header bg-light py-2 d-flex justify-content-between align-items-center">
+                                  <div className="d-flex align-items-center gap-2">
+                                    <span className="fw-bold text-dark">
+                                      📅 {visitDate ? new Date(visitDate).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                                    </span>
+                                    <span className="badge bg-secondary-subtle text-secondary border">
+                                      {v.visitType || "OUTPATIENT"}
+                                    </span>
+                                    <span className={`badge ${v.status === "COMPLETED" ? "bg-success" : v.status === "IN_PROGRESS" ? "bg-primary" : "bg-warning text-dark"}`}>
+                                      {v.status}
+                                    </span>
+                                  </div>
+                                  <Link
+                                    to={`/clinical/visits/${v.id}`}
+                                    className="btn btn-sm btn-outline-primary"
+                                    onClick={() => setSelectedPatient(null)}
+                                  >
+                                    Open Encounter Chart →
+                                  </Link>
+                                </div>
+                                <div className="card-body p-3">
+                                  <div className="row g-2 small mb-2">
+                                    <div className="col-md-6">
+                                      <span className="text-muted">Attending Doctor: </span>
+                                      <span className="fw-semibold text-dark">{v.practitionerName ? `Dr. ${v.practitionerName}` : "Unassigned"}</span>
+                                    </div>
+                                    <div className="col-md-6">
+                                      <span className="text-muted">Chief Complaint: </span>
+                                      <span className="fw-semibold text-dark">{v.chiefComplaint || "None documented"}</span>
+                                    </div>
+                                  </div>
+
+                                  <div className="border-top pt-2">
+                                    <div className="text-muted small fw-semibold mb-1">Diagnoses for this visit:</div>
+                                    {diagnoses.length === 0 ? (
+                                      <div className="text-muted small fst-italic">No ICD-10 diagnosis recorded for this visit.</div>
+                                    ) : (
+                                      <div className="d-flex flex-wrap gap-1">
+                                        {diagnoses.map((dx: any, idx: number) => (
+                                          <div
+                                            key={`${dx.icd10Code || idx}-${idx}`}
+                                            className="badge bg-info-subtle text-dark border border-info-subtle p-2 text-start"
+                                          >
+                                            <span className="font-monospace fw-bold text-primary me-1">{dx.icd10Code}</span>
+                                            <span>{dx.description || "Diagnosis"}</span>
+                                            {dx.dxType && (
+                                              <span className="badge bg-light text-secondary ms-1 border">{dx.dxType}</span>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
 

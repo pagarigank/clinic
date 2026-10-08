@@ -797,8 +797,24 @@ export class ClinicalService {
       // a patient, never to the visit that consumed stock and ordered labs.
       if (patientId) { params.push(patientId); where += ` AND v.patient_id = $${params.length}`; }
       const res = await tx.query(
-        `SELECT v.*, p.first_name || ' ' || p.last_name AS patient_name
-         FROM visits v JOIN patients p ON p.id = v.patient_id
+        `SELECT v.*,
+                p.first_name || ' ' || p.last_name AS patient_name,
+                u.name AS practitioner_name,
+                COALESCE((
+                  SELECT json_agg(json_build_object(
+                    'id', vd.id,
+                    'icd10_code', vd.icd10_code,
+                    'description', COALESCE(vd.description, r.description, vd.icd10_code),
+                    'dx_type', vd.dx_type,
+                    'certainty', vd.certainty
+                  ) ORDER BY vd.created_at ASC)
+                  FROM visit_diagnoses vd
+                  LEFT JOIN ref_icd10 r ON r.code = vd.icd10_code
+                  WHERE vd.tenant_id = v.tenant_id AND vd.visit_id = v.id
+                ), '[]'::json) AS diagnoses
+         FROM visits v
+         JOIN patients p ON p.id = v.patient_id
+         LEFT JOIN users u ON u.id = v.practitioner_id
          WHERE v.tenant_id = $1 ${where}
          ORDER BY v.opened_at DESC LIMIT 100`,
         params,
@@ -995,7 +1011,11 @@ export class ClinicalService {
   async listProblems(tenantId: string, userId: string, patientId: string) {
     return withTenant({ tenantId, userId }, async (tx) => {
       const res = await tx.query(
-        `SELECT * FROM problem_list WHERE tenant_id = $1 AND patient_id = $2 ORDER BY status, onset_date DESC`,
+        `SELECT pl.*, COALESCE(r.description, pl.icd10_code) AS icd10_description
+         FROM problem_list pl
+         LEFT JOIN ref_icd10 r ON r.code = pl.icd10_code
+         WHERE pl.tenant_id = $1 AND pl.patient_id = $2
+         ORDER BY pl.status, pl.onset_date DESC`,
         [tenantId, patientId],
       );
       return { data: res.rows };

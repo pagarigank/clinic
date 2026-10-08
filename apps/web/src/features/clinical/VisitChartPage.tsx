@@ -294,6 +294,13 @@ export function VisitChartPage() {
   const [supplies, setSupplies] = useState<SupplyRow[]>([]);
   const [certificates, setCertificates] = useState<CertificateRow[]>([]);
 
+  // Past visits and chronic diagnoses (Patient history)
+  const [pastVisits, setPastVisits] = useState<any[]>([]);
+  const [patientProblems, setPatientProblems] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [activeRightRailTab, setActiveRightRailTab] = useState<"TIMELINE" | "PAST_VISITS">("TIMELINE");
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+
   // Certificate form (CLN-T8)
   const [certType, setCertType] = useState<CertificateRow["cert_type"]>("FIT_TO_WORK");
   const [certFindings, setCertFindings] = useState("");
@@ -507,6 +514,26 @@ export function VisitChartPage() {
       try {
         const v = await apiGet<any>(`/clinical/visits/${visitId}`);
         applyVisitData(v);
+        const pId = v?.patient_id || v?.patientId;
+        if (pId) {
+          setLoadingHistory(true);
+          try {
+            const [vList, probList] = await Promise.all([
+              apiGet<any[]>(`/clinical/visits?patientId=${pId}`),
+              apiGet<any[]>(`/clinical/patients/${pId}/problems`).catch(() => []),
+            ]);
+            if (Array.isArray(vList)) {
+              setPastVisits(vList.filter((item: any) => item.id !== visitId));
+            }
+            if (Array.isArray(probList)) {
+              setPatientProblems(probList);
+            }
+          } catch (histErr) {
+            console.warn("Failed to load patient history:", histErr);
+          } finally {
+            setLoadingHistory(false);
+          }
+        }
         try {
           const certs = await apiGet<{ data?: CertificateRow[] }>(`/clinical/visits/${visitId}/certificates`);
           if (Array.isArray(certs?.data)) setCertificates(certs.data);
@@ -514,6 +541,21 @@ export function VisitChartPage() {
       } catch {
         if (visitId && DEMO_CHART_DATA[visitId]) {
           applyVisitData(DEMO_CHART_DATA[visitId]);
+          setPastVisits([
+            {
+              id: "v-prev-1",
+              visitNo: "V-20260915-00042",
+              startedAt: "2026-09-15T09:00:00Z",
+              status: "COMPLETED",
+              visitType: "OPD",
+              practitionerName: "Lara Giene Dimaapi Dela Cruz, MD",
+              chiefComplaint: "Acute cough, body ache",
+              diagnoses: [{ icd10Code: "J06.9", description: "Acute upper respiratory infection, unspecified", dxType: "PRIMARY", certainty: "CONFIRMED" }],
+            },
+          ]);
+          setPatientProblems([
+            { id: "pr-1", icd10Code: "I10", icd10Description: "Essential (primary) hypertension", status: "ACTIVE", onsetDate: "2024-01-15" },
+          ]);
           setNotice("Demonstration encounter chart — preview mode.");
         } else {
           setError("Could not load visit chart. The visit may not exist or you may not have access.");
@@ -1051,6 +1093,14 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
           <div className="page-subtitle">Consultation workflow — sign locks the note</div>
         </div>
         <div className="d-flex align-items-center gap-2">
+          <button
+            type="button"
+            className="btn btn-outline-primary btn-sm fw-semibold"
+            onClick={() => setHistoryModalOpen(true)}
+            title="View patient's prior encounters and diagnoses"
+          >
+            🩺 Past Visits &amp; Diagnoses ({pastVisits.length})
+          </button>
           <button
             type="button"
             className="btn btn-primary btn-sm fw-semibold px-3"
@@ -1705,13 +1755,163 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
           </div>
         </div>
 
-        {/* ── Right rail: timeline ──────────────────────────────────────── */}
+        {/* ── Right rail: timeline & past visits ──────────────────────────── */}
         <div className="col-lg-4">
-          <div className="clinic-card p-3">
-            <h2 className="h6">Encounter timeline</h2>
-            <Timeline entries={history} />
-</div>
+          <div className="clinic-card mb-4">
+            <div className="clinic-card-header p-2 border-bottom bg-light">
+              <ul className="nav nav-tabs border-bottom-0 small">
+                <li className="nav-item">
+                  <button
+                    type="button"
+                    className={`nav-link py-1 px-3 fw-semibold ${activeRightRailTab === "TIMELINE" ? "active text-primary" : "text-secondary"}`}
+                    onClick={() => setActiveRightRailTab("TIMELINE")}
+                  >
+                    🕒 Timeline
+                  </button>
+                </li>
+                <li className="nav-item">
+                  <button
+                    type="button"
+                    className={`nav-link py-1 px-3 fw-semibold ${activeRightRailTab === "PAST_VISITS" ? "active text-primary" : "text-secondary"}`}
+                    onClick={() => setActiveRightRailTab("PAST_VISITS")}
+                  >
+                    🩺 Past Visits &amp; Dx {loadingHistory ? "..." : `(${pastVisits.length})`}
+                  </button>
+                </li>
+              </ul>
+            </div>
+            <div className="p-3">
+              {activeRightRailTab === "TIMELINE" ? (
+                <>
+                  <h2 className="h6 mb-3">Encounter timeline</h2>
+                  <Timeline entries={history} />
+                </>
+              ) : (
+                <div>
+                  <div className="d-flex justify-content-between align-items-center mb-2">
+                    <span className="fw-bold small text-dark">Prior Encounters &amp; History</span>
+                    <button
+                      type="button"
+                      className="btn btn-link btn-sm p-0 text-decoration-none small"
+                      onClick={() => setHistoryModalOpen(true)}
+                    >
+                      ⛶ Expand
+                    </button>
+                  </div>
+
+                  {/* Active Problems Summary */}
+                  {patientProblems.length > 0 && (
+                    <div className="mb-3 p-2 bg-light border rounded">
+                      <div className="small fw-semibold text-secondary mb-1">Active Problem List:</div>
+                      <div className="d-flex flex-column gap-1">
+                        {patientProblems.map((prob) => (
+                          <div key={prob.id} className="small d-flex justify-content-between align-items-center">
+                            <span>
+                              <span className="font-monospace fw-bold text-primary">{prob.icd10Code}</span>{" "}
+                              <span className="text-dark">{prob.icd10Description || prob.notes || ""}</span>
+                            </span>
+                            <button
+                              type="button"
+                              className="btn btn-link btn-sm p-0 text-decoration-none"
+                              style={{ fontSize: "0.75rem" }}
+                              onClick={() => {
+                                setIcd10(prob.icd10Code);
+                                setDxDescription(prob.icd10Description || "");
+                              }}
+                              title="Copy code to current diagnosis form"
+                            >
+                              + Use
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {loadingHistory ? (
+                    <div className="text-center py-4 text-muted small">
+                      <div className="spinner-border spinner-border-sm text-primary me-2" role="status" />
+                      Loading history...
+                    </div>
+                  ) : pastVisits.length === 0 ? (
+                    <div className="text-muted small text-center py-3 border rounded bg-light">
+                      No previous encounters found for this patient.
+                    </div>
+                  ) : (
+                    <div className="d-flex flex-column gap-3">
+                      {pastVisits.map((pv) => {
+                        const dateStr = pv.startedAt || pv.createdAt;
+                        const diagnoses = Array.isArray(pv.diagnoses) ? pv.diagnoses : [];
+                        return (
+                          <div key={pv.id} className="border rounded p-2 bg-white shadow-sm">
+                            <div className="d-flex justify-content-between align-items-center mb-1">
+                              <span className="fw-semibold small text-dark">
+                                📅 {dateStr ? new Date(dateStr).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                              </span>
+                              <span className="badge bg-secondary-subtle text-secondary border">
+                                {pv.status || "COMPLETED"}
+                              </span>
+                            </div>
+                            <div className="small text-muted mb-1">
+                              <strong>Doctor:</strong> {pv.practitionerName ? `Dr. ${pv.practitionerName}` : "—"}
+                            </div>
+                            {pv.chiefComplaint && (
+                              <div className="small text-muted mb-2">
+                                <strong>Complaint:</strong> {pv.chiefComplaint}
+                              </div>
+                            )}
+                            <div className="border-top pt-1 mt-1">
+                              <div className="text-muted small fw-semibold mb-1" style={{ fontSize: "0.78rem" }}>
+                                Diagnoses:
+                              </div>
+                              {diagnoses.length === 0 ? (
+                                <span className="small text-muted fst-italic">None recorded</span>
+                              ) : (
+                                <div className="d-flex flex-column gap-1">
+                                  {diagnoses.map((dx: any, idx: number) => (
+                                    <div key={idx} className="small d-flex justify-content-between align-items-center bg-light p-1 rounded">
+                                      <div>
+                                        <span className="font-monospace fw-bold text-primary me-1">{dx.icd10Code}</span>
+                                        <span>{dx.description || "Diagnosis"}</span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="btn btn-link btn-sm p-0 text-decoration-none text-success"
+                                        style={{ fontSize: "0.75rem" }}
+                                        onClick={() => {
+                                          setIcd10(dx.icd10Code);
+                                          setDxDescription(dx.description || "");
+                                        }}
+                                        title="Copy into current diagnosis form"
+                                      >
+                                        + Use
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <div className="mt-2 text-end">
+                              <Link
+                                to={`/clinical/visits/${pv.id}`}
+                                className="btn btn-sm btn-outline-primary py-0 px-2"
+                                style={{ fontSize: "0.75rem" }}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                View Encounter ↗
+                              </Link>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
+        </div>
 
           {/* ── Medical Certificates (CLN-T8) ─────────────────────────────── */}
           <div className="clinic-card mb-4">
@@ -1914,6 +2114,163 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
           practitionerName={visit.practitionerName}
         />
       ) : null}
+
+      {/* Past Encounters & Diagnoses Modal */}
+      {historyModalOpen && (
+        <div className="modal show d-block" tabIndex={-1} style={{ backgroundColor: "rgba(0,0,0,0.5)", zIndex: 1050 }}>
+          <div className="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+            <div className="modal-content">
+              <div className="modal-header">
+                <div>
+                  <h5 className="modal-title fw-bold text-dark">
+                    Past Encounters &amp; Diagnoses: {visit.patientName}
+                  </h5>
+                  <div className="small text-muted">
+                    Review prior clinical visits, complaints, attending physicians, and ICD-10 diagnoses
+                  </div>
+                </div>
+                <button type="button" className="btn-close" onClick={() => setHistoryModalOpen(false)} />
+              </div>
+              <div className="modal-body">
+                {/* Active Problems / Chronic Diagnoses */}
+                <div className="mb-4">
+                  <h6 className="fw-bold text-dark mb-2">📌 Active Problem List / Chronic Diagnoses</h6>
+                  {patientProblems.length === 0 ? (
+                    <div className="text-muted small border rounded p-2 bg-light">No chronic problems recorded for this patient.</div>
+                  ) : (
+                    <div className="table-responsive border rounded">
+                      <table className="table table-sm table-hover mb-0 small">
+                        <thead className="table-light">
+                          <tr>
+                            <th>ICD-10 Code</th>
+                            <th>Description</th>
+                            <th>Status</th>
+                            <th>Onset</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {patientProblems.map((prob) => (
+                            <tr key={prob.id}>
+                              <td className="font-monospace fw-bold text-primary">{prob.icd10Code}</td>
+                              <td>{prob.icd10Description || prob.notes || "—"}</td>
+                              <td><span className="badge bg-warning text-dark">{prob.status}</span></td>
+                              <td>{prob.onsetDate || "—"}</td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline-primary py-0 px-2"
+                                  style={{ fontSize: "0.75rem" }}
+                                  onClick={() => {
+                                    setIcd10(prob.icd10Code);
+                                    setDxDescription(prob.icd10Description || "");
+                                    setHistoryModalOpen(false);
+                                  }}
+                                >
+                                  + Use
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Past Encounters */}
+                <h6 className="fw-bold text-dark mb-2">🩺 Prior Visits &amp; Diagnoses ({pastVisits.length})</h6>
+                {loadingHistory ? (
+                  <div className="text-center py-4 text-muted small">
+                    <div className="spinner-border spinner-border-sm text-primary me-2" role="status" />
+                    Loading visits...
+                  </div>
+                ) : pastVisits.length === 0 ? (
+                  <div className="alert alert-info py-3 text-center small mb-0">
+                    No prior encounters found for this patient.
+                  </div>
+                ) : (
+                  <div className="d-flex flex-column gap-3">
+                    {pastVisits.map((pv) => {
+                      const vDate = pv.startedAt || pv.createdAt;
+                      const diagnoses = Array.isArray(pv.diagnoses) ? pv.diagnoses : [];
+                      return (
+                        <div key={pv.id} className="card shadow-sm border">
+                          <div className="card-header bg-light py-2 d-flex justify-content-between align-items-center">
+                            <div className="d-flex align-items-center gap-2">
+                              <span className="fw-bold text-dark">
+                                📅 {vDate ? new Date(vDate).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                              </span>
+                              <span className="badge bg-secondary-subtle text-secondary border">{pv.visitType || "OUTPATIENT"}</span>
+                              <span className={`badge ${pv.status === "COMPLETED" ? "bg-success" : "bg-primary"}`}>{pv.status}</span>
+                            </div>
+                            <Link
+                              to={`/clinical/visits/${pv.id}`}
+                              className="btn btn-sm btn-outline-primary"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              Open Encounter Chart ↗
+                            </Link>
+                          </div>
+                          <div className="card-body p-3">
+                            <div className="row g-2 small mb-2">
+                              <div className="col-md-6">
+                                <span className="text-muted">Attending Doctor: </span>
+                                <span className="fw-semibold text-dark">{pv.practitionerName ? `Dr. ${pv.practitionerName}` : "Unassigned"}</span>
+                              </div>
+                              <div className="col-md-6">
+                                <span className="text-muted">Chief Complaint: </span>
+                                <span className="fw-semibold text-dark">{pv.chiefComplaint || "None documented"}</span>
+                              </div>
+                            </div>
+                            <div className="border-top pt-2">
+                              <div className="text-muted small fw-semibold mb-1">Diagnoses recorded:</div>
+                              {diagnoses.length === 0 ? (
+                                <div className="text-muted small fst-italic">No ICD-10 diagnosis recorded for this visit.</div>
+                              ) : (
+                                <div className="d-flex flex-wrap gap-2">
+                                  {diagnoses.map((dx: any, idx: number) => (
+                                    <div key={idx} className="badge bg-info-subtle text-dark border border-info-subtle p-2 text-start d-flex align-items-center gap-2">
+                                      <div>
+                                        <span className="font-monospace fw-bold text-primary me-1">{dx.icd10Code}</span>
+                                        <span>{dx.description || "Diagnosis"}</span>
+                                        {dx.dxType && <span className="badge bg-light text-secondary ms-1 border">{dx.dxType}</span>}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="btn btn-sm btn-outline-dark py-0 px-1 bg-white"
+                                        style={{ fontSize: "0.7rem" }}
+                                        onClick={() => {
+                                          setIcd10(dx.icd10Code);
+                                          setDxDescription(dx.description || "");
+                                          setHistoryModalOpen(false);
+                                        }}
+                                        title="Copy code to current diagnosis form"
+                                      >
+                                        + Use in Chart
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setHistoryModalOpen(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
