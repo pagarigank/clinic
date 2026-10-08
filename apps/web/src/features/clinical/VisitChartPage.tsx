@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { AlertBanner, StatusPill, PatientBanner, Timeline } from "@clinic/ui";
-import { apiGet, apiPost, apiGetBlob, ApiError } from "../../shared/api/client.js";
+import { apiGet, apiPost, apiPut, apiGetBlob, ApiError } from "../../shared/api/client.js";
 import { useStepUp, isStepUpRequired } from "../../shared/auth/StepUpContext.js";
 import { PrescriptionPrintModal } from "./PrescriptionPrintModal.js";
 import { MedicalCertificatePrintModal } from "./MedicalCertificatePrintModal.js";
@@ -286,7 +286,7 @@ export function VisitChartPage() {
     branchId?: string; branchName?: string; clinicName?: string;
     chiefComplaint?: string; practitionerName?: string;
     allergies?: Array<{ substance: string; severity?: string }>;
-  } | null>(null);
+  } | null>(visitId ? { id: visitId, visitNo: "", patientId: "", patientName: "" } : null);
   const [vitals, setVitals] = useState<VitalsRow[]>([]);
   const [notes, setNotes] = useState<NoteRow[]>([]);
   const [diagnoses, setDiagnoses] = useState<DiagnosisRow[]>([]);
@@ -386,6 +386,8 @@ export function VisitChartPage() {
   const [qtyWords, setQtyWords] = useState("");
   const [rxNotes, setRxNotes] = useState("");
   const [clinicalMemo, setClinicalMemo] = useState("");
+  const [memoSaving, setMemoSaving] = useState(false);
+  const [memoSaved, setMemoSaved] = useState(false);
   const [signConfirm, setSignConfirm] = useState<{ open: boolean } | null>(null);
   const [signError, setSignError] = useState<string | null>(null);
 
@@ -475,9 +477,16 @@ export function VisitChartPage() {
           setPlan(latestNote.plan || "");
           if (latestNote.plan) {
             setRxNotes((prev) => prev || latestNote.plan || "");
-            setClinicalMemo((prev) => prev || [latestNote.assessment ? `Assessment: ${latestNote.assessment}` : "", latestNote.plan ? `Plan: ${latestNote.plan}` : ""].filter(Boolean).join("\n") || "");
           }
         }
+      }
+      if (v?.clinical_memo || v?.clinicalMemo) {
+        setClinicalMemo(v.clinical_memo || v.clinicalMemo);
+      } else if (v?.notes?.[0]?.clinical_memo || v?.notes?.[0]?.clinicalMemo) {
+        setClinicalMemo(v.notes[0].clinical_memo || v.notes[0].clinicalMemo);
+      } else if (v?.notes?.[0]?.plan) {
+        const latestNote = v.notes[0];
+        setClinicalMemo((prev) => prev || [latestNote.assessment ? `Assessment: ${latestNote.assessment}` : "", latestNote.plan ? `Plan: ${latestNote.plan}` : ""].filter(Boolean).join("\n") || "");
       }
       if (Array.isArray(v?.diagnoses)) {
         setDiagnoses(
@@ -605,7 +614,14 @@ export function VisitChartPage() {
 
   const saveNote = async () => {
     setError(null);
-    const body = { noteType: "SOAP", subjective, objective, assessment, plan };
+    const body = {
+      noteType: "SOAP",
+      subjective,
+      objective,
+      assessment,
+      plan,
+      ...(clinicalMemo.trim() ? { clinicalMemo: clinicalMemo.trim() } : {}),
+    };
     if (visitId && DEMO_CHART_DATA[visitId]) {
       const newId = noteId || `note-${Date.now()}`;
       setNoteId(newId);
@@ -690,6 +706,32 @@ export function VisitChartPage() {
     setNotes((prev) => prev.map((n) => (n.id === noteId ? { ...n, status: "SIGNED" } : n)));
     setSignConfirm(null);
     setNotice("Note signed — it is now locked; later changes are addenda.");
+  };
+
+  const saveMemo = async () => {
+    setError(null);
+    setMemoSaving(true);
+    setMemoSaved(false);
+    const trimmed = clinicalMemo.trim();
+    if (visitId && DEMO_CHART_DATA[visitId]) {
+      setMemoSaving(false);
+      setMemoSaved(true);
+      setNotice("Clinical memo saved (preview mode).");
+      setTimeout(() => setMemoSaved(false), 3000);
+      return;
+    }
+    try {
+      await apiPut(`/clinical/visits/${visitId}/memo`, {
+        clinicalMemo: trimmed,
+      });
+      setNotice("Clinical memo saved successfully.");
+      setMemoSaved(true);
+      setTimeout(() => setMemoSaved(false), 3000);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.problem.detail ?? err.problem.title : "Could not save clinical memo.");
+    } finally {
+      setMemoSaving(false);
+    }
   };
 
   const addDiagnosis = async () => {
@@ -1346,20 +1388,39 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
           {/* ── Clinical Notes / Memo ────────────────────────────────────── */}
           <div className="clinic-card mb-4">
             <div className="clinic-card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-              <div>
+              <div className="d-flex align-items-center gap-2">
                 <span className="fw-bold">Clinical Notes / Physician's Memo</span>
-                <span className="small text-muted ms-2">(printed on prescription pad just before footer)</span>
+                <span className="small text-muted ms-1">(printed on prescription pad just before footer)</span>
+                {memoSaved ? (
+                  <span className="badge bg-success-subtle text-success border border-success-subtle small">
+                    ✓ Saved
+                  </span>
+                ) : null}
               </div>
-              {(plan || assessment) ? (
+              <div className="d-flex align-items-center gap-2">
+                {(plan || assessment) ? (
+                  <button
+                    type="button"
+                    className="btn btn-link btn-sm p-0 text-decoration-none"
+                    style={{ fontSize: "0.8rem" }}
+                    onClick={() => {
+                      setClinicalMemo([assessment ? `Assessment: ${assessment}` : "", plan ? `Plan: ${plan}` : ""].filter(Boolean).join("\n"));
+                      setMemoSaved(false);
+                    }}
+                  >
+                    📋 Copy from SOAP
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  className="btn btn-link btn-sm p-0 text-decoration-none"
+                  className="btn btn-sm btn-cerulean py-0 px-2"
                   style={{ fontSize: "0.8rem" }}
-                  onClick={() => setClinicalMemo([assessment ? `Assessment: ${assessment}` : "", plan ? `Plan: ${plan}` : ""].filter(Boolean).join("\n"))}
+                  disabled={memoSaving}
+                  onClick={() => void saveMemo()}
                 >
-                  📋 Copy from SOAP Assessment &amp; Plan
+                  {memoSaving ? "Saving..." : memoSaved ? "✓ Saved" : "💾 Save Memo"}
                 </button>
-              ) : null}
+              </div>
             </div>
             <div className="p-3">
               <textarea
@@ -1368,22 +1429,45 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
                 rows={3}
                 placeholder="e.g. Patient advised on dietary and lifestyle modification. Follow up for repeat laboratory tests in 5 days."
                 value={clinicalMemo}
-                onChange={(e) => setClinicalMemo(e.target.value)}
+                onChange={(e) => {
+                  setClinicalMemo(e.target.value);
+                  setMemoSaved(false);
+                }}
               />
-              <div className="d-flex justify-content-between align-items-center mt-2">
-                <span className="small text-muted">
-                  Included automatically on prescription and consultation order printouts.
-                </span>
-                {clinicalMemo ? (
+              <div className="d-flex justify-content-between align-items-center mt-2 flex-wrap gap-2">
+                <div className="d-flex align-items-center gap-2">
+                  <span className="small text-muted">
+                    Included automatically on prescription and consultation order printouts.
+                  </span>
+                  {memoSaved ? (
+                    <span className="small text-success fw-semibold">
+                      ✓ Saved to chart and Rx pad
+                    </span>
+                  ) : null}
+                </div>
+                <div className="d-flex align-items-center gap-2">
+                  {clinicalMemo ? (
+                    <button
+                      type="button"
+                      className="btn btn-outline-secondary btn-sm py-0 px-2"
+                      style={{ fontSize: "0.78rem" }}
+                      onClick={() => {
+                        setClinicalMemo("");
+                        setMemoSaved(false);
+                      }}
+                    >
+                      Clear
+                    </button>
+                  ) : null}
                   <button
                     type="button"
-                    className="btn btn-outline-secondary btn-sm py-0 px-2"
-                    style={{ fontSize: "0.78rem" }}
-                    onClick={() => setClinicalMemo("")}
+                    className="btn btn-sm btn-cerulean py-1 px-3"
+                    disabled={memoSaving}
+                    onClick={() => void saveMemo()}
                   >
-                    Clear memo
+                    {memoSaving ? "Saving..." : memoSaved ? "✓ Saved" : "💾 Save Memo"}
                   </button>
-                ) : null}
+                </div>
               </div>
             </div>
           </div>

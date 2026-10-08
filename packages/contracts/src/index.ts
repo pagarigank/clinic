@@ -839,8 +839,16 @@ export const SaveNoteSchema = z.object({
   objective: z.string().max(20000).optional(),
   assessment: z.string().max(20000).optional(),
   plan: z.string().max(20000).optional(),
+  clinicalMemo: z.string().max(20000).optional(),
 });
 export type SaveNoteRequest = z.infer<typeof SaveNoteSchema>;
+
+export const SaveClinicalMemoSchema = z.object({
+  memo: z.string().max(20000).optional(),
+  clinicalNotes: z.string().max(20000).optional(),
+  clinicalMemo: z.string().max(20000).optional(),
+});
+export type SaveClinicalMemoRequest = z.infer<typeof SaveClinicalMemoSchema>;
 
 export const SignNoteSchema = z.object({
   rowVersion: z.number().int().positive(),
@@ -852,6 +860,7 @@ export const AmendNoteSchema = z.object({
   objective: z.string().max(20000).optional(),
   assessment: z.string().max(20000).optional(),
   plan: z.string().max(20000).optional(),
+  clinicalMemo: z.string().max(20000).optional(),
 });
 export type AmendNoteRequest = z.infer<typeof AmendNoteSchema>;
 

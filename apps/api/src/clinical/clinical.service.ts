@@ -915,10 +915,16 @@ export class ClinicalService {
   async saveNote(tenantId: string, userId: string, visitId: string, dto: SaveNoteRequest) {
     return withTenant({ tenantId, userId }, async (tx) => {
       const res = await tx.query(
-        `INSERT INTO clinical_notes (tenant_id, visit_id, note_type, subjective, objective, assessment, plan, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-        [tenantId, visitId, dto.noteType, dto.subjective ?? null, dto.objective ?? null, dto.assessment ?? null, dto.plan ?? null, userId],
+        `INSERT INTO clinical_notes (tenant_id, visit_id, note_type, subjective, objective, assessment, plan, clinical_memo, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [tenantId, visitId, dto.noteType, dto.subjective ?? null, dto.objective ?? null, dto.assessment ?? null, dto.plan ?? null, dto.clinicalMemo ?? null, userId],
       );
+      if (dto.clinicalMemo) {
+        await tx.query(
+          `UPDATE visits SET clinical_memo = $3, updated_at = now() WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, visitId, dto.clinicalMemo],
+        );
+      }
       return res.rows[0];
     });
   }
@@ -927,12 +933,36 @@ export class ClinicalService {
     return withTenant({ tenantId, userId }, async (tx) => {
       // Only DRAFT notes are editable; signing locks (§7.2).
       const res = await tx.query(
-        `UPDATE clinical_notes SET subjective = $3, objective = $4, assessment = $5, plan = $6, updated_at = now()
+        `UPDATE clinical_notes SET subjective = $3, objective = $4, assessment = $5, plan = $6, clinical_memo = COALESCE($7, clinical_memo), updated_at = now()
          WHERE tenant_id = $1 AND id = $2 AND status = 'DRAFT' RETURNING *`,
-        [tenantId, noteId, dto.subjective ?? null, dto.objective ?? null, dto.assessment ?? null, dto.plan ?? null],
+        [tenantId, noteId, dto.subjective ?? null, dto.objective ?? null, dto.assessment ?? null, dto.plan ?? null, dto.clinicalMemo ?? null],
       );
       if ((res.rowCount ?? 0) === 0) throw new ProblemException('NOTE_LOCKED', { detail: 'Only draft notes can be edited.' });
+      if (dto.clinicalMemo) {
+        await tx.query(
+          `UPDATE visits SET clinical_memo = $3, updated_at = now() WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, res.rows[0].visit_id, dto.clinicalMemo],
+        );
+      }
       return res.rows[0];
+    });
+  }
+
+  async saveClinicalMemo(tenantId: string, userId: string, visitId: string, dto: { memo?: string; clinicalNotes?: string; clinicalMemo?: string }) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const memoText = (dto.clinicalMemo ?? dto.clinicalNotes ?? dto.memo ?? '').trim();
+      const res = await tx.query(
+        `UPDATE visits SET clinical_memo = $3, updated_at = now()
+         WHERE tenant_id = $1 AND id = $2 RETURNING id, visit_no, clinical_memo`,
+        [tenantId, visitId, memoText || null],
+      );
+      if ((res.rowCount ?? 0) === 0) throw new ProblemException('NOT_FOUND', { detail: 'Visit not found' });
+      await tx.query(
+        `UPDATE clinical_notes SET clinical_memo = $3, updated_at = now()
+         WHERE tenant_id = $1 AND visit_id = $2 AND status = 'DRAFT'`,
+        [tenantId, visitId, memoText || null],
+      );
+      return { success: true, visitId, clinicalMemo: memoText };
     });
   }
 
@@ -1767,8 +1797,8 @@ export class ClinicalService {
       s2SerialNo,
       s2QuantityInWords: s2SerialNo ? `${allItems.length} controlled medication items prescribed` : undefined,
       specialInstruction,
-      clinicalNotes: overrides?.clinicalNotes || overrides?.clinicalMemo || overrides?.memo || undefined,
-      clinicalMemo: overrides?.clinicalNotes || overrides?.clinicalMemo || overrides?.memo || undefined,
+      clinicalNotes: overrides?.clinicalNotes || overrides?.clinicalMemo || overrides?.memo || visit.clinical_memo || undefined,
+      clinicalMemo: overrides?.clinicalNotes || overrides?.clinicalMemo || overrides?.memo || visit.clinical_memo || undefined,
       items: allItems.length > 0 ? allItems : [
         {
           genericName: 'No active medications prescribed',
@@ -1918,8 +1948,8 @@ export class ClinicalService {
       prescriptions: allRx,
       labRequests: allLab,
       advice: overrides?.advice || visit.clinical_note?.plan || 'Take medications as directed and return for follow-up evaluation as scheduled.',
-      clinicalNotes: overrides?.clinicalNotes || overrides?.clinicalMemo || overrides?.memo || undefined,
-      clinicalMemo: overrides?.clinicalNotes || overrides?.clinicalMemo || overrides?.memo || undefined,
+      clinicalNotes: overrides?.clinicalNotes || overrides?.clinicalMemo || overrides?.memo || visit.clinical_memo || undefined,
+      clinicalMemo: overrides?.clinicalNotes || overrides?.clinicalMemo || overrides?.memo || visit.clinical_memo || undefined,
       verificationHash: Buffer.from(`${visit.id}:${Date.now()}`).toString('hex'),
     };
 

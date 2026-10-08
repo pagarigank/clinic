@@ -1,4 +1,4 @@
-import { Inject, Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Req, Res } from '@nestjs/common';
+import { Inject, Controller, Get, Post, Put, Patch, Body, Param, Query, UseGuards, Req, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
@@ -21,6 +21,7 @@ import {
   CancelVisitSchema, type CancelVisitRequest,
   RecordVitalsSchema, type RecordVitalsRequest,
   SaveNoteSchema, type SaveNoteRequest,
+  SaveClinicalMemoSchema, type SaveClinicalMemoRequest,
   SignNoteSchema, type SignNoteRequest,
   AmendNoteSchema, type AmendNoteRequest,
   AddDiagnosisSchema, type AddDiagnosisRequest,
@@ -242,6 +243,28 @@ async listVisits(
   @Post('visits/:id/notes')
   async saveNote(@Req() req: RequestWithAuth, @Param('id') visitId: string, @Body(new ZodValidationPipe(SaveNoteSchema)) dto: SaveNoteRequest) {
     return this.svc.saveNote(req.tenantId!, req.authContext!.userId!, visitId, dto);
+  }
+
+  @RequirePermission('clinical.note.create')
+  @Put('visits/:id/memo')
+  @ApiOperation({ summary: 'Save clinical notes memo for the visit and prescription pad' })
+  async saveClinicalMemo(
+    @Req() req: RequestWithAuth,
+    @Param('id') visitId: string,
+    @Body(new ZodValidationPipe(SaveClinicalMemoSchema)) dto: SaveClinicalMemoRequest,
+  ) {
+    return this.svc.saveClinicalMemo(req.tenantId!, req.authContext!.userId!, visitId, dto);
+  }
+
+  @RequirePermission('clinical.note.create')
+  @Patch('visits/:id/memo')
+  @ApiOperation({ summary: 'Update clinical notes memo for the visit and prescription pad' })
+  async patchClinicalMemo(
+    @Req() req: RequestWithAuth,
+    @Param('id') visitId: string,
+    @Body(new ZodValidationPipe(SaveClinicalMemoSchema)) dto: SaveClinicalMemoRequest,
+  ) {
+    return this.svc.saveClinicalMemo(req.tenantId!, req.authContext!.userId!, visitId, dto);
   }
 
   @RequirePermission('clinical.note.update')
