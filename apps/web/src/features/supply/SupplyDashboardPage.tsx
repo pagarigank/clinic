@@ -147,6 +147,9 @@ export function SupplyDashboardPage() {
           <Link to="/supply/requisitions" className="btn btn-sm btn-outline-secondary">
             📋 New Requisition
           </Link>
+          <Link to="/supply/issue" className="btn btn-sm btn-outline-secondary">
+            📤 Dispense &amp; Issue
+          </Link>
           <Link to="/supply/stock" className="btn btn-sm btn-outline-secondary">
             📦 Stock Explorer
           </Link>

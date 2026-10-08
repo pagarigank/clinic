@@ -79,7 +79,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/supply/stock", icon: "📦", label: "Stock Explorer" },
       { to: "/supply/grn", icon: "📥", label: "Receive Delivery (GRN)" },
       { to: "/supply/requisitions", icon: "📋", label: "Requisitions & Issues" },
-      { to: "/supply/issue", icon: "📤", label: "Issue / Consumption" },
+      { to: "/supply/issue", icon: "📤", label: "Supply Dispensing / Issue" },
       { to: "/supply/items", icon: "🏷️", label: "Item Master & Pricing" },
     ],
   },

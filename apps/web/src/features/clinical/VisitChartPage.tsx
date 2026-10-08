@@ -1488,7 +1488,7 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
                 >
                   🖨️ Print Prescription
                 </button>
-                <Link to="/pharmacy/dispense" className="btn btn-sm btn-outline-primary py-0 px-2" style={{ fontSize: "0.8rem" }}>
+                <Link to="/pharmacy/dispenses" className="btn btn-sm btn-outline-primary py-0 px-2" style={{ fontSize: "0.8rem" }}>
                   💊 Pharmacy Workbench &rarr;
                 </Link>
               </div>
@@ -1793,7 +1793,7 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
                 <span className="fw-bold">Central Supply &amp; Consumables</span>
                 <span className="small text-muted ms-2">supplies / materials used in encounter</span>
               </div>
-              <Link to="/supply/issues" className="btn btn-sm btn-outline-primary py-0 px-2" style={{ fontSize: "0.8rem" }}>
+              <Link to="/supply/issue" className="btn btn-sm btn-outline-primary py-0 px-2" style={{ fontSize: "0.8rem" }}>
                 📦 Supply Issues &rarr;
               </Link>
             </div>
@@ -1881,7 +1881,7 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
                         {s.notes ? <span className="text-muted italic">({s.notes})</span> : null}
                       </div>
                       <Link
-                        to="/supply/issues"
+                        to="/supply/issue"
                         className="btn btn-sm btn-outline-secondary py-0 px-2"
                         style={{ fontSize: "0.78rem" }}
                       >

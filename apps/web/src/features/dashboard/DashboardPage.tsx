@@ -78,9 +78,9 @@ const QUICK_ACTIONS = [
     accent: false,
   },
   {
-    to: "/supply/issues",
+    to: "/supply/issue",
     icon: "📦",
-    title: "Central Supply Issues",
+    title: "Central Supply Issues & Dispensing",
     desc: "Room consumables log, stock issuing, department requisitions & ledger.",
     badge: "SUPPLY",
     accent: false,
@@ -472,7 +472,7 @@ export function DashboardPage() {
 
         {/* 5. Central Supply Items & Valuation */}
         <div className="col-sm-6 col-xl-2">
-          <Link to="/supply/issues" className="text-decoration-none">
+          <Link to="/supply/issue" className="text-decoration-none">
             <div className="metric-card d-flex flex-column justify-content-between h-100">
               <div className="d-flex justify-content-between align-items-start">
                 <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--grey-500)", textTransform: "uppercase" }}>

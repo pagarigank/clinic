@@ -108,6 +108,8 @@ const router = createBrowserRouter([
           { path: "queue", element: <PharmacyQueuePage /> },
           { path: "dispenses", element: <DispenseWorkbenchPage /> },
           { path: "dispenses/:id", element: <DispenseWorkbenchPage /> },
+          { path: "dispense", element: <DispenseWorkbenchPage /> },
+          { path: "dispense/:id", element: <DispenseWorkbenchPage /> },
           { path: "controlled-register", element: <ControlledRegisterPage /> },
           { path: "sales", element: <OtcSalesPage /> },
           { path: "sales/:id", element: <OtcSalesPage /> },
@@ -138,6 +140,9 @@ const router = createBrowserRouter([
           { path: "requisitions", element: <RequisitionsPage /> },
           { path: "items", element: <ItemMasterPage /> },
           { path: "issue", element: <SupplyIssueWorkbenchPage /> },
+          { path: "issues", element: <SupplyIssueWorkbenchPage /> },
+          { path: "dispense", element: <SupplyIssueWorkbenchPage /> },
+          { path: "dispenses", element: <SupplyIssueWorkbenchPage /> },
         ],
       },
       {

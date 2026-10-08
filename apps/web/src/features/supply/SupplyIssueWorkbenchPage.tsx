@@ -219,12 +219,12 @@ export function SupplyIssueWorkbenchPage() {
                 <Link to="/supply">Supply &amp; Inventory</Link>
               </li>
               <li className="breadcrumb-item active" aria-current="page">
-                Issue / Consumption
+                Dispensing &amp; Issue
               </li>
             </ol>
           </nav>
           <h1 className="h3 fw-bold mb-0" style={{ color: "var(--brand-primary)" }}>
-            Supply Issue Workbench
+            Supply Dispensing &amp; Issue Workbench
           </h1>
         </div>
         <div className="d-flex align-items-center gap-2">
