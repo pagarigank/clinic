@@ -1767,6 +1767,8 @@ export class ClinicalService {
       s2SerialNo,
       s2QuantityInWords: s2SerialNo ? `${allItems.length} controlled medication items prescribed` : undefined,
       specialInstruction,
+      clinicalNotes: overrides?.clinicalNotes || overrides?.clinicalMemo || overrides?.memo || undefined,
+      clinicalMemo: overrides?.clinicalNotes || overrides?.clinicalMemo || overrides?.memo || undefined,
       items: allItems.length > 0 ? allItems : [
         {
           genericName: 'No active medications prescribed',
@@ -1916,6 +1918,8 @@ export class ClinicalService {
       prescriptions: allRx,
       labRequests: allLab,
       advice: overrides?.advice || visit.clinical_note?.plan || 'Take medications as directed and return for follow-up evaluation as scheduled.',
+      clinicalNotes: overrides?.clinicalNotes || overrides?.clinicalMemo || overrides?.memo || undefined,
+      clinicalMemo: overrides?.clinicalNotes || overrides?.clinicalMemo || overrides?.memo || undefined,
       verificationHash: Buffer.from(`${visit.id}:${Date.now()}`).toString('hex'),
     };
 
@@ -1980,6 +1984,8 @@ export class ClinicalService {
       ptrNo: overrides?.ptrNumber || profile?.ptrNo || undefined,
       s2LicenseNo: overrides?.s2Number || profile?.s2LicenseNo || undefined,
       specialInstruction: overrides?.advice || rx.notes || 'Take medications strictly as directed.',
+      clinicalNotes: overrides?.clinicalNotes || overrides?.clinicalMemo || overrides?.memo || undefined,
+      clinicalMemo: overrides?.clinicalNotes || overrides?.clinicalMemo || overrides?.memo || undefined,
       items: allItems,
       verificationHash: rxPrint.verificationHash,
     };

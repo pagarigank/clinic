@@ -385,6 +385,7 @@ export function VisitChartPage() {
   const [specialRxNo, setSpecialRxNo] = useState("");
   const [qtyWords, setQtyWords] = useState("");
   const [rxNotes, setRxNotes] = useState("");
+  const [clinicalMemo, setClinicalMemo] = useState("");
   const [signConfirm, setSignConfirm] = useState<{ open: boolean } | null>(null);
   const [signError, setSignError] = useState<string | null>(null);
 
@@ -474,6 +475,7 @@ export function VisitChartPage() {
           setPlan(latestNote.plan || "");
           if (latestNote.plan) {
             setRxNotes((prev) => prev || latestNote.plan || "");
+            setClinicalMemo((prev) => prev || [latestNote.assessment ? `Assessment: ${latestNote.assessment}` : "", latestNote.plan ? `Plan: ${latestNote.plan}` : ""].filter(Boolean).join("\n") || "");
           }
         }
       }
@@ -1492,6 +1494,32 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
                   onChange={(e) => setRxNotes(e.target.value)}
                 />
               </div>
+              <div className="mb-3">
+                <div className="d-flex justify-content-between align-items-center mb-1">
+                  <label className="form-label small mb-0 fw-semibold text-dark" htmlFor="rx-clinical-memo">
+                    <strong>📋 Clinical Notes / Memo Entry</strong>
+                    <span className="text-muted fw-normal ms-1">(printed on prescription pad just before footer)</span>
+                  </label>
+                  {(plan || assessment) ? (
+                    <button
+                      type="button"
+                      className="btn btn-link btn-sm p-0 text-decoration-none"
+                      style={{ fontSize: "0.78rem" }}
+                      onClick={() => setClinicalMemo([assessment ? `Assessment: ${assessment}` : "", plan ? `Plan: ${plan}` : ""].filter(Boolean).join("\n"))}
+                    >
+                      📋 Copy from SOAP Assessment &amp; Plan
+                    </button>
+                  ) : null}
+                </div>
+                <textarea
+                  id="rx-clinical-memo"
+                  className="form-control form-control-sm"
+                  rows={2}
+                  placeholder="e.g. Patient advised on dietary and lifestyle modification. Follow up for repeat laboratory tests in 5 days."
+                  value={clinicalMemo}
+                  onChange={(e) => setClinicalMemo(e.target.value)}
+                />
+              </div>
               <button type="button" className="btn btn-sm btn-cerulean" onClick={() => void createAndIssueRx()}>
                 Create & issue
               </button>
@@ -2116,6 +2144,7 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
             plan ||
             undefined
           }
+          clinicalNotes={clinicalMemo || undefined}
         />
       ) : null}
 

@@ -446,6 +446,19 @@ describe("renderPrescriptionHtml", () => {
     expect(html).toContain("Physician's Instructions &amp; Notes:");
     expect(html).toContain("Drink 2-3 liters of water daily. Return if symptoms worsen after 3 days.");
   });
+
+  it("renders clinical notes memo entry on prescription printout before the footer", () => {
+    const html = renderPrescriptionHtml({
+      ...baseRx,
+      clinicalNotes: "Patient advised on lifestyle changes. Monitor BP daily and return in 1 week.",
+    });
+    expect(html).toContain("Clinical Notes / Physician's Memo:");
+    expect(html).toContain("Patient advised on lifestyle changes. Monitor BP daily and return in 1 week.");
+    const notesIndex = html.indexOf("Clinical Notes / Physician's Memo:");
+    const footerIndex = html.indexOf("<footer");
+    expect(notesIndex).toBeGreaterThan(0);
+    expect(footerIndex).toBeGreaterThan(notesIndex);
+  });
 });
 
 describe("renderLabRequisitionHtml", () => {

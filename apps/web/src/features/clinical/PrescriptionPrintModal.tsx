@@ -111,6 +111,8 @@ export interface PrescriptionPrintModalProps {
   diagnosis?: string;
   diagnosisDescription?: string;
   specialInstruction?: string;
+  clinicalNotes?: string;
+  clinicalMemo?: string;
 }
 
 export function PrescriptionPrintModal({
@@ -128,6 +130,8 @@ export function PrescriptionPrintModal({
   diagnosis,
   diagnosisDescription,
   specialInstruction,
+  clinicalNotes,
+  clinicalMemo: propClinicalMemo,
 }: PrescriptionPrintModalProps) {
   const [activeTab, setActiveTab] = useState<"RX" | "LAB" | "ALL">(defaultTab);
   const [showConfig, setShowConfig] = useState(false);
@@ -163,8 +167,16 @@ export function PrescriptionPrintModal({
     specialInstruction ||
     (notes.length > 0 && notes[0]?.plan ? notes[0].plan : "");
 
+  const defaultMemo =
+    clinicalNotes ||
+    propClinicalMemo ||
+    (notes.length > 0 && (notes[0]?.plan || notes[0]?.assessment)
+      ? [notes[0]?.assessment ? `Assessment: ${notes[0].assessment}` : "", notes[0]?.plan ? `Plan: ${notes[0].plan}` : ""].filter(Boolean).join("\n")
+      : "");
+
   const [rxDiagnosis, setRxDiagnosis] = useState(defaultDx);
   const [rxNotesAdvice, setRxNotesAdvice] = useState(defaultAdvice);
+  const [clinicalMemo, setClinicalMemo] = useState(defaultMemo);
   const touched = useRef<Set<string>>(new Set());
   const markTouched = (key: string) => touched.current.add(key);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -290,6 +302,8 @@ export function PrescriptionPrintModal({
       if (touched.current.has("clinicContact") && clinicContact.trim()) override.clinicPhone = clinicContact.trim();
       if (touched.current.has("rxDiagnosis") && rxDiagnosis.trim()) override.diagnosis = rxDiagnosis.trim();
       if (touched.current.has("rxNotesAdvice") && rxNotesAdvice.trim()) override.advice = rxNotesAdvice.trim();
+      if (touched.current.has("clinicalMemo") && clinicalMemo.trim()) override.clinicalNotes = clinicalMemo.trim();
+      else if (clinicalMemo.trim()) override.clinicalNotes = clinicalMemo.trim();
       const params = new URLSearchParams(override);
       // apiGetBlob prepends /api/v1 and attaches the Bearer token automatically
       let path: string;
@@ -331,6 +345,7 @@ export function PrescriptionPrintModal({
     clinicContact,
     rxDiagnosis,
     rxNotesAdvice,
+    clinicalMemo,
   ]);
 
 
@@ -596,6 +611,22 @@ export function PrescriptionPrintModal({
                     }}
                   />
                 </div>
+                <div className="col-md-12">
+                  <label className="form-label mb-0 fw-semibold text-secondary" htmlFor="pp-rx-clinical-memo">
+                    Clinical Notes / Memo Entry (Printed on prescription pad just before footer)
+                  </label>
+                  <textarea
+                    className="form-control form-control-sm"
+                    id="pp-rx-clinical-memo"
+                    rows={2}
+                    placeholder="e.g. Patient advised on strict lifestyle and dietary control. Return for repeat evaluation in 5 days."
+                    value={clinicalMemo}
+                    onChange={(e) => {
+                      markTouched("clinicalMemo");
+                      setClinicalMemo(e.target.value);
+                    }}
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -666,6 +697,21 @@ export function PrescriptionPrintModal({
                 onChange={(e) => {
                   markTouched("rxNotesAdvice");
                   setRxNotesAdvice(e.target.value);
+                }}
+              />
+            </div>
+            <div className="d-flex align-items-center gap-1 flex-grow-1" style={{ minWidth: "280px" }}>
+              <span className="badge bg-secondary-subtle text-secondary border border-secondary-subtle small text-nowrap">
+                📋 Clinical Memo (pre-footer)
+              </span>
+              <input
+                type="text"
+                className="form-control form-control-sm bg-white"
+                placeholder="Clinical notes / memo before footer..."
+                value={clinicalMemo}
+                onChange={(e) => {
+                  markTouched("clinicalMemo");
+                  setClinicalMemo(e.target.value);
                 }}
               />
             </div>

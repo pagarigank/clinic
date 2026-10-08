@@ -760,6 +760,8 @@ export interface PrescriptionDocument {
   diagnosisDescription?: string;
   clinicalImpression?: string;
   specialInstruction?: string;
+  clinicalNotes?: string;
+  clinicalMemo?: string;
   items: PrescriptionItemDocument[];
 
   s2SerialNo?: string;
@@ -971,6 +973,18 @@ export function renderPrescriptionHtml(doc: PrescriptionDocument): string {
         </tr>
       </table>
     </div>
+
+    <!-- Clinical Notes / Physician's Memo (Just before footer) -->
+    ${(doc.clinicalNotes || doc.clinicalMemo) ? `
+      <div style="margin-top: 5mm; margin-bottom: 2mm; background: #f8fafc; border: 1pt solid #cbd5e1; border-left: 3.5pt solid #0284c7; padding: 2.5mm 3.5mm; border-radius: 4px;">
+        <div style="font-size: 8pt; font-weight: 700; text-transform: uppercase; color: #0284c7; letter-spacing: 0.4pt; margin-bottom: 1mm;">
+          Clinical Notes / Physician's Memo:
+        </div>
+        <div style="font-size: 9.5pt; color: #1e293b; line-height: 1.45; white-space: pre-wrap;">
+          ${escapeHtml(doc.clinicalNotes || doc.clinicalMemo || '')}
+        </div>
+      </div>
+    ` : ''}
 
     <!-- Official Document Footer -->
     <footer style="margin-top: 6mm; border-top: 0.5pt solid #cbd5e1; padding-top: 1.5mm; font-size: 7.5pt; color: #64748b; display: flex; justify-content: space-between;">
@@ -1215,6 +1229,8 @@ export interface EncounterOrdersDocument {
   labRequests: LabRequisitionItem[];
 
   advice?: string;
+  clinicalNotes?: string;
+  clinicalMemo?: string;
   verificationHash?: string;
 }
 
@@ -1359,6 +1375,18 @@ export function renderEncounterOrdersHtml(doc: EncounterOrdersDocument): string 
         </tr>
       </table>
     </div>
+
+    <!-- Clinical Notes / Physician's Memo (Just before footer) -->
+    ${(doc.clinicalNotes || doc.clinicalMemo) ? `
+      <div style="margin-top: 5mm; margin-bottom: 2mm; background: #f8fafc; border: 1pt solid #cbd5e1; border-left: 3.5pt solid #0284c7; padding: 2.5mm 3.5mm; border-radius: 4px;">
+        <div style="font-size: 8pt; font-weight: 700; text-transform: uppercase; color: #0284c7; letter-spacing: 0.4pt; margin-bottom: 1mm;">
+          Clinical Notes / Physician's Memo:
+        </div>
+        <div style="font-size: 9.5pt; color: #1e293b; line-height: 1.45; white-space: pre-wrap;">
+          ${escapeHtml(doc.clinicalNotes || doc.clinicalMemo || '')}
+        </div>
+      </div>
+    ` : ''}
 
     <!-- Footer -->
     <footer style="margin-top: 6mm; border-top: 0.5pt solid #cbd5e1; padding-top: 1.5mm; font-size: 7.5pt; color: #64748b; display: flex; justify-content: space-between;">
