@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Link } from "react-router";
 import {
   Alert,
@@ -11,6 +11,7 @@ import {
   StatusPill,
 } from "@clinic/ui";
 import { apiPost, apiGetBlob, apiGet } from "../../shared/api/client.js";
+import { PatientGroupedRequestList, type PatientGroup } from "../../shared/dispensing/PatientGroupedRequestList.js";
 
 /**
  * Maps the API snake_case queue rows onto the camelCase model this screen renders.
@@ -216,6 +217,64 @@ export function PharmacyQueuePage() {
   useEffect(() => {
     void loadQueue();
   }, [loadQueue]);
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
+
+  // Group the (status/search-filtered) queue by patient so the pharmacist works
+  // one patient at a time — matching the dispense workbench and the lab/supply
+  // workbenches — instead of a flat one-row-per-prescription list.
+  const pharmacyPatientGroups = useMemo((): PatientGroup<PrescriptionQueueItem>[] => {
+    const map = new Map<string, PatientGroup<PrescriptionQueueItem>>();
+    for (const rx of filteredPrescriptions) {
+      // Fall back to HRN then the Rx id so a prescription is never silently
+      // dropped from a safety-critical verification queue.
+      const pId = rx.patient.id || rx.patient.hrn || `rx:${rx.id}`;
+      const existing = map.get(pId);
+      if (!existing) {
+        map.set(pId, {
+          patientId: pId,
+          patientName: rx.patient.name || "Unknown Patient",
+          patientIdDisplay: rx.patient.hrn || null,
+          pendingCount: 1,
+          oldestRequestAt: rx.issuedAt || null,
+          requests: [rx],
+          meta: {
+            isControlled: rx.isControlled,
+            orderNos: [rx.rxNumber].filter(Boolean),
+          },
+        });
+      } else {
+        existing.requests.push(rx);
+        existing.pendingCount += 1;
+        if (rx.issuedAt && (!existing.oldestRequestAt || rx.issuedAt < existing.oldestRequestAt)) {
+          existing.oldestRequestAt = rx.issuedAt;
+        }
+        if (rx.isControlled) existing.meta!.isControlled = true;
+        if (rx.rxNumber) existing.meta!.orderNos.push(rx.rxNumber);
+      }
+    }
+    // Surface allergy and alert risk on the patient row so safety data stays
+    // visible without drilling in (the flat table showed it per prescription).
+    for (const g of map.values()) {
+      const allergies = Array.from(new Set(g.requests.flatMap((r) => r.patient.allergies))).filter(Boolean);
+      const critical = g.requests.reduce(
+        (n, r) => n + r.findings.filter((f) => f.severity === "CRITICAL").length,
+        0,
+      );
+      const warnings = g.requests.reduce(
+        (n, r) => n + r.findings.filter((f) => f.severity === "HIGH" || f.severity === "MODERATE").length,
+        0,
+      );
+      const parts: string[] = [];
+      if (allergies.length) parts.push(`Allergies: ${allergies.join(", ")}`);
+      if (critical) parts.push(`⚠️ ${critical} critical alert${critical > 1 ? "s" : ""}`);
+      else if (warnings) parts.push(`⚡ ${warnings} warning${warnings > 1 ? "s" : ""}`);
+      if (parts.length) g.meta = { ...g.meta, extra: parts.join(" · ") };
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      String(a.oldestRequestAt ?? "").localeCompare(String(b.oldestRequestAt ?? "")),
+    );
+  }, [filteredPrescriptions]);
+
   const openVerifyDrawer = (rx: PrescriptionQueueItem) => {
     setSelectedRx(rx);
     setOverrideReason("");
@@ -316,51 +375,77 @@ export function PharmacyQueuePage() {
     setActionSuccessMsg(`Prescription ${selectedRx.rxNumber} rejected back to prescriber.`);
   };
 
-  return (
-    <div className="container-fluid py-4" style={{ maxWidth: 1440 }}>
-      {/* Page Header */}
-      <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
-        <div>
-          <nav aria-label="breadcrumb">
-            <ol className="breadcrumb mb-1 text-muted" style={{ fontSize: "0.85rem" }}>
-              <li className="breadcrumb-item"><Link to="/dashboard">Home</Link></li>
-              <li className="breadcrumb-item">Pharmacy</li>
-              <li className="breadcrumb-item active" aria-current="page">Verification Queue</li>
-            </ol>
-          </nav>
-          <h1 className="h3 fw-bold mb-1" style={{ color: "var(--brand-primary)" }}>
-            💊 Prescription Verification Queue
-          </h1>
-          <p className="text-secondary mb-0" style={{ fontSize: "0.9rem" }}>
-            Pharmacist clinical review, automated drug-drug &amp; allergy safety checks, AC-7 dangerous drugs gate.
-          </p>
-        </div>
+  const headerActions = (
+    <div className="d-flex align-items-center gap-2 flex-wrap">
+      <Button
+        variant="outline-secondary"
+        className="d-inline-flex align-items-center gap-1"
+        onClick={() => void downloadQueuePdf()}
+        disabled={isDownloadingQueuePdf}
+      >
+        <span>📄</span>
+        <span>{isDownloadingQueuePdf ? "Preparing…" : "Download RX Queue PDF"}</span>
+      </Button>
+      <Link to="/pharmacy/dispenses">
+        <Button variant="outline-primary" className="d-inline-flex align-items-center gap-1">
+          <span>⚖️</span>
+          <span>Dispense Workbench</span>
+        </Button>
+      </Link>
+      <Link to="/pharmacy/controlled-register">
+        <Button variant="outline-danger" className="d-inline-flex align-items-center gap-1">
+          <span>📕</span>
+          <span>Dangerous Drugs Book (AC-7)</span>
+        </Button>
+      </Link>
+    </div>
+  );
 
-        <div className="d-flex align-items-center gap-2">
-          <Button
-            variant="outline-secondary"
-            className="d-inline-flex align-items-center gap-1"
-            onClick={() => void downloadQueuePdf()}
-            disabled={isDownloadingQueuePdf}
-          >
-            <span>📄</span>
-            <span>{isDownloadingQueuePdf ? "Preparing…" : "Download RX Queue PDF"}</span>
-          </Button>
-          <Link to="/pharmacy/dispenses">
-            <Button variant="outline-primary" className="d-inline-flex align-items-center gap-1">
-              <span>⚖️</span>
-              <span>Dispense Workbench</span>
-            </Button>
-          </Link>
-          <Link to="/pharmacy/controlled-register">
-            <Button variant="outline-danger" className="d-inline-flex align-items-center gap-1">
-              <span>📕</span>
-              <span>Dangerous Drugs Book (AC-7)</span>
-            </Button>
-          </Link>
+  const metricsHeader = (
+    <div
+      className="card shadow-sm border-0 mb-4"
+      style={{ background: "var(--surface-raised)", borderRadius: "var(--radius-md)" }}
+    >
+      <div className="card-body p-3">
+        <div className="row g-3 align-items-center">
+          <div className="col-md-5">
+            <Form.Label htmlFor="rxSearch" className="visually-hidden">Search prescriptions</Form.Label>
+            <Form.Control
+              id="rxSearch"
+              type="search"
+              placeholder="Search by Rx number, patient name, HRN, or medication…"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+          <div className="col-md-4">
+            <div className="d-flex align-items-center gap-2">
+              <span className="text-muted small fw-semibold">Status:</span>
+              <div className="btn-group btn-group-sm w-100" role="group">
+                {["ALL", "ISSUED", "PARTIALLY_DISPENSED", "DISPENSED", "CANCELLED"].map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    className={`btn ${statusFilter === st ? "btn-primary" : "btn-outline-secondary"}`}
+                    onClick={() => setStatusFilter(st)}
+                  >
+                    {st === "ALL" ? "All Queue" : st}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="col-md-3 text-md-end text-muted small">
+            Showing <strong>{filteredPrescriptions.length}</strong> orders across{" "}
+            <strong>{pharmacyPatientGroups.length}</strong> patient{pharmacyPatientGroups.length === 1 ? "" : "s"}
+          </div>
         </div>
       </div>
+    </div>
+  );
 
+  return (
+    <div className="container-fluid py-4" style={{ maxWidth: 1440 }}>
       {actionSuccessMsg && (
         <Alert variant="success" dismissible onClose={() => setActionSuccessMsg(null)} className="mb-4">
           <div className="d-flex align-items-center gap-2">
@@ -382,191 +467,145 @@ export function PharmacyQueuePage() {
         </Alert>
       )}
 
-      {/* Filter and Search Bar */}
-      <div className="card shadow-sm border-0 mb-4" style={{ background: "var(--surface-raised)", borderRadius: "var(--radius-md)" }}>
-        <div className="card-body p-3">
-          <div className="row g-3 align-items-center">
-            <div className="col-md-5">
-              <Form.Label htmlFor="rxSearch" className="visually-hidden">Search prescriptions</Form.Label>
-              <Form.Control
-                id="rxSearch"
-                type="search"
-                placeholder="Search by Rx number, patient name, HRN, or medication…"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
+      {queueError && (
+        <Alert variant="danger" className="mb-4">
+          <div className="d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <div>
+              <strong>Verification queue unavailable.</strong>
+              <div className="small mt-1">{queueError}</div>
             </div>
-            <div className="col-md-4">
-              <div className="d-flex align-items-center gap-2">
-                <span className="text-muted small fw-semibold">Status:</span>
-                <div className="btn-group btn-group-sm w-100" role="group">
-                  {["ALL", "ISSUED", "PARTIALLY_DISPENSED", "DISPENSED", "CANCELLED"].map((st) => (
-                    <button
-                      key={st}
-                      type="button"
-                      className={`btn ${statusFilter === st ? "btn-primary" : "btn-outline-secondary"}`}
-                      onClick={() => setStatusFilter(st)}
-                    >
-                      {st === "ALL" ? "All Queue" : st}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="col-md-3 text-md-end text-muted small">
-              Showing <strong>{filteredPrescriptions.length}</strong> orders
+            <Button variant="outline-light" size="sm" onClick={() => void loadQueue()}>
+              Retry
+            </Button>
+          </div>
+        </Alert>
+      )}
+
+      <PatientGroupedRequestList<PrescriptionQueueItem>
+        module="PHARMACY"
+        title="💊 Prescription Verification Queue"
+        subtitle="Pharmacist clinical review, automated drug-drug & allergy safety checks, AC-7 dangerous drugs gate."
+        groups={pharmacyPatientGroups}
+        loading={queueLoading}
+        selectedPatientId={selectedPatientId}
+        onSelectPatient={setSelectedPatientId}
+        headerActions={headerActions}
+        metricsHeader={metricsHeader}
+        selectButtonLabel="Select Patient & Verify"
+        searchPlaceholder="Search patient name or MRN…"
+        renderRequests={(group) => (
+          <div
+            className="card shadow-sm border-0"
+            style={{ background: "var(--surface-raised)", borderRadius: "var(--radius-md)" }}
+          >
+            <div className="table-responsive">
+              <table className="table table-hover align-middle mb-0">
+                <thead className="table-light">
+                  <tr style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                    <th>Rx Number</th>
+                    <th>Issued At</th>
+                    <th>Prescriber</th>
+                    <th>Prescribed Items</th>
+                    <th>Safety Alerts</th>
+                    <th>Status</th>
+                    <th className="text-end">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.requests.map((rx) => {
+                    const criticalCount = rx.findings.filter((f) => f.severity === "CRITICAL").length;
+                    const warningCount = rx.findings.filter(
+                      (f) => f.severity === "HIGH" || f.severity === "MODERATE",
+                    ).length;
+                    return (
+                      <tr key={rx.id}>
+                        <td>
+                          <span className="fw-bold font-monospace text-primary">{rx.rxNumber}</span>
+                          {rx.isControlled && (
+                            <div className="mt-1">
+                              <Badge bg="danger" className="text-uppercase" style={{ fontSize: "0.68rem" }}>
+                                AC-7 DANGEROUS DRUG
+                              </Badge>
+                            </div>
+                          )}
+                        </td>
+                        <td className="small text-muted">
+                          {new Date(rx.issuedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          <div style={{ fontSize: "0.75rem" }}>{new Date(rx.issuedAt).toLocaleDateString()}</div>
+                        </td>
+                        <td className="small">
+                          <div>{rx.prescriber.name}</div>
+                          <div className="text-muted" style={{ fontSize: "0.75rem" }}>{rx.prescriber.licenseNo}</div>
+                        </td>
+                        <td>
+                          <ul className="list-unstyled mb-0 small">
+                            {rx.items.map((it) => (
+                              <li key={it.id} className="text-truncate" style={{ maxWidth: 260 }}>
+                                <strong>{it.drugName}</strong> — Qty: {it.quantity} {it.uom}
+                              </li>
+                            ))}
+                          </ul>
+                        </td>
+                        <td>
+                          {criticalCount > 0 ? (
+                            <span className="badge bg-danger d-inline-flex align-items-center gap-1">
+                              <span>⚠️</span> {criticalCount} Critical Alert
+                            </span>
+                          ) : warningCount > 0 ? (
+                            <span className="badge bg-warning text-dark d-inline-flex align-items-center gap-1">
+                              <span>⚡</span> {warningCount} Warning
+                            </span>
+                          ) : (
+                            <span className="badge bg-success-subtle text-success border border-success-subtle">
+                              ✓ Safety Clear
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          <StatusPill
+                            tone={
+                              rx.status === "ISSUED"
+                                ? rx.verifiedForDispensing
+                                  ? "normal"
+                                  : "pending"
+                                : rx.status === "DISPENSED" || rx.status === "PARTIALLY_DISPENSED"
+                                  ? "normal"
+                                  : "neutral"
+                            }
+                            label={rx.status === "ISSUED" && rx.verifiedForDispensing ? "VERIFIED" : rx.status}
+                          />
+                        </td>
+                        <td className="text-end">
+                          {rx.status === "ISSUED" && !rx.verifiedForDispensing ? (
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              onClick={() => openVerifyDrawer(rx)}
+                              className="d-inline-flex align-items-center gap-1"
+                            >
+                              <span>🔍</span>
+                              <span>Verify Rx</span>
+                            </Button>
+                          ) : rx.status === "ISSUED" ? (
+                            <Link to={`/pharmacy/dispenses?rxId=${rx.id}`}>
+                              <Button variant="outline-success" size="sm" className="d-inline-flex align-items-center gap-1">
+                                <span>⚖️</span>
+                                <span>Dispense</span>
+                              </Button>
+                            </Link>
+                          ) : (
+                            <span className="text-muted small">Completed</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Prescriptions Queue Table */}
-      <div className="card shadow-sm border-0" style={{ background: "var(--surface-raised)", borderRadius: "var(--radius-md)" }}>
-        <div className="table-responsive">
-          <table className="table table-hover align-middle mb-0">
-            <thead className="table-light">
-              <tr style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.03em" }}>
-                <th>Rx Number</th>
-                <th>Issued At</th>
-                <th>Patient Details</th>
-                <th>Prescriber</th>
-                <th>Prescribed Items</th>
-                <th>Safety Alerts</th>
-                <th>Status</th>
-                <th className="text-end">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {queueLoading ? (
-                <tr>
-                  <td colSpan={8} className="text-center py-5 text-muted">
-                    <div aria-hidden="true" style={{ fontSize: "2rem" }}>⏳</div>
-                    <p className="mt-2 mb-0">Loading prescriptions awaiting verification…</p>
-                  </td>
-                </tr>
-              ) : queueError ? (
-                <tr>
-                  <td colSpan={8} className="text-center py-5">
-                    <div aria-hidden="true" style={{ fontSize: "2rem" }}>⚠️</div>
-                    <p className="mt-2 mb-1 fw-semibold text-danger">Verification queue unavailable</p>
-                    <p className="mb-2 small text-muted">{queueError}</p>
-                    <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => void loadQueue()}>
-                      Retry
-                    </button>
-                  </td>
-                </tr>
-              ) : filteredPrescriptions.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="text-center py-5 text-muted">
-                    <div aria-hidden="true" style={{ fontSize: "2rem" }}>💊</div>
-                    <p className="mt-2 mb-0 fw-semibold">No prescriptions found matching the selected filter.</p>
-                  </td>
-                </tr>
-              ) : (
-                filteredPrescriptions.map((rx) => {
-                  const criticalCount = rx.findings.filter((f) => f.severity === "CRITICAL").length;
-                  const warningCount = rx.findings.filter((f) => f.severity === "HIGH" || f.severity === "MODERATE").length;
-
-                  return (
-                    <tr key={rx.id}>
-                      <td>
-                        <span className="fw-bold font-monospace text-primary">{rx.rxNumber}</span>
-                        {rx.isControlled && (
-                          <div className="mt-1">
-                            <Badge bg="danger" className="text-uppercase" style={{ fontSize: "0.68rem" }}>
-                              AC-7 DANGEROUS DRUG
-                            </Badge>
-                          </div>
-                        )}
-                      </td>
-                      <td className="small text-muted">
-                        {new Date(rx.issuedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                        <div style={{ fontSize: "0.75rem" }}>
-                          {new Date(rx.issuedAt).toLocaleDateString()}
-                        </div>
-                      </td>
-                      <td>
-                        <div className="fw-semibold">{rx.patient.name}</div>
-                        <div className="font-monospace text-muted small">{rx.patient.hrn}</div>
-                        {rx.patient.allergies.length > 0 && (
-                          <span className="badge bg-warning text-dark mt-1" style={{ fontSize: "0.68rem" }}>
-                            Allergies: {rx.patient.allergies.join(", ")}
-                          </span>
-                        )}
-                      </td>
-                      <td className="small">
-                        <div>{rx.prescriber.name}</div>
-                        <div className="text-muted" style={{ fontSize: "0.75rem" }}>
-                          {rx.prescriber.licenseNo}
-                        </div>
-                      </td>
-                      <td>
-                        <ul className="list-unstyled mb-0 small">
-                          {rx.items.map((it) => (
-                            <li key={it.id} className="text-truncate" style={{ maxWidth: 260 }}>
-                              <strong>{it.drugName}</strong> — Qty: {it.quantity} {it.uom}
-                            </li>
-                          ))}
-                        </ul>
-                      </td>
-                      <td>
-                        {criticalCount > 0 ? (
-                          <span className="badge bg-danger d-inline-flex align-items-center gap-1">
-                            <span>⚠️</span> {criticalCount} Critical Alert
-                          </span>
-                        ) : warningCount > 0 ? (
-                          <span className="badge bg-warning text-dark d-inline-flex align-items-center gap-1">
-                            <span>⚡</span> {warningCount} Warning
-                          </span>
-                        ) : (
-                          <span className="badge bg-success-subtle text-success border border-success-subtle">
-                            ✓ Safety Clear
-                          </span>
-                        )}
-                      </td>
-                      <td>
-                        <StatusPill
-                          tone={
-                            rx.status === "ISSUED"
-                              ? rx.verifiedForDispensing
-                                ? "normal"
-                                : "pending"
-                              : rx.status === "DISPENSED" || rx.status === "PARTIALLY_DISPENSED"
-                              ? "normal"
-                              : "neutral"
-                          }
-                          label={rx.status === "ISSUED" && rx.verifiedForDispensing ? "VERIFIED" : rx.status}
-                        />
-                      </td>
-                      <td className="text-end">
-                        {rx.status === "ISSUED" && !rx.verifiedForDispensing ? (
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            onClick={() => openVerifyDrawer(rx)}
-                            className="d-inline-flex align-items-center gap-1"
-                          >
-                            <span>🔍</span>
-                            <span>Verify Rx</span>
-                          </Button>
-                        ) : rx.status === "ISSUED" ? (
-                          <Link to={`/pharmacy/dispenses?rxId=${rx.id}`}>
-                            <Button variant="outline-success" size="sm">
-                              ⚖️ Dispense
-                            </Button>
-                          </Link>
-                        ) : (
-                          <span className="text-muted small">Completed</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+        )}
+      />
 
       {/* Verification & Safety Checks Modal */}
       {selectedRx && (

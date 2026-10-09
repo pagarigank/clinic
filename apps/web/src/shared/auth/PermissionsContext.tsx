@@ -24,6 +24,8 @@ interface PermissionsContextValue extends AccessState {
   hasAnyPermission: (codes: readonly string[]) => boolean;
   hasAllPermissions: (codes: readonly string[]) => boolean;
   hasModule: (module: string) => boolean;
+  /** True when the caller holds any permission whose code starts with `prefix`. */
+  hasAnyPermissionPrefix: (prefix: string) => boolean;
   /** Convenience: module active AND at least one of the codes held. */
   canAccess: (module: string, codes: readonly string[]) => boolean;
   refresh: () => Promise<void>;
@@ -69,6 +71,12 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
       hasAnyPermission: (codes) => codes.some((c) => state.permissions.has(c)),
       hasAllPermissions: (codes) => codes.every((c) => state.permissions.has(c)),
       hasModule: (mod) => state.modules.has(mod),
+      hasAnyPermissionPrefix: (prefix) => {
+        for (const code of state.permissions) {
+          if (code.startsWith(prefix)) return true;
+        }
+        return false;
+      },
       canAccess: (mod, codes) => state.modules.has(mod) && codes.some((c) => state.permissions.has(c)),
       refresh: load,
     }),
@@ -92,6 +100,7 @@ export function usePermissions(): PermissionsContextValue {
     hasAnyPermission: () => false,
     hasAllPermissions: () => false,
     hasModule: () => false,
+    hasAnyPermissionPrefix: () => false,
     canAccess: () => false,
     refresh: async () => {},
   };

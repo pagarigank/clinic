@@ -249,11 +249,14 @@ export function MainLayout() {
   const requests = getRegistrationRequests();
   const pendingApprovalsCount = requests.filter((r) => r.status === "PENDING_APPROVAL").length;
 
-  // Entitlement + permission gating of the shell (architecture §5.3):
-  // a nav group only renders when its module is enabled for the tenant, and
-  // admin items additionally require the matching admin permissions. The API
-  // guards stay authoritative — this only shapes what the user can see/click.
-  const { hasModule, hasAnyPermission } = usePermissions();
+  // Entitlement + permission gating of the shell (architecture §5.3,
+  // specification §2.3): a nav group only renders when its module is enabled
+  // for the tenant AND the caller holds at least one permission in that
+  // module's namespace, so a clinical-only role never sees the pharmacy, lab,
+  // supply or billing rails. Admin/patient items additionally require the
+  // matching permission. The API guards stay authoritative — this only shapes
+  // what the user can see/click.
+  const { hasModule, hasAnyPermission, hasAnyPermissionPrefix } = usePermissions();
 
   const MODULE_BY_GROUP: Record<string, string> = {
     workspace: "patients",
@@ -264,6 +267,18 @@ export function MainLayout() {
     billing: "billing",
     admin: "admin",
     compliance: "compliance",
+  };
+  // Permission namespace that grants sight of a module group. Deliberately
+  // omits `workspace` and `system`: the dashboard is the shared landing surface
+  // and System Health is tenant-agnostic diagnostics, so both stay visible.
+  const PERMISSION_PREFIX_BY_GROUP: Record<string, string> = {
+    clinical: "clinical.",
+    pharmacy: "pharmacy.",
+    laboratory: "lab.",
+    supply: "supply.",
+    billing: "billing.",
+    admin: "admin.",
+    compliance: "compliance.",
   };
   const PERMS_BY_ITEM: Record<string, string[]> = {
     "/patients": ["patient.record.read", "patients.read"],
@@ -288,6 +303,8 @@ export function MainLayout() {
         const gate = session !== null;
         const requiredModule = MODULE_BY_GROUP[group.id];
         if (gate && requiredModule && !hasModule(requiredModule)) return null;
+        const permissionPrefix = PERMISSION_PREFIX_BY_GROUP[group.id];
+        if (gate && permissionPrefix && !hasAnyPermissionPrefix(permissionPrefix)) return null;
         const items = group.items.filter((item) => {
           if (!gate) return true;
           const needed = PERMS_BY_ITEM[item.to];
@@ -317,7 +334,7 @@ export function MainLayout() {
               : items;
         return { ...group, items: withBadges };
       }).filter((g): g is NavGroup => g !== null),
-    [pendingApprovalsCount, hasModule, hasAnyPermission, session],
+    [pendingApprovalsCount, hasModule, hasAnyPermission, hasAnyPermissionPrefix, session],
   );
 
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => {

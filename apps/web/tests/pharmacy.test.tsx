@@ -198,6 +198,29 @@ describe("PharmacyQueuePage (todo §5.1, PHM-T1)", () => {
     expect(screen.getAllByText(/Critical Alert/i).length).toBeGreaterThan(0);
   });
 
+  it("groups multiple prescriptions under exactly one patient row", async () => {
+    const rx1 = prescription({ id: "rx-1", rx_no: "RX-2026-00412" });
+    const rx2 = prescription({ id: "rx-2", rx_no: "RX-2026-00413" });
+    clientMock.apiGet.mockImplementation(async (url: string) => {
+      if (url === "/pharmacy/queue") return [rx1, rx2];
+      if (url.startsWith("/pharmacy/prescriptions/")) return url.endsWith("rx-2") ? rx2 : rx1;
+      return {};
+    });
+
+    renderWithProviders(<PharmacyQueuePage />);
+
+    // One patient row despite two prescriptions (the pre-change table showed one row each).
+    expect((await screen.findAllByText("Clara Dela Cruz")).length).toBe(1);
+    expect(screen.getByText(/2 Prescriptions/i)).toBeInTheDocument();
+    // Both Rx numbers are surfaced on the group row.
+    expect(screen.getByText("RX-2026-00412")).toBeInTheDocument();
+    expect(screen.getByText("RX-2026-00413")).toBeInTheDocument();
+
+    // Drilling in lists both prescriptions, each with its own Verify action.
+    fireEvent.click(screen.getByRole("button", { name: /Select Patient & Verify/i }));
+    expect(await screen.findAllByRole("button", { name: /Verify Rx/i })).toHaveLength(2);
+  });
+
   it("filters prescriptions by status", async () => {
     renderWithProviders(<PharmacyQueuePage />);
     // The queue is fetched on mount.
@@ -213,8 +236,10 @@ describe("PharmacyQueuePage (todo §5.1, PHM-T1)", () => {
     expect(screen.queryByText("RX-2026-00412")).not.toBeInTheDocument();
   });
 
-  it("opens verification modal with patient banner, items, and safety findings", async () => {
+  it("drills into the patient row then opens the verification modal with patient banner, items, and safety findings", async () => {
     renderWithProviders(<PharmacyQueuePage />);
+    // Level 1 lists one row per patient; the Rx actions live in the drill-down.
+    fireEvent.click(await screen.findByRole("button", { name: /Select Patient & Verify/i }));
     const verifyButtons = await screen.findAllByRole("button", { name: /Verify Rx/i });
     fireEvent.click(verifyButtons[0]!);
 
@@ -225,6 +250,7 @@ describe("PharmacyQueuePage (todo §5.1, PHM-T1)", () => {
 
   it("approves prescription with override reason and clears for dispensing", async () => {
     renderWithProviders(<PharmacyQueuePage />);
+    fireEvent.click(await screen.findByRole("button", { name: /Select Patient & Verify/i }));
     const verifyButtons = await screen.findAllByRole("button", { name: /Verify Rx/i });
     fireEvent.click(verifyButtons[0]!);
 

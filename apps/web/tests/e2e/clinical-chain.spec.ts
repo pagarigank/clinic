@@ -250,6 +250,12 @@ test.describe.serial("clinical chain: registration -> visit -> lab -> supply -> 
     await assumeRole("admin");
     await page.goto("/pharmacy/queue");
 
+    // Level 1 groups one row per patient; the group row carries the Rx numbers.
+    const patientRow = page.locator("tr", { hasText: ctx.rxNo });
+    await expect(patientRow).toBeVisible({ timeout: 30_000 });
+    await patientRow.click();
+
+    // Level 2: the prescription row with its own verify action.
     const row = page.locator("tr", { hasText: ctx.rxNo });
     await expect(row).toBeVisible({ timeout: 30_000 });
     await row.getByRole("button", { name: /Verify Rx/i }).click();
@@ -264,9 +270,15 @@ test.describe.serial("clinical chain: registration -> visit -> lab -> supply -> 
     await assumeRole("dispenser");
     await page.goto("/pharmacy/dispenses");
 
+    // Level 1 groups one row per patient; this run's patient has a unique surname.
+    const patientRow = page.locator("tr", { hasText: PATIENT_LAST });
+    await expect(patientRow).toBeVisible({ timeout: 30_000 });
+    await patientRow.getByRole("button", { name: /Select Patient & Dispense/i }).click();
+
+    // Level 2: the prescription row for this run.
     const row = page.locator("tr", { hasText: ctx.rxNo });
     await expect(row).toBeVisible({ timeout: 30_000 });
-    await row.getByRole("button", { name: "Dispense" }).click();
+    await row.getByRole("button", { name: /Dispense Rx/i }).click();
 
     await expect(page).toHaveURL(/\/pharmacy\/dispenses\/[0-9a-f-]{36}/i, { timeout: 30_000 });
 

@@ -73,13 +73,29 @@ export function LoginPage() {
   };
 
   useEffect(() => {
+    // Hide these shortcuts from production builds by gating them behind DEV
+    // Vite will dead-code eliminate this block in production, completely removing the credentials.
+    if (!import.meta.env.DEV) return;
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Shortcut Ctrl+I (or Cmd+I on Mac) for test automation
-      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "i" || e.code === "KeyI")) {
-        e.preventDefault();
-        fillCredentials("demo-a", "admin@demo-a.test", "DemoPassw0rd!2026");
-        void executeLogin("demo-a", "admin@demo-a.test", "DemoPassw0rd!2026");
+      if (!(e.ctrlKey || e.metaKey)) return;
+
+      const key = e.key.toLowerCase();
+      let email = "";
+
+      switch (key) {
+        case "i": email = "admin@demo-a.test"; break;
+        case "b": email = "doctor@demo-a.test"; break;
+        case "h": email = "labtech@demo-a.test"; break;
+        case "j": email = "reception@demo-a.test"; break;
+        case "p": email = "pharmacist@demo-a.test"; break;
+        case "m": email = "supply@demo-a.test"; break;
+        default: return;
       }
+
+      e.preventDefault();
+      fillCredentials("demo-a", email, "DemoPassw0rd!2026");
+      void executeLogin("demo-a", email, "DemoPassw0rd!2026");
     };
 
     window.addEventListener("keydown", handleKeyDown);

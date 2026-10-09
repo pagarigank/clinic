@@ -490,28 +490,48 @@ async function run() {
       [TENANT_ID],
     );
 
-    // Doctor permissions
+    // Doctor permissions — MUST equal `SYSTEM_ROLE_TEMPLATES.doctor`
+    // (packages/contracts/src/permissions.ts) and demo_clean.sql §3b. §2.2 gives
+    // a physician Clinical F(own) plus read/order/prescribe across Lab/Pharmacy;
+    // it does NOT give lab-bench, supply-stock or billing actions. Keep this list
+    // and the canonical set in 0063_reconcile_demo_doctor_role.migration.sql in
+    // lockstep — a mismatch is what drifted demo-a's role to 92 grants.
     const DOCTOR_PERMISSIONS = [
       'patient.record.read', 'patient.record.update',
-      'clinical.schedule.read', 'clinical.appointment.read',
-      'clinical.queue.read', 'clinical.queue.call', 'clinical.queue.skip',
+      'clinical.schedule.read', 'clinical.schedule.update',
+      'clinical.appointment.read', 'clinical.appointment.update',
+      'clinical.queue.read',
       'clinical.visit.read', 'clinical.visit.create', 'clinical.visit.update',
+      'clinical.visit.start', 'clinical.visit.ready', 'clinical.visit.close',
       'clinical.vitals.read', 'clinical.vitals.create', 'clinical.vitals.update',
       'clinical.note.read', 'clinical.note.create', 'clinical.note.update', 'clinical.note.sign', 'clinical.note.amend',
       'clinical.diagnosis.read', 'clinical.diagnosis.create', 'clinical.diagnosis.update', 'clinical.diagnosis.delete',
       'clinical.procedure.read', 'clinical.procedure.create', 'clinical.procedure.update', 'clinical.procedure.delete',
       'clinical.supply.read', 'clinical.supply.create',
       'clinical.certificate.read', 'clinical.certificate.create',
-      'clinical.referral.read', 'clinical.referral.create',
-      'clinical.immunization.read', 'clinical.immunization.create',
+      'clinical.referral.read', 'clinical.referral.create', 'clinical.referral.update',
       'clinical.problem.read', 'clinical.problem.create', 'clinical.problem.update', 'clinical.problem.resolve',
       'clinical.rx.read', 'clinical.rx.create', 'clinical.rx.update', 'clinical.rx.sign', 'clinical.rx.cancel',
-      'clinical.order_set.read', 'clinical.template.read',
-      'lab.config.read', 'lab.order.read', 'lab.order.create', 'lab.order.cancel', 'lab.result.read', 'lab.specimen.read',
-      'supply.stock.read', 'supply.item.read', 'supply.location.read', 'supply.req.read', 'supply.req.create', 'supply.consumption.create',
-      'pharmacy.stock.read', 'pharmacy.product.read', 'pharmacy.rx.read',
-      'billing.invoice.read', 'reference.read', 'files.read', 'notifications.read',
+      'clinical.order_set.read', 'clinical.order_set.create', 'clinical.order_set.update',
+      'clinical.template.read', 'clinical.template.create', 'clinical.template.update',
+      'clinical.immunization.read', 'clinical.immunization.create',
+      'lab.order.read', 'lab.order.create', 'lab.result.read', 'lab.report.read',
+      'pharmacy.rx.read',
+      'reference.read', 'files.read', 'files.write', 'notifications.read',
     ];
+    // Converge, don't just add: delete any doctor grant outside the canonical
+    // set first, so re-running this reset cannot leave stale over-grants behind.
+    await client.query(
+      `DELETE FROM role_permissions rp
+       USING roles r, permissions p
+       WHERE rp.tenant_id = r.tenant_id
+         AND rp.role_id = r.id
+         AND rp.permission_id = p.id
+         AND r.tenant_id = $1
+         AND r.code = 'doctor'
+         AND p.code <> ALL($2::text[])`,
+      [TENANT_ID, DOCTOR_PERMISSIONS],
+    );
     for (const code of DOCTOR_PERMISSIONS) {
       await client.query(
         `INSERT INTO role_permissions (tenant_id, role_id, permission_id)

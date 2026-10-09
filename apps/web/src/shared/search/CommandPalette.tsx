@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useNavigate } from "react-router";
 import { apiGet } from "../api/client.js";
+import { usePermissions } from "../auth/PermissionsContext.js";
 
 /**
  * Global search / command palette — todo.md §2.3 and frontend.md §9
@@ -66,27 +67,35 @@ interface NavDestination {
   label: string;
   path: string;
   keywords: string;
+  /** Tenant module that must be entitled for this destination to appear. */
+  module?: string;
+  /** Additional gate: the caller must hold a permission in this namespace. */
+  prefix?: string;
 }
 
+// Entitlement + permission gating (frontend §7.2): global search skips
+// non-entitled modules and namespaces entirely, so a clinical-only role never
+// gets a dead link to supply, billing or admin surfaces. Dashboard and System
+// Health are shared/tenant-agnostic and stay visible regardless.
 const DESTINATIONS: NavDestination[] = [
   { label: "Dashboard", path: "/dashboard", keywords: "home landing overview" },
-  { label: "Patient Registry", path: "/patients", keywords: "patients mpi register search" },
-  { label: "Duplicate Candidates (JOB-22)", path: "/patients/duplicates", keywords: "duplicates merge review job-22" },
-  { label: "Appointments", path: "/clinical/appointments", keywords: "scheduling calendar booking walk-in" },
-  { label: "Queue Board", path: "/clinical/queue", keywords: "queue tickets now serving" },
-  { label: "Consultations & Chart", path: "/clinical/visits", keywords: "visits encounters chart soap" },
-  { label: "Pharmacy Dispense Workbench", path: "/pharmacy/dispenses", keywords: "pharmacy dispense dispensing workbench rx prescriptions" },
-  { label: "Supply Dispensing & Issue Workbench", path: "/supply/issue", keywords: "supply dispense dispensing issue consumption consumables stock" },
-  { label: "Stock Explorer", path: "/supply/stock", keywords: "supply stock inventory batches fefo ledger" },
-  { label: "Staff & Users", path: "/admin/users", keywords: "users staff directory" },
-  { label: "Create Staff User", path: "/admin/users/new", keywords: "create user new staff invite member crud" },
-  { label: "Employee Records", path: "/admin/employees", keywords: "employee records hr staff profile license prc ptr s2 doctor nurse" },
-  { label: "Roles & Permissions", path: "/admin/roles", keywords: "roles rbac permissions sod" },
-  { label: "Branches & Units", path: "/admin/branches", keywords: "branches service units" },
-  { label: "Services & Prices", path: "/admin/service-catalog", keywords: "catalog prices discounts payments" },
-  { label: "Clinic Profile & Letterhead", path: "/admin/settings", keywords: "settings clinic letterhead profile doh philhealth accreditation modules entitlements policy" },
+  { label: "Patient Registry", path: "/patients", keywords: "patients mpi register search", module: "patients", prefix: "patient." },
+  { label: "Duplicate Candidates (JOB-22)", path: "/patients/duplicates", keywords: "duplicates merge review job-22", module: "patients", prefix: "patient." },
+  { label: "Appointments", path: "/clinical/appointments", keywords: "scheduling calendar booking walk-in", module: "clinical", prefix: "clinical." },
+  { label: "Queue Board", path: "/clinical/queue", keywords: "queue tickets now serving", module: "clinical", prefix: "clinical." },
+  { label: "Consultations & Chart", path: "/clinical/visits", keywords: "visits encounters chart soap", module: "clinical", prefix: "clinical." },
+  { label: "Pharmacy Dispense Workbench", path: "/pharmacy/dispenses", keywords: "pharmacy dispense dispensing workbench rx prescriptions", module: "pharmacy", prefix: "pharmacy." },
+  { label: "Supply Dispensing & Issue Workbench", path: "/supply/issue", keywords: "supply dispense dispensing issue consumption consumables stock", module: "supply", prefix: "supply." },
+  { label: "Stock Explorer", path: "/supply/stock", keywords: "supply stock inventory batches fefo ledger", module: "supply", prefix: "supply." },
+  { label: "Staff & Users", path: "/admin/users", keywords: "users staff directory", module: "admin", prefix: "admin." },
+  { label: "Create Staff User", path: "/admin/users/new", keywords: "create user new staff invite member crud", module: "admin", prefix: "admin." },
+  { label: "Employee Records", path: "/admin/employees", keywords: "employee records hr staff profile license prc ptr s2 doctor nurse", module: "admin", prefix: "admin." },
+  { label: "Roles & Permissions", path: "/admin/roles", keywords: "roles rbac permissions sod", module: "admin", prefix: "admin." },
+  { label: "Branches & Units", path: "/admin/branches", keywords: "branches service units", module: "admin", prefix: "admin." },
+  { label: "Services & Prices", path: "/admin/service-catalog", keywords: "catalog prices discounts payments", module: "admin", prefix: "admin." },
+  { label: "Clinic Profile & Letterhead", path: "/admin/settings", keywords: "settings clinic letterhead profile doh philhealth accreditation modules entitlements policy", module: "admin", prefix: "admin." },
   { label: "System Health", path: "/ping", keywords: "health ping metrics" },
-  { label: "Platform Console", path: "/platform/tenants", keywords: "platform tenants console superadmin" },
+  { label: "Platform Console", path: "/platform/tenants", keywords: "platform tenants console superadmin", prefix: "platform." },
 ];
 
 interface PaletteResult {
@@ -99,6 +108,7 @@ interface PaletteResult {
 export function CommandPalette() {
   const navigate = useNavigate();
   const { recentPatients, rememberPatient } = useSearchContext();
+  const { hasModule, hasAnyPermissionPrefix } = usePermissions();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [patientHits, setPatientHits] = useState<PatientRef[]>([]);
@@ -171,9 +181,11 @@ export function CommandPalette() {
 
   const results = useMemo<PaletteResult[]>(() => {
     const q = query.trim().toLowerCase();
-    const nav = DESTINATIONS.filter(
-      (d) => !q || d.label.toLowerCase().includes(q) || d.keywords.includes(q),
-    ).map<PaletteResult>((d) => ({
+    const nav = DESTINATIONS.filter((d) => {
+      if (d.module && !hasModule(d.module)) return false;
+      if (d.prefix && !hasAnyPermissionPrefix(d.prefix)) return false;
+      return !q || d.label.toLowerCase().includes(q) || d.keywords.includes(q);
+    }).map<PaletteResult>((d) => ({
       key: `nav-${d.path}`,
       label: d.label,
       detail: "Go to",
@@ -201,7 +213,7 @@ export function CommandPalette() {
             }))
         : [];
     return [...patients, ...recents, ...nav].slice(0, 12);
-  }, [query, patientHits, recentPatients, navigate, openPatient]);
+  }, [query, patientHits, recentPatients, navigate, openPatient, hasModule, hasAnyPermissionPrefix]);
 
   useEffect(() => setActive(0), [results.length, query]);
 
