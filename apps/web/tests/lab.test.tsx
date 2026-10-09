@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { LabWorklistPage } from "../src/features/laboratory/LabWorklistPage.js";
 import { ResultEntryPage } from "../src/features/laboratory/ResultEntryPage.js";
@@ -146,6 +146,22 @@ vi.mock("../src/features/laboratory/api.js", () => {
           },
         },
       ],
+    },
+    {
+      id: "test-glu",
+      section_id: "sec-1",
+      specimen_type_id: "spec-type-1",
+      code: "GLU",
+      name: "Fasting Blood Glucose",
+      tat_minutes: 120,
+      is_stat_allowed: true,
+      is_confidential: false,
+      fasting_required: true,
+      fasting_hours: 8,
+      is_panel: false,
+      requires_pathologist_review: false,
+      is_active: true,
+      analytes: [],
     },
   ];
 
@@ -331,6 +347,7 @@ describe("Laboratory Frontend Suite (Phase 6, todo.md §6)", () => {
     it("opens specimen collection modal and enforces two-identifier confirmation", async () => {
       renderWithProviders(<LabWorklistPage />);
 
+      fireEvent.click(await screen.findByText(/Dela Cruz/i));
       const collectBtn = await screen.findByRole("button", { name: /Collect Specimen/i });
       fireEvent.click(collectBtn);
 
@@ -344,6 +361,23 @@ describe("Laboratory Frontend Suite (Phase 6, todo.md §6)", () => {
       const check = screen.getByLabelText(/Two-Identifier Verification Confirmed/i);
       fireEvent.click(check);
       expect(submitBtn).not.toBeDisabled();
+    });
+
+    it("fuzzy-filters the Place Lab Order test picker by name or code", async () => {
+      renderWithProviders(<LabWorklistPage />);
+
+      fireEvent.click(await screen.findByRole("button", { name: /Place Lab Order/i }));
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByText(/Complete Blood Count/i)).toBeInTheDocument();
+      expect(within(dialog).getByText(/Fasting Blood Glucose/i)).toBeInTheDocument();
+
+      const search = screen.getByLabelText(/Search tests and panels/i);
+      fireEvent.change(search, { target: { value: "glucose" } });
+      expect(within(dialog).getByText(/Fasting Blood Glucose/i)).toBeInTheDocument();
+      expect(within(dialog).queryByText(/Complete Blood Count/i)).not.toBeInTheDocument();
+
+      fireEvent.change(search, { target: { value: "zzzz" } });
+      expect(within(dialog).getByText(/No matching tests or panels/i)).toBeInTheDocument();
     });
   });
 

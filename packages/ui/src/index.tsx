@@ -40,6 +40,7 @@ export type { StatusTone } from "./primitives.js";
 
 export { DataTable, SearchCombobox } from "./DataTable.js";
 export type { DataTableColumn, DataTableSort } from "./DataTable.js";
+export { fuzzyFilter } from "./fuzzy.js";
 
 export { Money, Quantity, DateTime, Code } from "./renderers.js";
 export { SignaturePad } from "./SignaturePad.js";

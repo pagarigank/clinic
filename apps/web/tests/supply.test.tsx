@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { AuthProvider } from "../src/shared/auth/AuthContext.js";
 import { StepUpProvider } from "../src/shared/auth/StepUpContext.js";
@@ -16,12 +16,46 @@ const supplyApiMock = vi.hoisted(() => ({
   listLocations: vi.fn(),
   getStock: vi.fn(),
   postConsumption: vi.fn(),
+  listPatientRequests: vi.fn(),
+  createPatientRequest: vi.fn(),
+  issuePatientRequest: vi.fn(),
   listUoms: vi.fn(),
   listCategories: vi.fn(),
   createItem: vi.fn(),
   updateItem: vi.fn(),
   bulkAdjustPricing: vi.fn(),
 }));
+
+/** Two request lines for Maria Santos, one for Juan Dela Cruz (server rows). */
+const PATIENT_REQUEST_ROWS = [
+  {
+    id: "req-1", request_no: "PSR-1001", patient_id: "pat-1",
+    patient_first_name: "Maria", patient_last_name: "Santos", hrn: "HRN-00123",
+    visit_id: null, visit_no: null, status: "PENDING", notes: null,
+    requested_by: "u-1", requested_at: new Date(Date.now() - 3_600_000).toISOString(),
+    request_item_id: "ri-1", item_id: "item-1", item_code: "SUP-GLV-M",
+    item_name: "Latex Examination Gloves (M)", uom_id: "uom-box", uom_code: "BOX",
+    qty_requested: 2, qty_issued: 0, item_notes: null,
+  },
+  {
+    id: "req-1", request_no: "PSR-1001", patient_id: "pat-1",
+    patient_first_name: "Maria", patient_last_name: "Santos", hrn: "HRN-00123",
+    visit_id: null, visit_no: null, status: "PENDING", notes: null,
+    requested_by: "u-1", requested_at: new Date(Date.now() - 3_500_000).toISOString(),
+    request_item_id: "ri-2", item_id: "item-2", item_code: "SUP-GAU-4",
+    item_name: "Sterile Gauze Sponge 4x4", uom_id: "uom-pc", uom_code: "PC",
+    qty_requested: 5, qty_issued: 0, item_notes: null,
+  },
+  {
+    id: "req-2", request_no: "PSR-1002", patient_id: "pat-2",
+    patient_first_name: "Juan", patient_last_name: "Dela Cruz", hrn: "MRN-1001",
+    visit_id: null, visit_no: null, status: "PENDING", notes: null,
+    requested_by: "u-2", requested_at: new Date(Date.now() - 1_800_000).toISOString(),
+    request_item_id: "ri-3", item_id: "item-1", item_code: "SUP-GLV-M",
+    item_name: "Latex Examination Gloves (M)", uom_id: "uom-box", uom_code: "BOX",
+    qty_requested: 1, qty_issued: 0, item_notes: null,
+  },
+];
 
 vi.mock("../src/features/supply/api.js", () => ({ supplyApi: supplyApiMock }));
 
@@ -50,6 +84,18 @@ beforeEach(() => {
       is_batch_tracked: true,
       is_expiry_tracked: false,
     },
+    {
+      id: "item-2",
+      code: "SUP-GAU-4",
+      name: "Sterile Gauze Sponge 4x4",
+      item_type: "SUPPLY",
+      base_uom_id: "uom-pc",
+      uom_code: "PC",
+      category_name: "Consumables",
+      total_on_hand: 200,
+      is_batch_tracked: false,
+      is_expiry_tracked: false,
+    },
   ]);
   supplyApiMock.getStock.mockResolvedValue([
     {
@@ -69,11 +115,14 @@ beforeEach(() => {
     },
   ]);
   supplyApiMock.postConsumption.mockResolvedValue({ status: "POSTED", allocatedCount: 1 });
+  supplyApiMock.listPatientRequests.mockResolvedValue(PATIENT_REQUEST_ROWS);
+  supplyApiMock.createPatientRequest.mockResolvedValue({ id: "req-new", status: "PENDING" });
+  supplyApiMock.issuePatientRequest.mockResolvedValue({ id: "req-1", status: "ISSUED" });
 });
 
-function renderWithProviders(ui: React.ReactElement) {
+function renderWithProviders(ui: React.ReactElement, initialEntries: string[] = ["/"]) {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntries}>
       <AuthProvider>
         <StepUpProvider>
           {ui}
@@ -218,6 +267,8 @@ describe("ItemMasterPage (todo §4.1)", () => {
 describe("SupplyIssueWorkbenchPage (todo §4.4, SUP-T10)", () => {
   it("selects an item and shows FEFO batches available at the location", async () => {
     renderWithProviders(<SupplyIssueWorkbenchPage />);
+    // The workbench opens on the patient-grouped view; direct issue is a toggle.
+    fireEvent.click(await screen.findByRole("button", { name: /Direct Stock Issue/i }));
     fireEvent.click(await screen.findByText("Latex Examination Gloves (M)"));
 
     expect((await screen.findAllByText(/LOT-1/)).length).toBeGreaterThan(0);
@@ -227,6 +278,7 @@ describe("SupplyIssueWorkbenchPage (todo §4.4, SUP-T10)", () => {
 
   it("posts consumption and surfaces the server result", async () => {
     renderWithProviders(<SupplyIssueWorkbenchPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /Direct Stock Issue/i }));
     fireEvent.click(await screen.findByText("Latex Examination Gloves (M)"));
 
     const qtyInput = await screen.findByLabelText(/Quantity/i);
@@ -239,5 +291,55 @@ describe("SupplyIssueWorkbenchPage (todo §4.4, SUP-T10)", () => {
       expect.objectContaining({ itemId: "item-1", locationId: "loc-1", qty: 5, uomId: "uom-box" }),
     );
   });
+
+  it("groups patient supply requests by patient and issues individual lines", async () => {
+    renderWithProviders(<SupplyIssueWorkbenchPage />);
+
+    // Level 1: one row per patient, sourced from the real request queue.
+    expect(await screen.findByText("Maria Santos")).toBeInTheDocument();
+    expect(screen.getByText("Juan Dela Cruz")).toBeInTheDocument();
+    expect(supplyApiMock.listPatientRequests).toHaveBeenCalled();
+
+    // Badges count requested lines, not patients.
+    expect(screen.getByText(/2 Supply Items/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 Supply Item\b/i)).toBeInTheDocument();
+
+    // Maria Santos appears once in the patient table.
+    const mariaElements = screen.getAllByText("Maria Santos");
+    expect(mariaElements.length).toBe(1);
+
+    // Drill down to the patient's request lines.
+    fireEvent.click(mariaElements[0]!);
+    expect(await screen.findByRole("button", { name: /Back to Patient List/i })).toBeInTheDocument();
+    expect(screen.getByText(/Latex Examination Gloves \(M\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Sterile Gauze Sponge 4x4/i)).toBeInTheDocument();
+
+    const issueButtons = screen.getAllByRole("button", { name: /Issue 2 BOX/i });
+    expect(issueButtons.length).toBe(1);
+    fireEvent.click(issueButtons[0]!);
+
+    // The issue endpoint is called for the line, and the result is surfaced.
+    expect(await screen.findByText(/Successfully issued 2 BOX of Latex Examination Gloves \(M\) to Maria Santos/i)).toBeInTheDocument();
+    expect(supplyApiMock.issuePatientRequest).toHaveBeenCalledWith("req-1", "ri-1", {
+      locationId: "loc-1",
+      qty: 2,
+    });
+
+    // Back to the patient list keeps both patients visible.
+    fireEvent.click(screen.getByRole("button", { name: /Back to Patient List/i }));
+    expect(await screen.findByText("Juan Dela Cruz")).toBeInTheDocument();
+  });
+
+  it("fuzzy-searches the New Supply Request item picker", async () => {
+    renderWithProviders(<SupplyIssueWorkbenchPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /New Supply Request/i }));
+    const dialog = await screen.findByRole("dialog");
+    const input = within(dialog).getByRole("combobox");
+
+    fireEvent.change(input, { target: { value: "gauze" } });
+    expect(await within(dialog).findByText(/Sterile Gauze Sponge 4x4/i)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Latex Examination Gloves/i)).not.toBeInTheDocument();
+  });
 });
+
 

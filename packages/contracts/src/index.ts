@@ -1201,6 +1201,41 @@ export const PostConsumptionSchema = z.object({
 });
 export type PostConsumptionRequest = z.infer<typeof PostConsumptionSchema>;
 
+// Patient supply requests (SUP-T10, specification §10). A patient/visit-linked
+// request queue so the supply workbench can group pending supplies by patient and
+// issue them against that encounter. Issuing consumes stock through the same
+// single-transaction path as POST /supply/consumption.
+export const PatientSupplyRequestStatusSchema = z.enum([
+  'PENDING', 'PARTIALLY_ISSUED', 'ISSUED', 'CANCELLED',
+]);
+export type PatientSupplyRequestStatus = z.infer<typeof PatientSupplyRequestStatusSchema>;
+
+export const CreatePatientSupplyRequestItemSchema = z.object({
+  itemId: z.string().uuid(),
+  uomId: z.string().uuid(),
+  qtyRequested: z.number().positive(),
+  notes: z.string().max(500).optional(),
+});
+export type CreatePatientSupplyRequestItem = z.infer<typeof CreatePatientSupplyRequestItemSchema>;
+
+export const CreatePatientSupplyRequestSchema = z.object({
+  branchId: z.string().uuid(),
+  patientId: z.string().uuid(),
+  visitId: z.string().uuid().optional(),
+  notes: z.string().max(1000).optional(),
+  items: z.array(CreatePatientSupplyRequestItemSchema).min(1).max(50),
+});
+export type CreatePatientSupplyRequestRequest = z.input<typeof CreatePatientSupplyRequestSchema>;
+
+// Issue one requested line. `qty` may be less than requested (partial issue).
+export const IssuePatientSupplyRequestSchema = z.object({
+  locationId: z.string().uuid(),
+  qty: z.number().positive(),
+  batchId: z.string().uuid().optional(),
+  notes: z.string().max(500).optional(),
+});
+export type IssuePatientSupplyRequestRequest = z.infer<typeof IssuePatientSupplyRequestSchema>;
+
 // Periods & Period Lock (SUP-T13, AC-20)
 export const PeriodActionSchema = z.object({
   period: z.string().regex(/^\d{4}-\d{2}$/, 'Period must be in YYYY-MM format'),

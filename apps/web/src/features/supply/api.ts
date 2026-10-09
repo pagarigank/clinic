@@ -4,6 +4,8 @@ import type {
   CreateItemRequest,
   UpdateItemRequest,
   BulkPriceAdjustRequest,
+  CreatePatientSupplyRequestRequest,
+  IssuePatientSupplyRequestRequest,
 } from "@clinic/contracts";
 
 export interface SupplyItemRow {
@@ -62,6 +64,31 @@ export interface SupplyStockRow {
   total_value: number | string;
 }
 
+/** One requested line of a patient supply request (server row). */
+export interface PatientSupplyRequestRow {
+  id: string; // request header id
+  request_no: string;
+  patient_id: string;
+  patient_first_name: string;
+  patient_last_name: string;
+  hrn?: string | null;
+  visit_id?: string | null;
+  visit_no?: string | null;
+  status: "PENDING" | "PARTIALLY_ISSUED" | "ISSUED" | "CANCELLED";
+  notes?: string | null;
+  requested_by: string;
+  requested_at: string;
+  request_item_id: string;
+  item_id: string;
+  item_code: string;
+  item_name: string;
+  uom_id: string;
+  uom_code?: string | null;
+  qty_requested: number | string;
+  qty_issued: number | string;
+  item_notes?: string | null;
+}
+
 export const supplyApi = {
   listItems: (params?: { itemType?: string; search?: string }) => {
     const qs = new URLSearchParams();
@@ -99,6 +126,32 @@ export const supplyApi = {
 
   postConsumption: (data: PostConsumptionRequest) =>
     apiPost<Record<string, unknown>, PostConsumptionRequest>("/supply/consumption", data),
+
+  listPatientRequests: (params?: { status?: string; patientId?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.patientId) qs.set("patientId", params.patientId);
+    const suffix = qs.toString();
+    return apiGet<PatientSupplyRequestRow[]>(
+      `/supply/patient-requests${suffix ? `?${suffix}` : ""}`,
+    );
+  },
+
+  createPatientRequest: (data: CreatePatientSupplyRequestRequest) =>
+    apiPost<Record<string, unknown>, CreatePatientSupplyRequestRequest>(
+      "/supply/patient-requests",
+      data,
+    ),
+
+  issuePatientRequest: (
+    requestId: string,
+    requestItemId: string,
+    data: IssuePatientSupplyRequestRequest,
+  ) =>
+    apiPost<Record<string, unknown>, IssuePatientSupplyRequestRequest>(
+      `/supply/patient-requests/${requestId}/items/${requestItemId}/issue`,
+      data,
+    ),
 
   bulkAdjustPricing: (data: BulkPriceAdjustRequest) =>
     apiPost<{ adjustedCount: number; message: string }>("/admin/pricing/bulk-adjust", data),

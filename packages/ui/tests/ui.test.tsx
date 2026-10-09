@@ -13,6 +13,7 @@ import {
   ScanInput,
   SearchCombobox,
   SkeletonTable,
+  fuzzyFilter,
   StatusPill,
   StepConfirmModal,
   Timeline,
@@ -380,6 +381,36 @@ describe("DataTable (frontend §5.2 — server-driven)", () => {
     firstRow?.focus();
     await user.keyboard("{Enter}");
     expect(onRowActivate).toHaveBeenCalledWith(rows[0]);
+  });
+});
+
+describe("fuzzyFilter (local fuzzy picker ranking)", () => {
+  const tests = [
+    { id: "cbc", name: "Complete Blood Count", code: "CBC" },
+    { id: "ua", name: "Urinalysis", code: "UA" },
+    { id: "fbs", name: "Fasting Blood Sugar", code: "FBS" },
+  ];
+  const hay = (t: { name: string; code: string }) => `${t.name} (${t.code})`;
+
+  it("returns the list unchanged for a blank query", () => {
+    expect(fuzzyFilter(tests, "", hay)).toEqual(tests);
+  });
+
+  it("ranks a substring hit above an in-order subsequence-only hit", () => {
+    // "ua" appears verbatim in "(UA)"; it is only a scattered subsequence of
+    // "Fasting Blood Sugar", so the verbatim hit must rank first.
+    const result = fuzzyFilter(tests, "ua", hay);
+    expect(result.map((t) => t.id)).toEqual(["ua", "fbs"]);
+  });
+
+  it("matches an in-order subsequence typing pattern", () => {
+    // "fbs" is not a contiguous substring of the name, but is a subsequence.
+    const result = fuzzyFilter(tests, "fbs", hay);
+    expect(result.map((t) => t.id)).toEqual(["fbs"]);
+  });
+
+  it("drops items with no match", () => {
+    expect(fuzzyFilter(tests, "zzz", hay)).toEqual([]);
   });
 });
 

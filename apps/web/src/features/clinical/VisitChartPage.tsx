@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { AlertBanner, StatusPill, PatientBanner, Timeline } from "@clinic/ui";
+import { AlertBanner, StatusPill, PatientBanner, Timeline, SearchCombobox, fuzzyFilter } from "@clinic/ui";
 import { apiGet, apiPost, apiPut, apiGetBlob, ApiError } from "../../shared/api/client.js";
 import { useStepUp, isStepUpRequired } from "../../shared/auth/StepUpContext.js";
 import { PrescriptionPrintModal } from "./PrescriptionPrintModal.js";
@@ -274,6 +274,16 @@ const DEMO_CHART_DATA: Record<string, any> = {
   },
 };
 
+/** Label for a lab-test option in the fuzzy picker (mirrors the old <option> text). */
+function labTestLabel(t: any): string {
+  return `${t.name} (${t.code})${t.is_panel ? " [Panel]" : ""}`;
+}
+
+/** Label for a supply-item option in the fuzzy picker. */
+function supplyItemLabel(i: any): string {
+  return `${i.name} (${i.code})`;
+}
+
 export function VisitChartPage() {
   const { visitId = "" } = useParams();
   const navigate = useNavigate();
@@ -394,15 +404,15 @@ export function VisitChartPage() {
   // Lab form & catalog
   const [availableTests, setAvailableTests] = useState<any[]>([]);
   const [selectedTestId, setSelectedTestId] = useState("");
+  const [testSearch, setTestSearch] = useState("");
   const [labPriority, setLabPriority] = useState<"ROUTINE" | "URGENT" | "STAT">("ROUTINE");
   const [labClinicalInfo, setLabClinicalInfo] = useState("");
   const [labSubmitting, setLabSubmitting] = useState(false);
 
   // Supply form & catalog
   const [availableSupplyItems, setAvailableSupplyItems] = useState<any[]>([]);
-  const [availableLocations, setAvailableLocations] = useState<any[]>([]);
   const [selectedItemId, setSelectedItemId] = useState("");
-  const [selectedLocationId, setSelectedLocationId] = useState("");
+  const [supplyItemSearch, setSupplyItemSearch] = useState("");
   const [supplyQty, setSupplyQty] = useState("1");
   const [supplyNotes, setSupplyNotes] = useState("");
   const [supplySubmitting, setSupplySubmitting] = useState(false);
@@ -429,14 +439,6 @@ export function VisitChartPage() {
       try {
         const items = await apiGet<any[]>("/supply/items");
         if (Array.isArray(items)) setAvailableSupplyItems(items.filter((i) => i.item_type === "SUPPLY" || i.item_type === "CONSUMABLE" || true));
-      } catch { /* ignore offline fallback */ }
-
-      try {
-        const locs = await apiGet<any[]>("/supply/locations");
-        if (Array.isArray(locs) && locs.length > 0) {
-          setAvailableLocations(locs);
-          setSelectedLocationId(locs[0].id);
-        }
       } catch { /* ignore offline fallback */ }
     })();
   }, []);
@@ -903,75 +905,61 @@ export function VisitChartPage() {
     }
   };
 
-  const addSupplyConsumption = async () => {
+  // SUP-T10: the chart raises a *patient supply request* (not a direct
+  // consumption), so the line lands in the Central Supply dispensing workbench
+  // queue where it is issued against stock. Direct consumption bypassed the
+  // queue entirely, which is why a supply requested here never appeared there.
+  const createSupplyRequest = async () => {
     if (!selectedItemId) return;
     setError(null);
     setSupplySubmitting(true);
     try {
-const item = availableSupplyItems.find((i) => i.id === selectedItemId);
-        const location = availableLocations.find((l) => l.id === selectedLocationId) || availableLocations[0];
-        // No synthetic fallbacks: a made-up location or UOM id is not a "safe
-        // default", it is a foreign-key violation that used to surface as an
-        // opaque 500 while the chart still showed the row.
-        const locId = location?.id;
-        const uomId = item?.base_uom_id;
-        if (!locId || !uomId) {
-          setError(
-            !locId
-              ? "Choose a stock location before logging consumption."
-              : `${item?.name ?? "That item"} has no base unit of measure on file.`,
-          );
-          setSupplySubmitting(false);
-          return;
-        }
+      const item = availableSupplyItems.find((i) => i.id === selectedItemId);
+      // No synthetic fallbacks: a made-up UOM id is a foreign-key violation
+      // that surfaces as an opaque 500 while the chart still shows a row.
+      const uomId = item?.base_uom_id;
+      const patientId = visit?.patientId;
+      const branchId = visit?.branchId;
+      if (!patientId) {
+        setError("Patient information is missing for this visit.");
+        return;
+      }
+      if (!branchId) {
+        setError("This visit has no branch on file, so the supply request cannot be routed.");
+        return;
+      }
+      if (!uomId) {
+        setError(`${item?.name ?? "That item"} has no base unit of measure on file.`);
+        return;
+      }
 
-      await apiPost("/supply/consumption", {
-        locationId: locId,
-        itemId: selectedItemId,
-        qty: Number(supplyQty) || 1,
-        uomId,
-        refType: "VISIT",
-        refId: visitId,
+      await apiPost("/supply/patient-requests", {
+        branchId,
+        patientId,
+        visitId,
         notes: supplyNotes.trim() || undefined,
+        items: [{ itemId: selectedItemId, uomId, qtyRequested: Number(supplyQty) || 1 }],
       });
 
       const newSupply: SupplyRow = {
-        id: `sup-${Date.now()}`,
+        id: `psr-${Date.now()}`,
         itemName: item?.name || "Supply Item",
         itemCode: item?.code,
-        locationName: location?.name || "Consultation Room",
         qty: Number(supplyQty) || 1,
         loggedAt: new Date().toISOString(),
         notes: supplyNotes.trim() || null,
       };
 
       setSupplies((prev) => [newSupply, ...prev]);
-      setNotice(`Supply ${newSupply.itemName} (x${newSupply.qty}) logged for this visit encounter.`);
+      setNotice(
+        `Supply request for ${newSupply.itemName} (x${newSupply.qty}) sent to Central Supply — it now appears in the Supply Dispensing workbench.`,
+      );
       setSelectedItemId("");
+      setSupplyItemSearch("");
       setSupplyNotes("");
       setSupplyQty("1");
     } catch (err) {
-      // If inventory throws insufficient stock warning, allow optimistic logging for consultation record
-      if (err instanceof ApiError && err.problem.code === "STOCK_INSUFFICIENT") {
-        const item = availableSupplyItems.find((i) => i.id === selectedItemId);
-        const location = availableLocations.find((l) => l.id === selectedLocationId);
-        const newSupply: SupplyRow = {
-          id: `sup-${Date.now()}`,
-          itemName: item?.name || "Supply Item",
-          itemCode: item?.code,
-          locationName: location?.name || "Clinic Room",
-          qty: Number(supplyQty) || 1,
-          loggedAt: new Date().toISOString(),
-          notes: supplyNotes.trim() || "Used during encounter",
-        };
-        setSupplies((prev) => [newSupply, ...prev]);
-        setNotice(`Supply recorded for encounter (Stock warning: pending store replenishment).`);
-        setSelectedItemId("");
-        setSupplyNotes("");
-        setSupplyQty("1");
-      } else {
-        setError(err instanceof ApiError ? err.problem.detail ?? err.problem.title : "Failed to record supply usage.");
-      }
+      setError(err instanceof ApiError ? err.problem.detail ?? err.problem.title : "Failed to create the supply request.");
     } finally {
       setSupplySubmitting(false);
     }
@@ -1088,6 +1076,11 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
     ],
     [visit, vitals, prescriptions, labOrders, supplies],
   );
+
+  // Fuzzy local pickers: both catalogues are loaded once and bounded, so we
+  // filter them client-side as the user types instead of a plain <select>.
+  const labTestOptions = fuzzyFilter(availableTests, testSearch, labTestLabel);
+  const supplyItemOptions = fuzzyFilter(availableSupplyItems, supplyItemSearch, supplyItemLabel);
 
   if (loading) {
     return (
@@ -1445,29 +1438,22 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
                     </span>
                   ) : null}
                 </div>
-                <div className="d-flex align-items-center gap-2">
-                  {clinicalMemo ? (
-                    <button
-                      type="button"
-                      className="btn btn-outline-secondary btn-sm py-0 px-2"
-                      style={{ fontSize: "0.78rem" }}
-                      onClick={() => {
-                        setClinicalMemo("");
-                        setMemoSaved(false);
-                      }}
-                    >
-                      Clear
-                    </button>
-                  ) : null}
+                {/* The save action lives once, in the card header next to
+                    "Copy from SOAP". A second identical button here was a
+duplicate. */}
+                {clinicalMemo ? (
                   <button
                     type="button"
-                    className="btn btn-sm btn-cerulean py-1 px-3"
-                    disabled={memoSaving}
-                    onClick={() => void saveMemo()}
+                    className="btn btn-outline-secondary btn-sm py-0 px-2"
+                    style={{ fontSize: "0.78rem" }}
+                    onClick={() => {
+                      setClinicalMemo("");
+                      setMemoSaved(false);
+                    }}
                   >
-                    {memoSaving ? "Saving..." : memoSaved ? "✓ Saved" : "💾 Save Memo"}
+                    Clear
                   </button>
-                </div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -1696,20 +1682,23 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
             <div className="p-3">
               <div className="row g-2 mb-2">
                 <div className="col-md-6">
-                  <label className="form-label small" htmlFor="lab-test-select">Select Test / Panel *</label>
-                  <select
+                  <SearchCombobox
                     id="lab-test-select"
-                    className="form-select form-select-sm"
-                    value={selectedTestId}
-                    onChange={(e) => setSelectedTestId(e.target.value)}
-                  >
-                    <option value="">-- Choose lab test or panel --</option>
-                    {availableTests.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name} ({t.code}) {t.is_panel ? "[Panel]" : ""}
-                      </option>
-                    ))}
-                  </select>
+                    label="Select Test / Panel *"
+                    placeholder="Type to search test or panel…"
+                    value={testSearch}
+                    onChange={(v) => {
+                      setTestSearch(v);
+                      const match = availableTests.find((t) => labTestLabel(t) === v);
+                      setSelectedTestId(match ? match.id : "");
+                    }}
+                    onSearch={setTestSearch}
+                    options={labTestOptions}
+                    getOptionId={(o) => (o as any).id}
+                    getOptionLabel={(o) => labTestLabel(o)}
+                    getOptionDescription={(o) => ((o as any).is_panel ? "Panel" : ((o as any).specimen_type ?? null))}
+                    emptyMessage="No matching test or panel"
+                  />
                 </div>
                 <div className="col-md-3">
                   <label className="form-label small" htmlFor="lab-priority">Priority *</label>
@@ -1791,7 +1780,7 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
             <div className="clinic-card-header d-flex justify-content-between align-items-center">
               <div>
                 <span className="fw-bold">Central Supply &amp; Consumables</span>
-                <span className="small text-muted ms-2">supplies / materials used in encounter</span>
+                <span className="small text-muted ms-2">request supplies — issued from the Central Supply workbench</span>
               </div>
               <Link to="/supply/issue" className="btn btn-sm btn-outline-primary py-0 px-2" style={{ fontSize: "0.8rem" }}>
                 📦 Supply Issues &rarr;
@@ -1799,37 +1788,24 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
             </div>
             <div className="p-3">
               <div className="row g-2 mb-2">
-                <div className="col-md-5">
-                  <label className="form-label small" htmlFor="supply-item-select">Select Supply Item *</label>
-                  <select
+                <div className="col-md-8">
+                  <SearchCombobox
                     id="supply-item-select"
-                    className="form-select form-select-sm"
-                    value={selectedItemId}
-                    onChange={(e) => setSelectedItemId(e.target.value)}
-                  >
-                    <option value="">-- Choose supply / consumable --</option>
-                    {availableSupplyItems.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name} ({item.code})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="col-md-3">
-                  <label className="form-label small" htmlFor="supply-loc-select">Location / Room *</label>
-                  <select
-                    id="supply-loc-select"
-                    className="form-select form-select-sm"
-                    value={selectedLocationId}
-                    onChange={(e) => setSelectedLocationId(e.target.value)}
-                  >
-                    <option value="">-- Choose location --</option>
-                    {availableLocations.map((loc) => (
-                      <option key={loc.id} value={loc.id}>
-                        {loc.name}
-                      </option>
-                    ))}
-                  </select>
+                    label="Select Supply Item *"
+                    placeholder="Type to search supply or consumable…"
+                    value={supplyItemSearch}
+                    onChange={(v) => {
+                      setSupplyItemSearch(v);
+                      const match = availableSupplyItems.find((item) => supplyItemLabel(item) === v);
+                      setSelectedItemId(match ? match.id : "");
+                    }}
+                    onSearch={setSupplyItemSearch}
+                    options={supplyItemOptions}
+                    getOptionId={(o) => (o as any).id}
+                    getOptionLabel={(o) => supplyItemLabel(o)}
+                    getOptionDescription={(o) => ((o as any).category_name ?? null)}
+                    emptyMessage="No matching supply item"
+                  />
                 </div>
                 <div className="col-md-2">
                   <label className="form-label small" htmlFor="supply-qty">Qty *</label>
@@ -1857,14 +1833,14 @@ const item = availableSupplyItems.find((i) => i.id === selectedItemId);
                 type="button"
                 className="btn btn-sm btn-cerulean"
                 disabled={!selectedItemId || supplySubmitting}
-                onClick={() => void addSupplyConsumption()}
+                onClick={() => void createSupplyRequest()}
               >
-                {supplySubmitting ? "Logging..." : "Log Supply Consumption"}
+                {supplySubmitting ? "Requesting..." : "Request Supply → Central Supply"}
               </button>
 
               {supplies.length > 0 ? (
                 <div className="mt-3">
-                  <div className="small fw-semibold text-muted mb-1">Supplies consumed for this encounter:</div>
+                  <div className="small fw-semibold text-muted mb-1">Supply requests for this encounter:</div>
                   {supplies.map((s) => (
                     <div key={s.id} className="d-flex align-items-center justify-content-between py-2 border-bottom small flex-wrap gap-2">
                       <div className="d-flex align-items-center gap-2">

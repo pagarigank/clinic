@@ -65,6 +65,7 @@ function renderWorkbench(path = "/pharmacy/dispenses/rx-1") {
       <AuthProvider>
         <StepUpProvider>
           <Routes>
+            <Route path="/pharmacy/dispenses" element={<DispenseWorkbenchPage />} />
             <Route path="/pharmacy/dispenses/:id" element={<DispenseWorkbenchPage />} />
           </Routes>
         </StepUpProvider>
@@ -282,6 +283,65 @@ describe("DispenseWorkbenchPage (todo §5.2, PHM-T2, AC-7)", () => {
     expect(await screen.findByText(/Rx Label Preview/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Paracetamol 500mg Tablet/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/Qty Dispensed: 9/i)).toBeInTheDocument();
+  });
+
+  it("groups ready prescriptions by patient in the queue view", async () => {
+    apiMock.getQueue.mockResolvedValue([
+      {
+        id: "rx-101",
+        rx_no: "RX-2026-00999",
+        status: "ISSUED",
+        is_controlled: false,
+        patient_id: "pat-1",
+        patient_first_name: "Maria",
+        patient_last_name: "Santos",
+        hrn: "HRN-00123",
+        prescriber_id: "doc-1",
+        prescriber_name: "Dr. Gomez",
+        visit_id: "vis-1",
+        visit_no: "VIS-101",
+        item_count: 3,
+      },
+      {
+        id: "rx-102",
+        rx_no: "RX-2026-01000",
+        status: "ISSUED",
+        is_controlled: true,
+        patient_id: "pat-1",
+        patient_first_name: "Maria",
+        patient_last_name: "Santos",
+        hrn: "HRN-00123",
+        prescriber_id: "doc-1",
+        prescriber_name: "Dr. Gomez",
+        visit_id: "vis-1",
+        visit_no: "VIS-101",
+        item_count: 1,
+      },
+    ]);
+
+    renderWorkbench("/pharmacy/dispenses");
+    expect(await screen.findByText("Patient Dispensing & Issue Workbench")).toBeInTheDocument();
+    expect(await screen.findByText("Maria Santos")).toBeInTheDocument();
+    expect(await screen.findByText(/2 Prescriptions/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Select Patient & Dispense/i)).toBeInTheDocument();
+    expect(await screen.findByText(/PDEA S2 CONTROLLED/i)).toBeInTheDocument();
+  });
+
+  it("renders multi-channel dispensing tabs for Medications, Procedure Supplies, and Summary", async () => {
+    renderWorkbench();
+    expect(await screen.findByText(/Prescribed Medications/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Procedure Supplies & Clinical Items/i)).toBeInTheDocument();
+    expect(await screen.findByText(/General Clinic Consumables/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Consolidated Patient Dispense Summary/i)).toBeInTheDocument();
+
+    // Click Procedure Supplies Tab
+    fireEvent.click(screen.getByRole("button", { name: /Procedure Supplies & Clinical Items/i }));
+    expect(await screen.findByText(/Select Clinical Procedure Supply/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Issue Stock to Patient/i)).toBeInTheDocument();
+
+    // Click Summary Tab
+    fireEvent.click(screen.getByRole("button", { name: /Consolidated Patient Dispense Summary/i }));
+    expect(await screen.findByText(/Consolidated Patient Dispensing Bill of Materials/i)).toBeInTheDocument();
   });
 });
 

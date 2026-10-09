@@ -223,4 +223,48 @@ describe.skipIf(!hasDb)('Phase 4 Multi-Tenant Isolation (§49)', () => {
       response: { code: 'NOT_FOUND' },
     });
   });
+
+  it('isolates patient supply requests between tenants', async () => {
+    const patientRes = await ownerPool.query<{ id: string }>(
+      `INSERT INTO patients (tenant_id, first_name, last_name, date_of_birth, gender)
+       VALUES ($1, 'Iso', 'Patient', '1990-01-01', 'F') RETURNING id`,
+      [TENANT_A],
+    );
+    const patientId = patientRes.rows[0]!.id;
+
+    const request = await svc.createPatientSupplyRequest(TENANT_A, USER_A, {
+      branchId: BRANCH_A,
+      patientId,
+      items: [{ itemId: itemAId, uomId: uomAId, qtyRequested: 2 }],
+    });
+
+    // Tenant A sees the pending request; Tenant B does not, even when it filters
+    // by the same patient id (RLS + tenant scoping, not just an app-level check).
+    const rowsA = await svc.listPatientSupplyRequests(TENANT_A, { patientId });
+    const mineA = rowsA.find((r: any) => r.id === request.id) as any;
+    expect(mineA).toBeTruthy();
+
+    const rowsB = await svc.listPatientSupplyRequests(TENANT_B, { patientId });
+    expect(rowsB.some((r: any) => r.id === request.id)).toBe(false);
+
+    // Tenant B cannot issue a Tenant A request line.
+    await expect(
+      svc.issuePatientSupplyRequestItem(TENANT_B, USER_B, request.id, mineA.request_item_id, 'req-iso-psr', {
+        locationId: locAId,
+        qty: 1,
+      }),
+    ).rejects.toMatchObject({
+      response: { code: 'NOT_FOUND' },
+    });
+
+    // Direct RLS query as Tenant B returns nothing.
+    const rlsRows = await withTenant({ tenantId: TENANT_B }, async (tx) => {
+      const res = await tx.query(`SELECT * FROM patient_supply_requests WHERE id = $1`, [request.id]);
+      return res.rows;
+    });
+    expect(rlsRows.length).toBe(0);
+
+    await ownerPool.query(`DELETE FROM patient_supply_requests WHERE tenant_id = $1 AND id = $2`, [TENANT_A, request.id]);
+    await ownerPool.query(`DELETE FROM patients WHERE id = $1`, [patientId]);
+  });
 });

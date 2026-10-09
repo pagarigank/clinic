@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { Alert, Badge, Button, EmptyState, Form, SkeletonTable, StatusPill } from "@clinic/ui";
+import { Alert, Badge, Button, EmptyState, Form, Modal, SearchCombobox, SkeletonTable, StatusPill, fuzzyFilter } from "@clinic/ui";
 import { ApiError } from "../../shared/api/client.js";
 import { supplyApi } from "./api.js";
-import type { SupplyItemRow, SupplyLocation, SupplyStockRow } from "./api.js";
+import type { PatientSupplyRequestRow, SupplyItemRow, SupplyLocation, SupplyStockRow } from "./api.js";
 import { ConsumptionPrintModal } from "./ConsumptionPrintModal.js";
+import { PatientGroupedRequestList, type PatientGroup } from "../../shared/dispensing/PatientGroupedRequestList.js";
 
 type RefType = "VISIT" | "LAB" | "PROCEDURE" | "HOUSE_USE";
 
@@ -13,6 +14,11 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 function num(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** Label used for a supply-item option in the fuzzy pickers. */
+function supplyItemLabel(item: SupplyItemRow): string {
+  return `${item.name} (${item.code})`;
 }
 
 function errText(e: unknown): string {
@@ -40,6 +46,15 @@ function fefoBatchId(batches: SupplyStockRow[], qty: number): string {
 }
 
 export function SupplyIssueWorkbenchPage() {
+  // Patient-grouped dispensing is the workbench default for every module
+  // (pharmacy, lab, central supply); the toggle still exposes direct stock issue.
+  const [viewMode, setViewMode] = useState<"PATIENT" | "DIRECT">("PATIENT");
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
+
+  const [patientRequests, setPatientRequests] = useState<PatientSupplyRequestRow[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
+  const [requestsError, setRequestsError] = useState<string | null>(null);
+
   const [items, setItems] = useState<SupplyItemRow[]>([]);
   const [itemQuery, setItemQuery] = useState("");
   const [itemLoading, setItemLoading] = useState(false);
@@ -79,18 +94,23 @@ export function SupplyIssueWorkbenchPage() {
   useEffect(() => {
     let cancelled = false;
     setItemLoading(true);
-    const handle = setTimeout(() => {
-      supplyApi
-        .listItems(itemQuery.trim() ? { search: itemQuery.trim() } : undefined)
-        .then((rows) => !cancelled && setItems(rows))
-        .catch((e) => !cancelled && setError(errText(e)))
-        .finally(() => !cancelled && setItemLoading(false));
-    }, 250);
+    supplyApi
+      .listItems()
+      .then((rows) => !cancelled && setItems(rows))
+      .catch((e) => !cancelled && setError(errText(e)))
+      .finally(() => !cancelled && setItemLoading(false));
     return () => {
       cancelled = true;
-      clearTimeout(handle);
     };
-  }, [itemQuery]);
+  }, []);
+
+  // Fuzzy, client-side search over the one-time-loaded catalogue (bounded —
+  // listItems has no server paging), matching the consultation request pickers
+  // and ranking subsequence hits that a plain server ILIKE would miss.
+  const filteredItems = useMemo(
+    () => fuzzyFilter(items, itemQuery, supplyItemLabel),
+    [items, itemQuery],
+  );
 
   const loadStock = useCallback(
     async (nextItemId: string) => {
@@ -209,6 +229,148 @@ export function SupplyIssueWorkbenchPage() {
     loadStock,
   ]);
 
+  const loadPatientRequests = useCallback(async () => {
+    setRequestsLoading(true);
+    setRequestsError(null);
+    try {
+      const rows = await supplyApi.listPatientRequests();
+      setPatientRequests(rows || []);
+    } catch (e) {
+      setRequestsError(errText(e));
+    } finally {
+      setRequestsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadPatientRequests();
+  }, [loadPatientRequests]);
+
+  // Group pending request lines by patient: one row per patient, drill down to lines.
+  const supplyPatientGroups = useMemo((): PatientGroup<PatientSupplyRequestRow>[] => {
+    const map = new Map<string, PatientGroup<PatientSupplyRequestRow>>();
+    for (const row of patientRequests) {
+      const name =
+        `${row.patient_first_name || ""} ${row.patient_last_name || ""}`.trim() || "Unknown Patient";
+      const existing = map.get(row.patient_id);
+      if (!existing) {
+        map.set(row.patient_id, {
+          patientId: row.patient_id,
+          patientName: name,
+          patientIdDisplay: row.hrn || null,
+          pendingCount: 1,
+          oldestRequestAt: row.requested_at,
+          requests: [row],
+          meta: { orderNos: [row.request_no] },
+        });
+      } else {
+        existing.requests.push(row);
+        existing.pendingCount += 1;
+        if (row.requested_at && (!existing.oldestRequestAt || row.requested_at < existing.oldestRequestAt)) {
+          existing.oldestRequestAt = row.requested_at;
+        }
+        if (row.request_no && !existing.meta!.orderNos.includes(row.request_no)) {
+          existing.meta!.orderNos.push(row.request_no);
+        }
+      }
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      String(a.oldestRequestAt ?? "").localeCompare(String(b.oldestRequestAt ?? ""))
+    );
+  }, [patientRequests]);
+
+  const handleIssuePatientRequest = useCallback(
+    async (row: PatientSupplyRequestRow) => {
+      setError(null);
+      setNotice(null);
+      const targetLoc = locationId || locations[0]?.id;
+      if (!targetLoc) {
+        setError("Please select a valid stock location to issue supplies from.");
+        return;
+      }
+      const remaining = num(row.qty_requested) - num(row.qty_issued);
+      if (remaining <= 0) {
+        setError("This request line has already been fully issued.");
+        return;
+      }
+      setBusy(true);
+      try {
+        await supplyApi.issuePatientRequest(row.id, row.request_item_id, {
+          locationId: targetLoc,
+          qty: remaining,
+        });
+        setNotice(
+          `Successfully issued ${remaining} ${row.uom_code || ""} of ${row.item_name} to ` +
+            `${row.patient_first_name} ${row.patient_last_name}.`,
+        );
+        await loadPatientRequests();
+        if (row.item_id === itemId) {
+          await loadStock(row.item_id);
+        }
+      } catch (e) {
+        setError(errText(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [locationId, locations, itemId, loadStock, loadPatientRequests],
+  );
+
+  // Create a patient supply request so the queue has a real origin (SUP-T10).
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [reqPatientId, setReqPatientId] = useState("");
+  const [reqItemId, setReqItemId] = useState("");
+  const [reqItemSearch, setReqItemSearch] = useState("");
+  const [reqQty, setReqQty] = useState(1);
+  const [reqNotes, setReqNotes] = useState("");
+  const [reqSubmitting, setReqSubmitting] = useState(false);
+
+  const reqItemOptions = useMemo(
+    () => fuzzyFilter(items, reqItemSearch, supplyItemLabel),
+    [items, reqItemSearch],
+  );
+
+  const handleCreateRequest = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      setError(null);
+      setNotice(null);
+      const branchId = selectedLocation?.branch_id || locations[0]?.branch_id;
+      const item = items.find((i) => i.id === reqItemId);
+      if (!UUID_RE.test(reqPatientId.trim())) {
+        setError("Enter a valid patient UUID to create a supply request.");
+        return;
+      }
+      if (!item || reqQty <= 0 || !branchId) {
+        setError("Choose an item, a positive quantity, and an issuing branch.");
+        return;
+      }
+      setReqSubmitting(true);
+      try {
+        await supplyApi.createPatientRequest({
+          branchId,
+          patientId: reqPatientId.trim(),
+          notes: reqNotes.trim() || undefined,
+          items: [{ itemId: item.id, uomId: item.base_uom_id, qtyRequested: reqQty }],
+        });
+        setIsRequestModalOpen(false);
+        const created = reqPatientId.trim();
+        setReqPatientId("");
+        setReqItemId("");
+        setReqItemSearch("");
+        setReqQty(1);
+        setReqNotes("");
+        setNotice(`Supply request created for patient ${created.slice(0, 8)}…`);
+        await loadPatientRequests();
+      } catch (err) {
+        setError(errText(err));
+      } finally {
+        setReqSubmitting(false);
+      }
+    },
+    [selectedLocation, locations, items, reqPatientId, reqItemId, reqQty, reqNotes, loadPatientRequests],
+  );
+
   return (
     <div className="container-fluid py-4" style={{ maxWidth: 1200 }}>
       <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
@@ -229,6 +391,13 @@ export function SupplyIssueWorkbenchPage() {
         </div>
         <div className="d-flex align-items-center gap-2">
           <Button
+            variant="primary"
+            size="sm"
+            onClick={() => setIsRequestModalOpen(true)}
+          >
+            ➕ New Supply Request
+          </Button>
+          <Button
             variant="outline-primary"
             size="sm"
             onClick={() => setIsPrintModalOpen(true)}
@@ -248,13 +417,141 @@ export function SupplyIssueWorkbenchPage() {
           {error}
         </Alert>
       )}
+      {requestsError && (
+        <Alert variant="warning" dismissible onClose={() => setRequestsError(null)}>
+          Could not load patient supply requests: {requestsError}
+        </Alert>
+      )}
       {notice && (
         <Alert variant="success" dismissible onClose={() => setNotice(null)}>
           {notice}
         </Alert>
       )}
 
-      <div className="row g-3">
+      {/* Workbench View Mode Switcher */}
+      <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+        <div className="btn-group" role="group" aria-label="Workbench view mode">
+          <button
+            type="button"
+            className={`btn btn-sm ${viewMode === "PATIENT" ? "btn-primary fw-semibold" : "btn-outline-secondary"}`}
+            onClick={() => setViewMode("PATIENT")}
+          >
+            👥 Group by Patient (Requests Queue)
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${viewMode === "DIRECT" ? "btn-primary fw-semibold" : "btn-outline-secondary"}`}
+            onClick={() => setViewMode("DIRECT")}
+          >
+            📦 Direct Stock Issue
+          </button>
+        </div>
+
+        {viewMode === "PATIENT" && (
+          <span className="small text-muted">
+            Filtered strictly to clinical supplies and consumables ordered for patient encounters.
+          </span>
+        )}
+      </div>
+
+      {viewMode === "PATIENT" ? (
+        <PatientGroupedRequestList<PatientSupplyRequestRow>
+          module="SUPPLY"
+          title="Patient Supply Dispensing & Issue"
+          subtitle="Review and issue clinical supplies, procedure consumables, and encounter materials grouped by patient."
+          groups={supplyPatientGroups}
+          loading={requestsLoading}
+          selectedPatientId={selectedPatientId}
+          onSelectPatient={setSelectedPatientId}
+          selectButtonLabel="Select Patient & Issue"
+          searchPlaceholder="Filter patients by name or ID…"
+          emptyMessage="No patients have pending supply requests."
+          renderRequests={(group) => (
+            <div className="card shadow-sm border-0" style={{ background: "var(--surface-raised)" }}>
+              <div className="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+                <h3 className="h6 fw-bold mb-0 text-dark">
+                  Supply &amp; Consumable Requests for {group.patientName}
+                </h3>
+                <span className="badge bg-primary-subtle text-primary">
+                  {group.requests.length} Line{group.requests.length > 1 ? "s" : ""}
+                </span>
+              </div>
+              <div className="table-responsive">
+                <table className="table table-hover align-middle mb-0">
+                  <thead className="table-light">
+                    <tr style={{ fontSize: "0.8rem", textTransform: "uppercase" }}>
+                      <th>Item Description</th>
+                      <th>Requested</th>
+                      <th>Request No.</th>
+                      <th>Visit</th>
+                      <th>Requested Date</th>
+                      <th>Status</th>
+                      <th className="text-end">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {group.requests.map((row) => {
+                      const remaining = num(row.qty_requested) - num(row.qty_issued);
+                      return (
+                        <tr key={row.request_item_id}>
+                          <td>
+                            <div className="fw-bold text-dark">{row.item_name}</div>
+                            <div className="small text-muted font-monospace">{row.item_code}</div>
+                            {row.item_notes && (
+                              <div className="small text-muted">{row.item_notes}</div>
+                            )}
+                          </td>
+                          <td>
+                            <span className="badge bg-secondary px-2 py-1">
+                              {remaining} {row.uom_code || ""}
+                            </span>
+                            {num(row.qty_issued) > 0 && (
+                              <div className="small text-muted">
+                                of {num(row.qty_requested)} ({num(row.qty_issued)} issued)
+                              </div>
+                            )}
+                          </td>
+                          <td className="font-monospace small">{row.request_no}</td>
+                          <td>
+                            {row.visit_no ? (
+                              <span className="badge bg-light text-dark border">{row.visit_no}</span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td className="small text-muted">
+                            {new Date(row.requested_at).toLocaleString()}
+                          </td>
+                          <td>
+                            <StatusPill
+                              tone={row.status === "PENDING" ? "pending" : "normal"}
+                              label={row.status}
+                            />
+                          </td>
+                          <td className="text-end">
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              disabled={busy || remaining <= 0}
+                              onClick={() => void handleIssuePatientRequest(row)}
+                            >
+                              {busy
+                                ? "Issuing…"
+                                : `Issue ${remaining} ${row.uom_code || ""} →`}
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        />
+      ) : (
+        <>
+          <div className="row g-3">
         {/* Item picker */}
         <div className="col-lg-5">
           <div className="card h-100 shadow-sm border-0" style={{ background: "var(--surface-raised)" }}>
@@ -270,14 +567,14 @@ export function SupplyIssueWorkbenchPage() {
             </div>
             {itemLoading ? (
               <SkeletonTable rows={4} />
-            ) : items.length === 0 ? (
+            ) : filteredItems.length === 0 ? (
               <EmptyState
                 headline="No items found"
                 explanation="Try a different search term or add items in the Item Master."
               />
             ) : (
               <div className="list-group list-group-flush" style={{ maxHeight: 420, overflowY: "auto" }}>
-                {items.map((item) => (
+                {filteredItems.map((item) => (
                   <button
                     key={item.id}
                     type="button"
@@ -505,6 +802,79 @@ export function SupplyIssueWorkbenchPage() {
           </div>
         </div>
       )}
+    </>
+  )}
+
+      <Modal show={isRequestModalOpen} onHide={() => setIsRequestModalOpen(false)}>
+        <form onSubmit={handleCreateRequest}>
+          <Modal.Header closeButton>
+            <Modal.Title className="h5">New Patient Supply Request</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <div className="row g-3">
+              <div className="col-12 col-md-6">
+                <Form.Label className="small fw-semibold">Patient ID / MRN *</Form.Label>
+                <Form.Control
+                  type="text"
+                  placeholder="e.g. 00000000-0000-0000-0000-000000000001"
+                  value={reqPatientId}
+                  onChange={(e) => setReqPatientId(e.target.value)}
+                  required
+                />
+                <Form.Text className="text-muted">Registered patient UUID</Form.Text>
+              </div>
+              <div className="col-12 col-md-6">
+                <SearchCombobox
+                  id="req-item-select"
+                  label="Requested Item *"
+                  placeholder="Type to search supply or consumable…"
+                  value={reqItemSearch}
+                  onChange={(v) => {
+                    setReqItemSearch(v);
+                    const match = items.find((it) => supplyItemLabel(it) === v);
+                    setReqItemId(match ? match.id : "");
+                  }}
+                  onSearch={setReqItemSearch}
+                  options={reqItemOptions}
+                  getOptionId={(o) => (o as SupplyItemRow).id}
+                  getOptionLabel={(o) => supplyItemLabel(o as SupplyItemRow)}
+                  getOptionDescription={(o) => (o as SupplyItemRow).category_name ?? null}
+                  emptyMessage="No matching supply item"
+                />
+              </div>
+              <div className="col-12 col-md-4">
+                <Form.Label className="small fw-semibold">Quantity *</Form.Label>
+                <Form.Control
+                  type="number"
+                  min={1}
+                  value={reqQty}
+                  onChange={(e) => setReqQty(Math.max(1, Number(e.target.value)))}
+                  required
+                />
+              </div>
+              <div className="col-12">
+                <Form.Label className="small fw-semibold">Notes</Form.Label>
+                <Form.Control
+                  as="textarea"
+                  rows={2}
+                  maxLength={1000}
+                  placeholder="e.g. Wound dressing for procedure"
+                  value={reqNotes}
+                  onChange={(e) => setReqNotes(e.target.value)}
+                />
+              </div>
+            </div>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={() => setIsRequestModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" type="submit" disabled={reqSubmitting}>
+              {reqSubmitting ? "Creating…" : "Create Request"}
+            </Button>
+          </Modal.Footer>
+        </form>
+      </Modal>
 
       <ConsumptionPrintModal
         isOpen={isPrintModalOpen}

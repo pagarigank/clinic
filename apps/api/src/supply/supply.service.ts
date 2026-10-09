@@ -47,6 +47,8 @@ import type {
   BulkImportResult,
   CreateSupplierInvoiceRequest,
   CreateSupplierReturnRequest,
+  CreatePatientSupplyRequestRequest,
+  IssuePatientSupplyRequestRequest,
 } from '@clinic/contracts';
 
 function formatDateTime(d: Date): string {
@@ -834,8 +836,9 @@ export class SupplyService {
     userId: string,
     requestId: string,
     dto: PostConsumptionRequest,
+    existingTx?: any,
   ) {
-    return withTenant({ tenantId, userId }, async (tx) => {
+    const runner = async (tx: any) => {
       let batchesToPost: Array<{ batchId: string; qty: number; unitCost?: number }> = [];
 
       if (dto.batchId) {
@@ -914,6 +917,186 @@ export class SupplyService {
       }
 
       return { status: 'POSTED', allocatedCount: batchesToPost.length };
+    };
+    // Callers that already hold a tenant transaction (e.g. issuing a patient
+    // supply request) pass it in so stock, charge and request-line all commit or
+    // roll back together (G-03, specification §10).
+    if (existingTx) return runner(existingTx);
+    return withTenant({ tenantId, userId }, runner);
+  }
+
+  // ── Patient Supply Requests (SUP-T10, specification §10) ────────────────────
+
+  /**
+   * Pending (or filtered) patient supply requests, one row per requested item line.
+   * The web workbench groups these by `patient_id`.
+   */
+  async listPatientSupplyRequests(
+    tenantId: string,
+    filter: { status?: string; patientId?: string } = {},
+  ) {
+    return withTenant({ tenantId }, async (tx) => {
+      const params: unknown[] = [tenantId];
+      let where = `WHERE r.tenant_id = $1`;
+      if (filter.status) {
+        params.push(filter.status);
+        where += ` AND r.status = $${params.length}`;
+      } else {
+        where += ` AND r.status IN ('PENDING','PARTIALLY_ISSUED')`;
+      }
+      if (filter.patientId) {
+        params.push(filter.patientId);
+        where += ` AND r.patient_id = $${params.length}`;
+      }
+      const res = await tx.query(
+        `SELECT r.id, r.request_no, r.patient_id, r.visit_id, r.status, r.notes,
+                r.requested_by, r.requested_at,
+                p.first_name AS patient_first_name, p.last_name AS patient_last_name,
+                (SELECT value FROM patient_identifiers pi
+                  WHERE pi.tenant_id = r.tenant_id AND pi.patient_id = r.patient_id
+                    AND pi.type = 'HRN' LIMIT 1) AS hrn,
+                v.visit_no,
+                ri.id AS request_item_id, ri.item_id, ri.uom_id,
+                ri.qty_requested, ri.qty_issued, ri.notes AS item_notes,
+                i.code AS item_code, i.name AS item_name,
+                u.code AS uom_code
+           FROM patient_supply_requests r
+           JOIN patients p ON p.tenant_id = r.tenant_id AND p.id = r.patient_id
+           LEFT JOIN visits v ON v.tenant_id = r.tenant_id AND v.id = r.visit_id
+           JOIN patient_supply_request_items ri ON ri.tenant_id = r.tenant_id AND ri.request_id = r.id
+           JOIN items i ON i.tenant_id = ri.tenant_id AND i.id = ri.item_id
+           JOIN uoms u ON u.tenant_id = ri.tenant_id AND u.id = ri.uom_id
+           ${where}
+          ORDER BY r.requested_at ASC, r.id, ri.id`,
+        params,
+      );
+      return res.rows;
+    });
+  }
+
+  async createPatientSupplyRequest(
+    tenantId: string,
+    userId: string,
+    dto: CreatePatientSupplyRequestRequest,
+  ) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const requestNo = `PSR-${Date.now()}`;
+      const res = await tx.query(
+        `INSERT INTO patient_supply_requests (
+           tenant_id, branch_id, request_no, patient_id, visit_id, status, requested_by, notes
+         )
+         VALUES ($1, $2, $3, $4, $5, 'PENDING', $6, $7)
+         RETURNING *`,
+        [
+          tenantId, dto.branchId, requestNo, dto.patientId,
+          dto.visitId ?? null, userId, dto.notes ?? null,
+        ],
+      );
+      const request = res.rows[0];
+      for (const item of dto.items) {
+        await tx.query(
+          `INSERT INTO patient_supply_request_items (
+             tenant_id, request_id, item_id, uom_id, qty_requested, notes
+           )
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [tenantId, request.id, item.itemId, item.uomId, item.qtyRequested, item.notes ?? null],
+        );
+      }
+      return request;
+    });
+  }
+
+  /**
+   * Issue one requested line: consumes stock through the shared FEFO/charge path
+   * and advances the request status, all in a single transaction (G-03). The
+   * header and line are locked FOR UPDATE so two concurrent issues cannot both
+   * pass the remaining-quantity check (AC-6).
+   */
+  async issuePatientSupplyRequestItem(
+    tenantId: string,
+    userId: string,
+    requestId: string,
+    requestItemId: string,
+    requestHeaderId: string,
+    dto: IssuePatientSupplyRequestRequest,
+  ) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      const reqRes = await tx.query(
+        `SELECT id, status, visit_id
+           FROM patient_supply_requests
+          WHERE tenant_id = $1 AND id = $2
+          FOR UPDATE`,
+        [tenantId, requestId],
+      );
+      const request = reqRes.rows[0];
+      if (!request) throw new ProblemException('NOT_FOUND', { detail: 'Supply request not found' });
+      if (request.status === 'CANCELLED') {
+        throw new ProblemException('CONFLICT', { detail: 'Supply request is cancelled' });
+      }
+      if (request.status === 'ISSUED') {
+        throw new ProblemException('CONFLICT', { detail: 'Supply request is already fully issued' });
+      }
+
+      const lineRes = await tx.query(
+        `SELECT id, item_id, uom_id, qty_requested, qty_issued
+           FROM patient_supply_request_items
+          WHERE tenant_id = $1 AND request_id = $2 AND id = $3
+          FOR UPDATE`,
+        [tenantId, requestId, requestItemId],
+      );
+      const line = lineRes.rows[0];
+      if (!line) throw new ProblemException('NOT_FOUND', { detail: 'Request line not found' });
+
+      const remaining = Number(line.qty_requested) - Number(line.qty_issued);
+      if (dto.qty > remaining) {
+        throw new ProblemException('CONFLICT', {
+          detail: `Cannot issue ${dto.qty}: only ${remaining} remains on this line`,
+        });
+      }
+
+      // Issue stock through the same consumption path used everywhere else, so
+      // FEFO, the immutable movement ledger and the visit charge stay identical.
+      await this.postConsumption(
+        tenantId,
+        userId,
+        requestHeaderId,
+        {
+          locationId: dto.locationId,
+          itemId: line.item_id,
+          batchId: dto.batchId,
+          qty: dto.qty,
+          uomId: line.uom_id,
+          refType: request.visit_id ? 'VISIT' : 'PROCEDURE',
+          refId: request.visit_id ?? undefined,
+          notes: dto.notes ?? `Patient supply request ${requestId}`,
+        },
+        tx,
+      );
+
+      await tx.query(
+        `UPDATE patient_supply_request_items
+            SET qty_issued = qty_issued + $1
+          WHERE tenant_id = $2 AND id = $3`,
+        [dto.qty, tenantId, requestItemId],
+      );
+
+      const statusRes = await tx.query(
+        `SELECT bool_and(qty_issued >= qty_requested) AS all_done,
+                bool_or(qty_issued > 0) AS any_issued
+           FROM patient_supply_request_items
+          WHERE tenant_id = $1 AND request_id = $2`,
+        [tenantId, requestId],
+      );
+      const agg = statusRes.rows[0] ?? {};
+      const nextStatus = agg.all_done ? 'ISSUED' : agg.any_issued ? 'PARTIALLY_ISSUED' : 'PENDING';
+      const upd = await tx.query(
+        `UPDATE patient_supply_requests
+            SET status = $1, updated_at = now()
+          WHERE tenant_id = $2 AND id = $3
+          RETURNING *`,
+        [nextStatus, tenantId, requestId],
+      );
+      return upd.rows[0];
     });
   }
 

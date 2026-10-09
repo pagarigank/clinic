@@ -491,6 +491,7 @@ Each entry: primary screens, key interactions, states that must be designed, and
 - **e-Prescribe:** drug search with allergy/interaction inline warnings, dose/frequency/route/duration form, quantity, refills, instructions; controlled drug fields expand the special-Rx section; label preview; sign to issue.
 - **Certificates & referrals:** template pick, field fill, sign, PDF/print, share link with expiry.
 - **Order status timeline:** a single visual line from order → collected → resulted → verified → released, used in the chart, lab, and pharmacy views alike.
+- **Lab & supply ordering pickers:** the lab-test and supply-item pickers on the visit chart are fuzzy typeaheads (in-order subsequence search over the loaded catalogue) rather than long `<select>` lists. A supply raised here creates a `patient_supply_requests` line — never a direct `consumption_logs` row — so it appears in the central-supply dispensing queue (SUP-T10); the same transaction would otherwise be invisible to the workbench.
 
 ### 14.5 Laboratory — M5
 
@@ -522,6 +523,7 @@ Each entry: primary screens, key interactions, states that must be designed, and
 - **GRN wizard (Stepper):** header (PO or direct, supplier, invoice ref, dates) → lines (scan or search item, lot, expiry, qty + UOM with conversion, unit cost, inspection result, cold-chain temp) → summary (variance vs PO, shelf-life violations) → post (with override reasons) → receipt PDF. Offline-tolerant: lines queue locally and post on reconnect with the idempotency key (specification §10).
 - **Purchase requests & orders:** list + detail with line editor, status transitions (`Submit`, `Approve`, `Reject`, `Send`, `Close`) each with the reason/confirm rules, SoD banner when the approver equals the creator, revision history, and expected-delivery tracking.
 - **Requisition & issue:** par-list generated requisitions, requester lines, approver queue (threshold-based), pick list with FEFO suggestions, issue post → in-transit, and the receiving side with full/partial/discrepancy acknowledgement.
+- **Patient supply dispensing & issue (SUP-T10):** the central-supply workbench opens on a patient-grouped queue (matching pharmacy and lab) — one row per patient with pending lines, drill down to that patient's requested supplies, and issue each line with FEFO allocation through `POST /supply/patient-requests/{id}/items/{itemId}/issue` (single transaction: stock, ledger, visit charge, line `qty_issued`). A `New Supply Request` action — and the encounter chart's supply picker — raise the request the queue reads.
 - **Transfers:** branch-to-branch with both approvals, in-transit visibility, and receiving.
 - **Counts:** count sheet by location (full, cycle with ABC filtering, spot) with a blind-count mode that hides system quantities until submission; variance table with reasons; recount for high-variance lines; post with `COUNT_VARIANCE` movements.
 - **Adjustments & disposals:** reason-code-first forms, two-user approval, witness signatures (two for controlled), disposal certificate with photo upload.

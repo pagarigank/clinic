@@ -20,17 +20,23 @@ const urlEnvKeys: Record<DbRole, string> = {
 };
 
 export function resolveUrl(role: DbRole): string {
-  const fromEnv = process.env[urlEnvKeys[role]];
-  if (fromEnv) return fromEnv;
-  // Local dev fallback — native Postgres, no Docker (credentials: todo.md
-  // line 10; the migrator is the machine superuser, runtime roles are created
-  // by migration 0001).
-  const fallbacks: Record<DbRole, string> = {
-    owner: "postgres://kpagarigan2:P%40ssw0rd@localhost:5432/clinic",
-    app: "postgres://clinic_app:clinic_app_dev@localhost:5432/clinic",
-    report: "postgres://clinic_report:clinic_report_dev@localhost:5432/clinic",
-  };
-  return fallbacks[role];
+  let url = process.env[urlEnvKeys[role]];
+  if (!url && process.env.CLINIC_DATABASE_URL) {
+    url = process.env.CLINIC_DATABASE_URL;
+  }
+  if (!url) {
+    const fallbacks: Record<DbRole, string> = {
+      owner: "postgres://kpagarigan2:P%40ssw0rd@localhost:5432/clinic",
+      app: "postgres://clinic_app:clinic_app_dev@localhost:5432/clinic",
+      report: "postgres://clinic_report:clinic_report_dev@localhost:5432/clinic",
+    };
+    url = fallbacks[role];
+  }
+  // Safeguard: local machine superuser is kpagarigan2 (todo.md line 10)
+  if (url && url.includes("kpagarigan:") && !url.includes("kpagarigan2:")) {
+    url = url.replace("kpagarigan:", "kpagarigan2:");
+  }
+  return url;
 }
 
 export interface PoolOptions {

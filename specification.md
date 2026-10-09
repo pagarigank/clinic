@@ -560,6 +560,7 @@ flowchart LR
 | `recalls` / `recall_batches` | recall_no, source (supplier/FDA/internal), reason, status; item, batch |
 | `stock_batches`, `stock_balances`, `stock_movements`, `stock_reservations` | see architecture §8 |
 | `consumption_logs` | location_id, item_id, batch_id, qty, ref_type (visit/lab/procedure/house), ref_id |
+| `patient_supply_requests` / `patient_supply_request_items` | request_no, patient_id, visit_id, status (`PENDING/PARTIALLY_ISSUED/ISSUED/CANCELLED`), requested_by; item, uom, qty_requested, qty_issued |
 | `valuation_snapshots` | as_of, location_id, item_id, qty, value |
 
 ### 10.2 CRUD
@@ -1223,6 +1224,8 @@ Base path `/api/v1`. Conventions:
 | `GET` | `/supply/stock/{itemId}/ledger` | `supply.stock.read` | movement history, cursor-paginated |
 | `GET` | `/supply/stock/movements` | `supply.stock.read` | read-only ledger; `UPDATE`/`DELETE` denied at DB level |
 | `POST` | `/supply/consumption` | `supply.consumption.create` | 🔒 house use / procedure / lab reagent FEFO |
+| `GET`/`POST` | `/supply/patient-requests` | `supply.req.read` / `.create` | patient/visit-linked supply requests; the workbench groups pending lines by patient |
+| `POST` | `/supply/patient-requests/{id}/items/{itemId}/issue` | `supply.consumption.create` | 🔒 FEFO consumption + visit `SUPPLY` charge + line `qty_issued`, one transaction |
 | `GET` | `/supply/valuation?asOf&location` | `supply.stock.read` | snapshot |
 | `POST` | `/supply/periods/{period}/lock` · `/unlock` | `supply.period.lock` | 🔒 step-up |
 | `GET` | `/supply/suggestions/reorder` · `/supply/suggestions/par` | `supply.pr.read` | JOB-31 / JOB-30 output |
@@ -1433,6 +1436,21 @@ A branch declares what it operates (`branch_services`) and holds its own permit/
 | `CONSULTATION` · `PROCEDURE_ROOM` · none declared | — (business permit alone is a valid configuration) |
 
 **Enforcement posture: the platform surfaces, it does not police.** A branch whose expected licence has no row gets a compliance badge in the admin UI and a line in RPT-ADM-04; no API path, job, or posting checks licence data before operating. This mirrors JOB-13's remind-only design and keeps a consultation-only private clinic running on a local business permit a first-class configuration (DOH licensure attaches to facility categories — labs, ambulatory surgical, birthing, dialysis — not to consultation itself; AO 2012-0012). The single `license_no` column on `branches` (§5.1) is superseded by this registry.
+
+### 19.9 `patient_supply_requests` and `patient_supply_request_items`
+
+A patient/visit-linked request for supplies to be issued from central supply. Added in 0062 so the supply workbench can group pending requests by patient and issue them per line; previously supply had no patient-linked request entity. `tenant_id` is **not null** on both tables, RLS is enabled **and forced**, and the composite tenant FKs (`(tenant_id, patient_id)`, `(tenant_id, visit_id)`, `(tenant_id, item_id)`, `(tenant_id, uom_id)`) prevent a cross-tenant link.
+
+| Column | Type | Null | Note |
+|---|---|---|---|
+| `patient_supply_requests.request_no` | `text` | no | gapless per tenant |
+| `patient_supply_requests.patient_id` | `uuid` | no | composite FK to `patients (tenant_id, id)` |
+| `patient_supply_requests.visit_id` | `uuid` | yes | optional encounter; when set, issuing posts a `SUPPLY` charge to the visit |
+| `patient_supply_requests.status` | `text` | no | `PENDING` / `PARTIALLY_ISSUED` / `ISSUED` / `CANCELLED` |
+| `patient_supply_requests.requested_by` | `uuid` | no | user who raised the request |
+| `patient_supply_request_items.item_id` / `uom_id` | `uuid` | no | composite tenant FKs to `items` / `uoms` |
+| `patient_supply_request_items.qty_requested` | `numeric(14,3)` | no | `> 0` |
+| `patient_supply_request_items.qty_issued` | `numeric(14,3)` | no | `>= 0`; line is issuable while `qty_issued < qty_requested` |
 
 ---
 

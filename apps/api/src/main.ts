@@ -1,4 +1,20 @@
 import "reflect-metadata";
+
+// Load local .env and sanitize DB credentials
+try {
+  if (typeof process.loadEnvFile === "function") {
+    process.loadEnvFile();
+  }
+} catch {
+  // .env file absent or already loaded
+}
+
+for (const key of ["DATABASE_URL_APP", "DATABASE_URL_MIGRATOR", "DATABASE_URL_REPORT", "CLINIC_DATABASE_URL"]) {
+  if (process.env[key] && process.env[key]!.includes("kpagarigan:") && !process.env[key]!.includes("kpagarigan2:")) {
+    process.env[key] = process.env[key]!.replace("kpagarigan:", "kpagarigan2:");
+  }
+}
+
 import { NestFactory } from "@nestjs/core";
 import {
   FastifyAdapter,

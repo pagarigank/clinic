@@ -23,6 +23,8 @@ import {
   UpdateLocationItemParamsSchema, type UpdateLocationItemParamsRequest,
   PostMovementSchema, type PostMovementRequest,
   PostConsumptionSchema, type PostConsumptionRequest,
+  CreatePatientSupplyRequestSchema, type CreatePatientSupplyRequestRequest,
+  IssuePatientSupplyRequestSchema, type IssuePatientSupplyRequestRequest,
   PeriodActionSchema, type PeriodActionRequest,
   QuarantineBatchSchema, type QuarantineBatchRequest,
   ReleaseBatchSchema, type ReleaseBatchRequest,
@@ -282,6 +284,46 @@ export class SupplyController {
     const parsed = PostConsumptionSchema.parse(body);
     const requestId = getRequestId(req);
     return this.svc.postConsumption(req.tenantId!, req.authContext!.userId!, requestId, parsed);
+  }
+
+  // ── Patient Supply Requests (SUP-T10, specification §10) ────────────────────
+
+  @RequirePermission('supply.req.read')
+  @Get('patient-requests')
+  @ApiOperation({ summary: 'List pending patient-linked supply requests (grouped by patient in the workbench)' })
+  async listPatientSupplyRequests(
+    @Req() req: RequestWithAuth,
+    @Query('status') status?: string,
+    @Query('patientId') patientId?: string,
+  ) {
+    return this.svc.listPatientSupplyRequests(req.tenantId!, { status, patientId });
+  }
+
+  @RequirePermission('supply.req.create')
+  @Post('patient-requests')
+  @ApiOperation({ summary: 'Create a patient/visit-linked supply request' })
+  async createPatientSupplyRequest(
+    @Req() req: RequestWithAuth,
+    @Body() body: CreatePatientSupplyRequestRequest,
+  ) {
+    const parsed = CreatePatientSupplyRequestSchema.parse(body);
+    return this.svc.createPatientSupplyRequest(req.tenantId!, req.authContext!.userId!, parsed);
+  }
+
+  @RequirePermission('supply.consumption.create')
+  @Post('patient-requests/:id/items/:itemId/issue')
+  @ApiOperation({ summary: 'Issue a requested line (FEFO consumption + visit charge, one transaction)' })
+  async issuePatientSupplyRequestItem(
+    @Req() req: RequestWithAuth,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body() body: IssuePatientSupplyRequestRequest,
+  ) {
+    const parsed = IssuePatientSupplyRequestSchema.parse(body);
+    const requestId = getRequestId(req);
+    return this.svc.issuePatientSupplyRequestItem(
+      req.tenantId!, req.authContext!.userId!, id, itemId, requestId, parsed,
+    );
   }
 
   @RequirePermission('supply.stock.read')

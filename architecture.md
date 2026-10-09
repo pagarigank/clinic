@@ -627,6 +627,7 @@ Pharmacy stock, lab reagents, and general supplies share one engine so that *cen
 | `stock_batches` | (item, lot no, expiry, supplier, unit cost, status `AVAILABLE/QUARANTINED/EXPIRED/RECALLED/DEPLETED`). |
 | `stock_movements` | **Append-only** ledger; signed qty in base UOM; typed (`GRN`, `ISSUE_OUT`, `ISSUE_IN`, `DISPENSE`, `SALE`, `PATIENT_RETURN`, `SUPPLIER_RETURN`, `ADJ_GAIN`, `ADJ_LOSS`, `COUNT_VARIANCE`, `DISPOSAL`, `CONSUMPTION`, `TRANSFER_OUT`, `TRANSFER_IN`, `REVERSAL`) with `ref_type/ref_id`, reason, user, cost. |
 | `stock_balances` | (tenant, location, batch) → `qty_on_hand`, `qty_reserved`; `CHECK (qty_on_hand >= 0 AND qty_reserved >= 0 AND qty_reserved <= qty_on_hand)`. Updated in the **same transaction** as the movement. |
+| `patient_supply_requests` | Patient/visit-linked request for supplies used in an encounter, grouped by patient in the central-supply workbench; lines carry `qty_requested`/`qty_issued`, and issuing consumes through the same FEFO engine (§8.2) so stock, ledger, and the visit `SUPPLY` charge stay consistent. |
 | Costing | Batch-specific unit cost (specific identification); valuation = Σ balance × batch cost. |
 | UOM | Base UOM per item with `uom_conversions`; documents store entered UOM + converted base qty. |
 

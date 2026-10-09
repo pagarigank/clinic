@@ -783,4 +783,76 @@ LOC-CSV-${rand},INVALID_ITEM,10,50,20,15
     // Cleanup — consumption_logs is append-only for the app role; owner may prune.
     await ownerPool.query(`DELETE FROM consumption_logs WHERE tenant_id = $1 AND id = $2`, [tenantId, consId]);
   });
+
+  it('SUP-T10: lists patient supply requests and issues a requested line against stock', async () => {
+    // Arrange — a patient (tenant A) and a stocked batch.
+    const patientRes = await ownerPool.query<{ id: string }>(
+      `INSERT INTO patients (tenant_id, first_name, last_name, date_of_birth, gender)
+       VALUES ($1, 'Supply', 'Requester', '1990-01-01', 'F') RETURNING id`,
+      [tenantId],
+    );
+    const patientId = patientRes.rows[0]!.id;
+
+    const supplier = await svc.createSupplier(tenantId, { code: `SUP-PSR-${Date.now()}`, name: 'PSR Test Co' });
+    const grn = await svc.createGrn(tenantId, user1Id, {
+      branchId,
+      locationId: centralStoreId,
+      supplierId: supplier.id,
+      lines: [{
+        itemId,
+        lotNo: `LOT-PSR-${Date.now()}`,
+        expiryDate: new Date(Date.now() + 180 * 86400000).toISOString().slice(0, 10),
+        qtyReceived: 10,
+        uomId: uomPcsId,
+        unitCost: 3,
+      }],
+    });
+    await svc.postGrn(tenantId, user1Id, `req-grn-psr-${Date.now()}`, grn.id);
+
+    const request = await svc.createPatientSupplyRequest(tenantId, user1Id, {
+      branchId,
+      patientId,
+      notes: 'Procedure consumables',
+      items: [{ itemId, uomId: uomPcsId, qtyRequested: 4 }],
+    });
+
+    // The workbench queue returns one row per requested line, patient-linked.
+    const rows = await svc.listPatientSupplyRequests(tenantId, { patientId });
+    const mine = rows.find((r: any) => r.id === request.id) as any;
+    expect(mine).toBeTruthy();
+    expect(mine.patient_first_name).toBe('Supply');
+    expect(mine.item_name).toBe('Amoxicillin 500mg');
+    expect(Number(mine.qty_requested)).toBe(4);
+    expect(mine.status).toBe('PENDING');
+
+    const before = await svc.listStockBalances(tenantId, { itemId });
+    const totalBefore = before.reduce((acc: number, b: any) => acc + Number(b.qty_on_hand), 0);
+
+    // Issue the line — stock moves through the shared consumption path.
+    const issued = await svc.issuePatientSupplyRequestItem(
+      tenantId, user1Id, request.id, mine.request_item_id, `req-psr-${Date.now()}`,
+      { locationId: centralStoreId, qty: 4 },
+    );
+    expect(issued.status).toBe('ISSUED');
+
+    const after = await svc.listStockBalances(tenantId, { itemId });
+    const totalAfter = after.reduce((acc: number, b: any) => acc + Number(b.qty_on_hand), 0);
+    expect(totalBefore - totalAfter).toBe(4);
+
+    // Over-issuing a fully issued request is refused, not silently re-posted.
+    await expect(
+      svc.issuePatientSupplyRequestItem(
+        tenantId, user1Id, request.id, mine.request_item_id, `req-psr-2-${Date.now()}`,
+        { locationId: centralStoreId, qty: 1 },
+      ),
+    ).rejects.toMatchObject({ response: { code: 'CONFLICT' } });
+
+    // Cleanup — request/patient and the consumption rows it wrote.
+    await ownerPool.query(
+      `DELETE FROM consumption_logs WHERE tenant_id = $1 AND item_id = $2 AND notes LIKE 'Patient supply request%'`,
+      [tenantId, itemId],
+    );
+    await ownerPool.query(`DELETE FROM patient_supply_requests WHERE tenant_id = $1 AND id = $2`, [tenantId, request.id]);
+    await ownerPool.query(`DELETE FROM patients WHERE id = $1`, [patientId]);
+  });
 });

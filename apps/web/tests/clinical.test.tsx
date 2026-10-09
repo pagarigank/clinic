@@ -438,7 +438,7 @@ describe("VisitChartPage (CLN-T4/T5)", () => {
     expect(screen.getByRole("link", { name: /Lab Worklist/i })).toBeInTheDocument();
 
     expect(screen.getByText(/Central Supply & Consumables/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Log Supply Consumption/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Request Supply/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Supply Issues/i })).toBeInTheDocument();
 
     expect(screen.getByRole("link", { name: /Pharmacy Workbench/i })).toBeInTheDocument();
@@ -567,6 +567,68 @@ describe("VisitChartPage (CLN-T4/T5)", () => {
       expect(calls.some((c) => c.startsWith("GET /api/v1/clinical/certificates/cert-1/pdf"))).toBe(true),
     );
     printSpy.mockRestore();
+  });
+
+  it("raises a central-supply request (not a direct consumption) so it lands in the dispensing queue", async () => {
+    let requestBody: any = null;
+    let postPath = "";
+    useStubHandler((req, res) => {
+      const url = req.url ?? "";
+      const method = req.method ?? "GET";
+      if (method === "GET" && url.includes("/supply/items")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify([
+            {
+              id: "b2000000-0000-4000-8000-000000000001",
+              code: "GAUZE-4X4",
+              name: "Sterile Gauze 4x4",
+              item_type: "SUPPLY",
+              base_uom_id: "b3000000-0000-4000-8000-000000000001",
+              category_name: "Wound Care",
+            },
+          ]),
+        );
+        return;
+      }
+      if (method === "POST" && url.includes("/supply/patient-requests")) {
+        postPath = url;
+        let body = "";
+        req.on("data", (chunk) => {
+          body += chunk;
+        });
+        req.on("end", () => {
+          requestBody = JSON.parse(body);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ id: "req-1" }));
+        });
+        return;
+      }
+      baseHandler(req, res);
+    });
+
+    renderAt("/clinical/visits/v-demo", <VisitChartPage />);
+
+    // The item picker is a fuzzy combobox, not a plain <select>.
+    const input = await screen.findByRole("combobox", { name: /Select Supply Item/i });
+    fireEvent.change(input, { target: { value: "gauze" } });
+    fireEvent.mouseDown(await screen.findByRole("option", { name: /Sterile Gauze 4x4/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /Request Supply/i }));
+
+    await waitFor(() => expect(postPath).toContain("/supply/patient-requests"));
+    expect(requestBody).toMatchObject({
+      patientId: "a4000000-0000-4000-8000-000000000001",
+      branchId: "a1000000-0000-4000-8000-000000000001",
+      visitId: "v-demo",
+    });
+    expect(requestBody.items[0]).toMatchObject({
+      itemId: "b2000000-0000-4000-8000-000000000001",
+      uomId: "b3000000-0000-4000-8000-000000000001",
+      qtyRequested: 1,
+    });
+    // It must NOT have gone through the direct-consumption endpoint.
+    expect(screen.getByText(/appears in the Supply Dispensing workbench/i)).toBeInTheDocument();
   });
 
   it("preloads doctor SOAP notes and supports diagnosis description and Rx care instructions", async () => {

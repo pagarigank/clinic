@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Link, useNavigate } from "react-router";
 import {
   Alert,
@@ -10,9 +10,11 @@ import {
   ScanInput,
   StatusPill,
   Timeline,
+  fuzzyFilter,
 } from "@clinic/ui";
 import { labApi, type WorklistItem, type LabTest, type LabSpecimenType } from "./api.js";
 import { useAuth } from "../../shared/auth/AuthContext.js";
+import { PatientGroupedRequestList, type PatientGroup } from "../../shared/dispensing/PatientGroupedRequestList.js";
 
 type StageTab = "ALL" | "ORDERED" | "COLLECTED" | "RECEIVED" | "IN_PROGRESS" | "RESULTED" | "VERIFIED" | "RELEASED";
 
@@ -46,6 +48,7 @@ export function LabWorklistPage() {
   const [orderPatientName, setOrderPatientName] = useState("");
   const [orderPriority, setOrderPriority] = useState<"ROUTINE" | "URGENT" | "STAT">("ROUTINE");
   const [orderSelectedTests, setOrderSelectedTests] = useState<string[]>([]);
+  const [orderTestSearch, setOrderTestSearch] = useState("");
   const [orderClinicalInfo, setOrderClinicalInfo] = useState("");
   const [orderSubmitting, setOrderSubmitting] = useState(false);
 
@@ -91,6 +94,14 @@ export function LabWorklistPage() {
     loadCatalog();
   }, []);
 
+  // Fuzzy, client-side search over the loaded test catalogue so large panels
+  // lists are searchable by name or code (matches the consultation request
+  // picker), instead of an unsearchable scrolling checkbox list.
+  const orderTestOptions = useMemo(
+    () => fuzzyFilter(tests, orderTestSearch, (t) => `${t.name} (${t.code})`),
+    [tests, orderTestSearch],
+  );
+
   // Filtered Items
   const filteredItems = items.filter((item) => {
     // Tab filter
@@ -111,6 +122,49 @@ export function LabWorklistPage() {
     return true;
   });
 
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
+
+  // Group lab items by Patient (Unified Concept)
+  const labPatientGroups = useMemo((): PatientGroup<WorklistItem>[] => {
+    const map = new Map<string, PatientGroup<WorklistItem>>();
+    for (const item of filteredItems) {
+      const pId = item.patient_id || item.mrn || "unknown";
+      const existing = map.get(pId);
+      const pName = `${item.family_name || (item as any).last_name || ""} ${item.given_name || (item as any).first_name || ""}`.trim() || "Unknown Patient";
+      if (!existing) {
+        map.set(pId, {
+          patientId: pId,
+          patientName: pName,
+          patientIdDisplay: item.mrn || null,
+          pendingCount: 1,
+          oldestRequestAt: item.ordered_at || null,
+          requests: [item],
+          meta: {
+            hasStat: item.priority === "STAT",
+            hasUrgent: item.priority === "URGENT",
+            orderNos: [item.order_no],
+          },
+        });
+      } else {
+        existing.requests.push(item);
+        existing.pendingCount += 1;
+        if (item.priority === "STAT") existing.meta!.hasStat = true;
+        if (item.priority === "URGENT") existing.meta!.hasUrgent = true;
+        if (item.order_no && !existing.meta!.orderNos.includes(item.order_no)) {
+          existing.meta!.orderNos.push(item.order_no);
+        }
+        if (item.ordered_at && (!existing.oldestRequestAt || item.ordered_at < existing.oldestRequestAt)) {
+          existing.oldestRequestAt = item.ordered_at;
+        }
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.meta?.hasStat && !b.meta?.hasStat) return -1;
+      if (!a.meta?.hasStat && b.meta?.hasStat) return 1;
+      return String(a.oldestRequestAt ?? "").localeCompare(String(b.oldestRequestAt ?? ""));
+    });
+  }, [filteredItems]);
+
   // Handle Order Submit
   const handleCreateOrder = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,6 +184,7 @@ export function LabWorklistPage() {
       });
       setIsOrderModalOpen(false);
       setOrderSelectedTests([]);
+      setOrderTestSearch("");
       setOrderClinicalInfo("");
       await loadData();
     } catch (err: any) {
@@ -221,349 +276,321 @@ export function LabWorklistPage() {
     }
   };
 
-  return (
-    <div className="container-fluid py-3 px-4">
-      {/* Header Banner */}
-      <div className="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
-        <div>
-          <h2 className="h4 fw-bold mb-1 d-flex align-items-center gap-2">
-            <span>🔬</span> Laboratory Workbench &amp; Worklist
-          </h2>
-          <p className="text-muted small mb-0">
-            End-to-end laboratory execution: accessioning, collection, analytical testing, and verification.
-          </p>
-        </div>
-        <div className="d-flex gap-2">
-          <Button
-            variant="outline-secondary"
-            size="sm"
-            onClick={loadData}
-            title="Refresh worklist"
-          >
-            🔄 Refresh
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => setIsOrderModalOpen(true)}
-          >
-            ➕ Place Lab Order
-          </Button>
-        </div>
+  const headerActions = (
+    <div className="d-flex gap-2">
+      <Button
+        variant="outline-secondary"
+        size="sm"
+        onClick={loadData}
+        title="Refresh worklist"
+      >
+        🔄 Refresh
+      </Button>
+      <Button
+        variant="primary"
+        size="sm"
+        onClick={() => setIsOrderModalOpen(true)}
+      >
+        ➕ Place Lab Order
+      </Button>
+    </div>
+  );
+
+  const metricsHeader = (
+    <div className="card shadow-sm">
+      <div className="card-header bg-white border-bottom-0 pb-0 pt-2 px-3">
+        <ul className="nav nav-tabs card-header-tabs" role="tablist">
+          {(
+            [
+              { key: "ALL", label: "All Items" },
+              { key: "ORDERED", label: "Ordered" },
+              { key: "COLLECTED", label: "Collected" },
+              { key: "RECEIVED", label: "Received" },
+              { key: "IN_PROGRESS", label: "In Progress" },
+              { key: "RESULTED", label: "Resulted" },
+              { key: "VERIFIED", label: "Verified" },
+              { key: "RELEASED", label: "Released" },
+            ] as const
+          ).map((tab) => {
+            const count = items.filter((i) =>
+              tab.key === "ALL" ? true : i.item_status === tab.key
+            ).length;
+            return (
+              <li className="nav-item" key={tab.key}>
+                <button
+                  className={`nav-link ${activeTab === tab.key ? "active fw-bold text-primary" : "text-secondary"}`}
+                  onClick={() => setActiveTab(tab.key)}
+                  type="button"
+                  style={{ cursor: "pointer" }}
+                >
+                  {tab.label}
+                  <span
+                    className={`badge ms-2 ${
+                      activeTab === tab.key
+                        ? "bg-primary text-white"
+                        : "bg-light text-dark border"
+                    }`}
+                    style={{ fontSize: "0.72rem" }}
+                  >
+                    {count}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       </div>
 
+      <div className="card-body p-3 bg-light border-top">
+        <div className="row g-2 align-items-center">
+          <div className="col-12 col-md-5">
+            <ScanInput
+              label="Accession Scanner"
+              placeholder="Scan Accession barcode or search MRN / patient / test…"
+              value={searchFilter}
+              onChange={setSearchFilter}
+              onScan={(val) => setSearchFilter(val)}
+              autoFocus
+            />
+          </div>
+          <div className="col-6 col-md-3">
+            <Form.Select
+              size="sm"
+              value={priorityFilter}
+              onChange={(e) => setPriorityFilter(e.target.value)}
+              aria-label="Filter by priority"
+            >
+              <option value="ALL">All Priorities</option>
+              <option value="STAT">⚡ STAT Priority Only</option>
+              <option value="URGENT">⚠️ URGENT Only</option>
+              <option value="ROUTINE">Routine Only</option>
+            </Form.Select>
+          </div>
+          <div className="col-6 col-md-4 text-end">
+            <span className="small text-muted">
+              Showing <strong>{filteredItems.length}</strong> items across <strong>{labPatientGroups.length}</strong> patients
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="container-fluid py-3 px-4">
       {error && (
         <Alert variant="danger" dismissible onClose={() => setError(null)} className="mb-3">
           {error}
         </Alert>
       )}
 
-      {/* Stage Tab Navigation */}
-      <div className="card shadow-sm mb-3">
-        <div className="card-header bg-white border-bottom-0 pb-0 pt-2 px-3">
-          <ul className="nav nav-tabs card-header-tabs" role="tablist">
-            {(
-              [
-                { key: "ALL", label: "All Items" },
-                { key: "ORDERED", label: "Ordered" },
-                { key: "COLLECTED", label: "Collected" },
-                { key: "RECEIVED", label: "Received" },
-                { key: "IN_PROGRESS", label: "In Progress" },
-                { key: "RESULTED", label: "Resulted" },
-                { key: "VERIFIED", label: "Verified" },
-                { key: "RELEASED", label: "Released" },
-              ] as const
-            ).map((tab) => {
-              const count = items.filter((i) =>
-                tab.key === "ALL" ? true : i.item_status === tab.key
-              ).length;
-              return (
-                <li className="nav-item" key={tab.key}>
-                  <button
-                    className={`nav-link ${activeTab === tab.key ? "active fw-bold text-primary" : "text-secondary"}`}
-                    onClick={() => setActiveTab(tab.key)}
-                    type="button"
-                    style={{ cursor: "pointer" }}
-                  >
-                    {tab.label}
-                    <span
-                      className={`badge ms-2 ${
-                        activeTab === tab.key
-                          ? "bg-primary text-white"
-                          : "bg-light text-dark border"
-                      }`}
-                      style={{ fontSize: "0.72rem" }}
-                    >
-                      {count}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-
-        {/* Search & Filter Bar */}
-        <div className="card-body p-3 bg-light border-top">
-          <div className="row g-2 align-items-center">
-            <div className="col-12 col-md-5">
-              <ScanInput
-                label="Accession Scanner"
-                placeholder="Scan Accession barcode or search MRN / patient / test…"
-                value={searchFilter}
-                onChange={setSearchFilter}
-                onScan={(val) => setSearchFilter(val)}
-                autoFocus
-              />
-            </div>
-            <div className="col-6 col-md-3">
-              <Form.Select
-                size="sm"
-                value={priorityFilter}
-                onChange={(e) => setPriorityFilter(e.target.value)}
-                aria-label="Filter by priority"
-              >
-                <option value="ALL">All Priorities</option>
-                <option value="STAT">⚡ STAT Priority Only</option>
-                <option value="URGENT">⚠️ URGENT Only</option>
-                <option value="ROUTINE">Routine Only</option>
-              </Form.Select>
-            </div>
-            <div className="col-6 col-md-4 text-end">
-              <span className="small text-muted">
-                Showing <strong>{filteredItems.length}</strong> of {items.length} items
+      <PatientGroupedRequestList<WorklistItem>
+        module="LAB"
+        title="Laboratory Workbench & Worklist"
+        subtitle="End-to-end laboratory execution: accessioning, collection, analytical testing, and verification."
+        groups={labPatientGroups}
+        loading={loading}
+        selectedPatientId={selectedPatientId}
+        onSelectPatient={setSelectedPatientId}
+        headerActions={headerActions}
+        metricsHeader={metricsHeader}
+        selectButtonLabel="Select Patient"
+        searchPlaceholder="Filter patients by name or MRN…"
+        renderRequests={(group) => (
+          <div className="card shadow-sm border-0" style={{ background: "var(--surface-raised)" }}>
+            <div className="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+              <h3 className="h6 fw-bold mb-0 text-dark">
+                Laboratory Test Requests for {group.patientName}
+              </h3>
+              <span className="badge bg-primary-subtle text-primary">
+                {group.requests.length} Test{group.requests.length > 1 ? "s" : ""}
               </span>
             </div>
-          </div>
-        </div>
-      </div>
+            <div className="table-responsive">
+              <table className="table table-hover align-middle mb-0" style={{ fontSize: "0.875rem" }}>
+                <thead className="table-light text-muted small text-uppercase">
+                  <tr>
+                    <th style={{ width: "120px" }}>Priority</th>
+                    <th>Order / Accession</th>
+                    <th>Test / Panel</th>
+                    <th>Specimen</th>
+                    <th>Status</th>
+                    <th>Timeline</th>
+                    <th className="text-end" style={{ minWidth: "160px" }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.requests.map((item) => {
+                    const isStat = item.priority === "STAT";
+                    const isUrgent = item.priority === "URGENT";
 
-      {/* Main Worklist Table */}
-      <div className="card shadow-sm">
-        <div className="table-responsive">
-          <table className="table table-hover align-middle mb-0" style={{ fontSize: "0.875rem" }}>
-            <thead className="table-light text-muted small text-uppercase">
-              <tr>
-                <th style={{ width: "120px" }}>Priority</th>
-                <th>Order / Accession</th>
-                <th>Patient</th>
-                <th>Test / Panel</th>
-                <th>Specimen</th>
-                <th>Status</th>
-                <th>Timeline</th>
-                <th className="text-end" style={{ minWidth: "160px" }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={8} className="text-center py-5 text-muted">
-                    <span className="spinner-border spinner-border-sm me-2" role="status" />
-                    Loading laboratory worklist…
-                  </td>
-                </tr>
-              ) : filteredItems.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="text-center py-5 text-muted">
-                    <div className="mb-2" style={{ fontSize: "2rem" }}>🧪</div>
-                    <h6>No laboratory orders found</h6>
-                    <p className="small mb-0">Try clearing filters or scan an accession barcode.</p>
-                  </td>
-                </tr>
-              ) : (
-                filteredItems.map((item) => {
-                  const isStat = item.priority === "STAT";
-                  const isUrgent = item.priority === "URGENT";
-
-                  return (
-                    <tr
-                      key={item.item_id}
-                      className={isStat ? "table-danger" : isUrgent ? "table-warning" : ""}
-                    >
-                      {/* Priority */}
-                      <td>
-                        {isStat && (
-                          <span className="badge bg-danger text-white fw-bold px-2 py-1">
-                            ⚡ STAT
-                          </span>
-                        )}
-                        {isUrgent && (
-                          <span className="badge bg-warning text-dark fw-bold px-2 py-1">
-                            ⚠️ URGENT
-                          </span>
-                        )}
-                        {!isStat && !isUrgent && (
-                          <span className="badge bg-secondary-subtle text-secondary px-2 py-1">
-                            ROUTINE
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Order & Accession */}
-                      <td>
-                        <div className="fw-semibold text-primary">{item.order_no}</div>
-                        {item.accession_no ? (
-                          <div className="small font-monospace text-dark">
-                            🏷️ {item.accession_no}
-                          </div>
-                        ) : (
-                          <span className="small text-muted fst-italic">Pending Accession</span>
-                        )}
-                      </td>
-
-                      {/* Patient */}
-                      <td>
-                        <div className="fw-semibold">
-                          {item.family_name || (item as any).last_name || "—"}, {item.given_name || (item as any).first_name || ""}
-                        </div>
-                        <div className="small text-muted">
-                          MRN: {item.mrn || "Walk-In"} • {item.sex || (item as any).gender || ""}
-                        </div>
-                      </td>
-
-                      {/* Test / Panel */}
-                      <td>
-                        <div className="fw-semibold">{item.test_name}</div>
-                        <div className="small text-muted font-monospace">
-                          {item.test_code}
-                          {item.is_panel && <span className="badge bg-info-subtle text-info ms-1">Panel</span>}
-                          {item.requires_pathologist_review && (
-                            <span className="badge bg-purple-subtle text-purple ms-1" style={{ color: "#6f42c1" }}>
-                              Pathologist
+                    return (
+                      <tr
+                        key={item.item_id || (item as any).order_item_id || `${item.order_id}-${item.test_id}`}
+                        className={isStat ? "table-danger" : isUrgent ? "table-warning" : ""}
+                      >
+                        <td>
+                          {isStat && (
+                            <span className="badge bg-danger text-white fw-bold px-2 py-1">
+                              ⚡ STAT
                             </span>
                           )}
-                        </div>
-                      </td>
-
-                      {/* Specimen */}
-                      <td>
-                        <div>{item.specimen_type_name || "Serum / Blood"}</div>
-                        {item.tube_top_color && (
-                          <span
-                            className="badge border"
-                            style={{
-                              backgroundColor: item.tube_top_color.toLowerCase() === "lavender" ? "#e6e6fa" : "#fff",
-                              color: "#333",
-                              fontSize: "0.72rem",
-                            }}
+                          {isUrgent && (
+                            <span className="badge bg-warning text-dark fw-bold px-2 py-1">
+                              ⚠️ URGENT
+                            </span>
+                          )}
+                          {!isStat && !isUrgent && (
+                            <span className="badge bg-secondary-subtle text-secondary px-2 py-1">
+                              ROUTINE
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          <div className="fw-semibold text-primary">{item.order_no}</div>
+                          {item.accession_no ? (
+                            <div className="small font-monospace text-dark">
+                              🏷️ {item.accession_no}
+                            </div>
+                          ) : (
+                            <span className="small text-muted fst-italic">Pending Accession</span>
+                          )}
+                        </td>
+                        <td>
+                          <div className="fw-semibold">{item.test_name}</div>
+                          <div className="small text-muted font-monospace">
+                            {item.test_code}
+                            {item.is_panel && <span className="badge bg-info-subtle text-info ms-1">Panel</span>}
+                            {item.requires_pathologist_review && (
+                              <span className="badge bg-purple-subtle text-purple ms-1" style={{ color: "#6f42c1" }}>
+                                Pathologist
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td>
+                          <div>{item.specimen_type_name || "Serum / Blood"}</div>
+                          {item.tube_top_color && (
+                            <span
+                              className="badge border"
+                              style={{
+                                backgroundColor: item.tube_top_color.toLowerCase() === "lavender" ? "#e6e6fa" : "#fff",
+                                color: "#333",
+                                fontSize: "0.72rem",
+                              }}
+                            >
+                              Top: {item.tube_top_color}
+                            </span>
+                          )}
+                          {item.specimen_condition && item.specimen_condition !== "OK" && (
+                            <span className="badge bg-danger ms-1">
+                              {item.specimen_condition}
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          <StatusPill
+                            tone={
+                              item.item_status === "RELEASED" || item.item_status === "VERIFIED"
+                                ? "normal"
+                                : item.item_status === "IN_PROGRESS"
+                                ? "pending"
+                                : item.item_status === "REJECTED"
+                                ? "critical"
+                                : "neutral"
+                            }
+                            label={item.item_status}
+                          />
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn btn-link btn-sm p-0 text-decoration-none"
+                            onClick={() => openTimeline(item)}
+                            title="View chain-of-custody timeline"
                           >
-                            Top: {item.tube_top_color}
-                          </span>
-                        )}
-                        {item.specimen_condition && item.specimen_condition !== "OK" && (
-                          <span className="badge bg-danger ms-1">
-                            {item.specimen_condition}
-                          </span>
-                        )}
-                      </td>
+                            🕒 Timeline
+                          </button>
+                        </td>
+                        <td className="text-end">
+                          {item.item_status === "ORDERED" && (
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              onClick={() => {
+                                setSelectedItem(item);
+                                setIdConfirmed(false);
+                                setIsCollectModalOpen(true);
+                              }}
+                            >
+                              🩸 Collect Specimen
+                            </Button>
+                          )}
 
-                      {/* Status */}
-                      <td>
-                        <StatusPill
-                          tone={
-                            item.item_status === "RELEASED" || item.item_status === "VERIFIED"
-                              ? "normal"
-                              : item.item_status === "IN_PROGRESS"
-                              ? "pending"
-                              : item.item_status === "REJECTED"
-                              ? "critical"
-                              : "neutral"
-                          }
-                          label={item.item_status}
-                        />
-                      </td>
+                          {item.item_status === "COLLECTED" && (
+                            <Button
+                              size="sm"
+                              variant="outline-primary"
+                              onClick={() => {
+                                setSelectedItem(item);
+                                setReceiveCondition("OK");
+                                setRejectionReason("");
+                                setIsReceiveModalOpen(true);
+                              }}
+                            >
+                              📥 Receive at Bench
+                            </Button>
+                          )}
 
-                      {/* Timeline */}
-                      <td>
-                        <button
-                          type="button"
-                          className="btn btn-link btn-sm p-0 text-decoration-none"
-                          onClick={() => openTimeline(item)}
-                          title="View chain-of-custody timeline"
-                        >
-                          🕒 Timeline
-                        </button>
-                      </td>
+                          {item.item_status === "RECEIVED" && (
+                            <Button
+                              size="sm"
+                              variant="success"
+                              onClick={() => navigate(`/laboratory/results?orderId=${item.order_id}&itemId=${item.item_id}`)}
+                            >
+                              📝 Enter Results
+                            </Button>
+                          )}
 
-                      {/* Actions */}
-                      <td className="text-end">
-                        {item.item_status === "ORDERED" && (
-                          <Button
-                            size="sm"
-                            variant="primary"
-                            onClick={() => {
-                              setSelectedItem(item);
-                              setIdConfirmed(false);
-                              setIsCollectModalOpen(true);
-                            }}
-                          >
-                            🩸 Collect Specimen
-                          </Button>
-                        )}
+                          {item.item_status === "IN_PROGRESS" && (
+                            <Button
+                              size="sm"
+                              variant="warning"
+                              onClick={() => navigate(`/laboratory/results?orderId=${item.order_id}&itemId=${item.item_id}`)}
+                            >
+                              ✍️ Complete Results
+                            </Button>
+                          )}
 
-                        {item.item_status === "COLLECTED" && (
-                          <Button
-                            size="sm"
-                            variant="outline-primary"
-                            onClick={() => {
-                              setSelectedItem(item);
-                              setReceiveCondition("OK");
-                              setRejectionReason("");
-                              setIsReceiveModalOpen(true);
-                            }}
-                          >
-                            📥 Receive at Bench
-                          </Button>
-                        )}
+                          {item.item_status === "RESULTED" && (
+                            <Button
+                              size="sm"
+                              variant="info"
+                              onClick={() => navigate(`/laboratory/verification`)}
+                            >
+                              🛡️ Review &amp; Verify
+                            </Button>
+                          )}
 
-                        {item.item_status === "RECEIVED" && (
-                          <Button
-                            size="sm"
-                            variant="success"
-                            onClick={() => navigate(`/laboratory/results?orderId=${item.order_id}&itemId=${item.item_id}`)}
-                          >
-                            📝 Enter Results
-                          </Button>
-                        )}
-
-                        {item.item_status === "IN_PROGRESS" && (
-                          <Button
-                            size="sm"
-                            variant="warning"
-                            onClick={() => navigate(`/laboratory/results?orderId=${item.order_id}&itemId=${item.item_id}`)}
-                          >
-                            ✍️ Complete Results
-                          </Button>
-                        )}
-
-                        {item.item_status === "RESULTED" && (
-                          <Button
-                            size="sm"
-                            variant="info"
-                            onClick={() => navigate(`/laboratory/verification`)}
-                          >
-                            🛡️ Review &amp; Verify
-                          </Button>
-                        )}
-
-                        {(item.item_status === "VERIFIED" || item.item_status === "RELEASED") && (
-                          <Button
-                            size="sm"
-                            variant="outline-secondary"
-                            onClick={() => navigate(`/laboratory/reports`)}
-                          >
-                            📄 View Report
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                          {(item.item_status === "VERIFIED" || item.item_status === "RELEASED") && (
+                            <Button
+                              size="sm"
+                              variant="outline-secondary"
+                              onClick={() => navigate(`/laboratory/reports`)}
+                            >
+                              📄 View Report
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      />
 
       {/* ── Modal 1: Place Lab Order ────────────────────────────────────────── */}
       <Modal show={isOrderModalOpen} onHide={() => setIsOrderModalOpen(false)} size="lg">
@@ -599,11 +626,23 @@ export function LabWorklistPage() {
 
               <div className="col-12">
                 <Form.Label className="small fw-semibold">Select Tests &amp; Panels *</Form.Label>
+                <Form.Control
+                  type="search"
+                  size="sm"
+                  className="mb-2"
+                  placeholder="Search tests & panels by name or code…"
+                  value={orderTestSearch}
+                  onChange={(e) => setOrderTestSearch(e.target.value)}
+                  aria-label="Search tests and panels"
+                />
                 <div
                   className="border rounded p-2"
                   style={{ maxHeight: "200px", overflowY: "auto" }}
                 >
-                  {tests.map((t) => {
+                  {orderTestOptions.length === 0 ? (
+                    <div className="text-muted small p-2">No matching tests or panels.</div>
+                  ) : (
+                    orderTestOptions.map((t) => {
                     const checked = orderSelectedTests.includes(t.id);
                     return (
                       <div
@@ -643,7 +682,8 @@ export function LabWorklistPage() {
                         </span>
                       </div>
                     );
-                  })}
+                  })
+                  )}
                 </div>
               </div>
 
