@@ -269,33 +269,120 @@ describe("Phase 1 & 2 Frontend Feature Screens", () => {
     expect(screen.getAllByText(/Santos, Maria Theresa/i).length).toBeGreaterThan(0);
   });
 
-  it("DashboardPage renders live working data KPI cards, operational tabs, and department workbenches", async () => {
+  const fullModuleSession = {
+    user: { id: "u-full", email: "admin@demo-a.test", name: "Full Access" },
+    tenant: { id: "11111111-1111-4111-8111-111111111111", slug: "demo-a" },
+    sessionId: "3f1d3f1d-0000-4000-8000-0000000000f1",
+    amr: ["pwd"],
+    branchId: null,
+    assignedBranches: [],
+    effectiveTimezone: "Asia/Manila",
+    expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    modules: ["patients", "clinical", "pharmacy", "laboratory", "supply", "billing", "admin"],
+    modulesVersion: 1,
+    permissions: [
+      "clinical.visit.read",
+      "clinical.queue.read",
+      "patient.record.read",
+      "patients.read",
+      "lab.result.enter",
+      "lab.result.verify",
+      "lab.specimen.collect",
+      "lab.specimen.receive",
+      "lab.specimen.read",
+      "pharmacy.rx.verify",
+      "pharmacy.dispense.read",
+      "supply.issue.read",
+      "supply.grn.read",
+      "supply.stock.read",
+      "supply.report.view",
+      "billing.invoice.read",
+      "billing.invoice.create",
+      "billing.payment.read",
+      "billing.shift.read",
+      "admin.branch.read",
+    ],
+  };
+
+  const doctorOnlySession = {
+    ...fullModuleSession,
+    modules: ["patients", "clinical", "pharmacy", "laboratory"],
+    permissions: [
+      "clinical.visit.read",
+      "clinical.queue.read",
+      "patient.record.read",
+      // Cross-module read/order grants that must NOT surface a workbench.
+      "lab.order.create",
+      "lab.order.read",
+      "lab.result.read",
+      "lab.report.read",
+      "pharmacy.rx.read",
+    ],
+  };
+
+  function dashboardStub(session: unknown): StubHandler {
+    return (req, res) => {
+      const url = req.url ?? "";
+      res.writeHead(200, { "content-type": "application/json" });
+      if (url.includes("/auth/session")) res.end(JSON.stringify(session));
+      else res.end(JSON.stringify({ ok: true, data: [] }));
+    };
+  }
+
+  it("DashboardPage renders operator KPI cards, tabs, and workbenches for a full-access session", async () => {
     const { DashboardPage } = await import("../src/features/dashboard/DashboardPage.js");
+    useStubHandler(dashboardStub(fullModuleSession));
     render(
       <MemoryRouter>
         <AuthProvider>
-          <DashboardPage />
+          <PermissionsProvider>
+            <DashboardPage />
+          </PermissionsProvider>
         </AuthProvider>
       </MemoryRouter>,
     );
 
-    // Hero and section titles
+    // Hero and section titles resolve after the async permission set loads.
+    expect(await screen.findByText(/Operational Working Data/i)).toBeInTheDocument();
     expect(screen.getByText(/Clinic Operations Command/i)).toBeInTheDocument();
-    expect(screen.getByText(/Operational Working Data/i)).toBeInTheDocument();
     expect(screen.getByText(/Department Workbenches & Operations Hub/i)).toBeInTheDocument();
 
-    // Working KPI labels
     expect(screen.getByText(/Active Visits/i)).toBeInTheDocument();
     expect(screen.getByText(/Lab Orders/i)).toBeInTheDocument();
     expect(screen.getByText(/Pharmacy Rx/i)).toBeInTheDocument();
     expect(screen.getByText(/Supply Items/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Billing POS/i).length).toBeGreaterThanOrEqual(1);
 
-    // Department quick actions
     expect(screen.getAllByText(/Clinical Encounters/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(/Laboratory Worklist/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(/Pharmacy Dispense Queue/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(/Central Supply Issues/i).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("DashboardPage hides laboratory, pharmacy, supply and billing surfaces from a doctor", async () => {
+    const { DashboardPage } = await import("../src/features/dashboard/DashboardPage.js");
+    useStubHandler(dashboardStub(doctorOnlySession));
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <PermissionsProvider>
+            <DashboardPage />
+          </PermissionsProvider>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Active Visits/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Lab Orders/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Pharmacy Rx/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Supply Items/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Billing POS/i)).not.toBeInTheDocument();
+    });
+    expect(screen.getAllByText(/Clinical Encounters/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/Laboratory Worklist/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Pharmacy Dispense Queue/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Central Supply Issues/i)).not.toBeInTheDocument();
   });
 });
 

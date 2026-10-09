@@ -60,6 +60,8 @@ const QUICK_ACTIONS = [
     desc: "Active consultations, vitals intake, diagnosis, lab & prescription orders.",
     badge: "CLINICAL",
     accent: true,
+    module: "clinical",
+    codes: ["clinical.visit.read", "clinical.queue.read"],
   },
   {
     to: "/laboratory/worklist",
@@ -68,6 +70,8 @@ const QUICK_ACTIONS = [
     desc: "Specimen accessioning, analyzer results entry, validation & report release.",
     badge: "LAB",
     accent: false,
+    module: "laboratory",
+    codes: ["lab.result.enter", "lab.result.verify", "lab.specimen.collect", "lab.specimen.receive", "lab.specimen.read"],
   },
   {
     to: "/pharmacy/queue",
@@ -76,6 +80,8 @@ const QUICK_ACTIONS = [
     desc: "Prescription verification, safety checks, FEFO lot picking & dispensing.",
     badge: "PHARMACY",
     accent: false,
+    module: "pharmacy",
+    codes: ["pharmacy.rx.verify", "pharmacy.dispense.read"],
   },
   {
     to: "/supply/issue",
@@ -84,6 +90,8 @@ const QUICK_ACTIONS = [
     desc: "Room consumables log, stock issuing, department requisitions & ledger.",
     badge: "SUPPLY",
     accent: false,
+    module: "supply",
+    codes: ["supply.issue.read", "supply.grn.read"],
   },
   {
     to: "/billing",
@@ -92,6 +100,8 @@ const QUICK_ACTIONS = [
     desc: "Encounters settlement, PhilHealth claims, discounts & receipt issuance.",
     badge: "BILLING",
     accent: false,
+    module: "billing",
+    codes: ["billing.invoice.read", "billing.invoice.create", "billing.payment.read"],
   },
   {
     to: "/patients",
@@ -100,6 +110,8 @@ const QUICK_ACTIONS = [
     desc: "Search demographics, capture consents, PhilHealth PIN, & duplicates.",
     badge: "RECORDS",
     accent: false,
+    module: "patients",
+    codes: ["patient.record.read", "patients.read"],
   },
   {
     to: "/supply/dashboard",
@@ -108,6 +120,8 @@ const QUICK_ACTIONS = [
     desc: "Inventory valuation, low-stock reorder suggestions, and batch expiry tracker.",
     badge: "ANALYTICS",
     accent: false,
+    module: "supply",
+    codes: ["supply.stock.read", "supply.report.view"],
   },
   {
     to: "/admin/branches",
@@ -116,6 +130,8 @@ const QUICK_ACTIONS = [
     desc: "Operating schedules, examination rooms, service units, and facility licensing.",
     badge: "ADMIN",
     accent: false,
+    module: "admin",
+    codes: ["admin.branch.read"],
   },
 ];
 
@@ -158,13 +174,47 @@ export function DashboardPage() {
     // gate as false-but-then-fetched-anyway, so a narrow role (e.g. the pharmacy
     // verifier) fired requests for patients, visits, lab, supply and billing and took
     // a 403 on each. Wait for the real permission set before asking for anything.
-    const { hasPermission, hasAnyPermission, isLoading: permissionsLoading } = usePermissions();
+    const { hasPermission, hasAnyPermission, hasModule, isLoading: permissionsLoading } = usePermissions();
     const canSeeLab = hasAnyPermission(["lab.order.read", "lab.result.read", "lab.specimen.read"]);
     const canSeePharmacy = hasAnyPermission(["pharmacy.rx.read", "pharmacy.dispense.read"]);
     const canSeeSupply = hasAnyPermission(["supply.stock.read", "supply.item.read"]);
     const canSeeBilling = hasAnyPermission(["billing.invoice.read"]);
     const canSeeClinical = hasAnyPermission(["clinical.visit.read", "clinical.queue.read"]);
     const canSeePatients = hasPermission("patient.record.read");
+
+    // Operative visibility (frontend §7.2, specification §2.2): the dashboard's
+    // clickable workbenches are shown only when the caller can actually operate
+    // them — not merely read across the module boundary. A doctor holding
+    // lab.order.read / lab.result.read / pharmacy.rx.read still gets no
+    // Laboratory or Pharmacy card, tab or quick-link.
+    const canOperate = {
+      clinical: canSeeClinical && hasModule("clinical"),
+      laboratory:
+        hasModule("laboratory") &&
+        hasAnyPermission(["lab.result.enter", "lab.result.verify", "lab.specimen.collect", "lab.specimen.receive", "lab.specimen.read"]),
+      pharmacy: hasModule("pharmacy") && hasAnyPermission(["pharmacy.rx.verify", "pharmacy.dispense.read"]),
+      supply:
+        hasModule("supply") &&
+        hasAnyPermission(["supply.issue.read", "supply.grn.read", "supply.stock.read", "supply.item.read"]),
+      billing:
+        hasModule("billing") &&
+        hasAnyPermission(["billing.invoice.read", "billing.invoice.create", "billing.payment.read", "billing.shift.read"]),
+      patients: canSeePatients && hasModule("patients"),
+      admin: hasModule("admin") && hasAnyPermission(["admin.branch.read", "admin.user.read", "admin.settings.read"]),
+    };
+    const canOpenQuickAction = (action: { module?: string; codes?: string[] }) => {
+      if (action.module && !hasModule(action.module)) return false;
+      if (action.codes && !hasAnyPermission(action.codes)) return false;
+      return true;
+    };
+    const visibleTabs = [
+      canOperate.clinical ? "VISITS" : null,
+      canOperate.laboratory ? "LAB" : null,
+      canOperate.pharmacy ? "PHARMACY" : null,
+    ].filter((t): t is "VISITS" | "LAB" | "PHARMACY" => t !== null);
+    const effectiveTab: "VISITS" | "LAB" | "PHARMACY" = visibleTabs.includes(activeTab)
+      ? activeTab
+      : visibleTabs[0] ?? "VISITS";
 
     const loadWorkingData = useCallback(async (isManualRefresh = false) => {
     if (isManualRefresh && mountedRef.current) setRefreshing(true);
@@ -353,20 +403,24 @@ export function DashboardPage() {
                 <span className={refreshing ? "spinner-border spinner-border-sm" : ""}>🔄</span>
                 {refreshing ? "Refreshing..." : "Refresh Live"}
               </button>
-              <Link
-                to="/clinical/visits"
-                className="btn btn-light fw-semibold"
-                style={{ color: "var(--cerulean-700)", borderRadius: "var(--radius-sm)", fontSize: "0.875rem" }}
-              >
-                + Open Visit
-              </Link>
-              <Link
-                to="/patients"
-                className="btn btn-outline-light fw-semibold"
-                style={{ borderRadius: "var(--radius-sm)", fontSize: "0.875rem" }}
-              >
-                + Patient
-              </Link>
+              {canOperate.clinical ? (
+                <Link
+                  to="/clinical/visits"
+                  className="btn btn-light fw-semibold"
+                  style={{ color: "var(--cerulean-700)", borderRadius: "var(--radius-sm)", fontSize: "0.875rem" }}
+                >
+                  + Open Visit
+                </Link>
+              ) : null}
+              {canOperate.patients ? (
+                <Link
+                  to="/patients"
+                  className="btn btn-outline-light fw-semibold"
+                  style={{ borderRadius: "var(--radius-sm)", fontSize: "0.875rem" }}
+                >
+                  + Patient
+                </Link>
+              ) : null}
             </div>
           </div>
         </div>
@@ -375,6 +429,7 @@ export function DashboardPage() {
       {/* ── Dynamic KPI Metric Cards (Working Data) ──────────────── */}
       <div className="row g-3 mb-4">
         {/* 1. Active Clinical Encounters */}
+        {canOperate.clinical && (
         <div className="col-sm-6 col-xl-2">
           <Link to="/clinical/visits" className="text-decoration-none">
             <div className="metric-card d-flex flex-column justify-content-between h-100">
@@ -397,8 +452,10 @@ export function DashboardPage() {
             </div>
           </Link>
         </div>
+        )}
 
         {/* 2. Registered Patients */}
+        {canOperate.patients && (
         <div className="col-sm-6 col-xl-2">
           <Link to="/patients" className="text-decoration-none">
             <div className="metric-card d-flex flex-column justify-content-between h-100">
@@ -421,8 +478,10 @@ export function DashboardPage() {
             </div>
           </Link>
         </div>
+        )}
 
         {/* 3. Laboratory Worklist */}
+        {canOperate.laboratory && (
         <div className="col-sm-6 col-xl-2">
           <Link to="/laboratory/worklist" className="text-decoration-none">
             <div className="metric-card d-flex flex-column justify-content-between h-100">
@@ -445,8 +504,10 @@ export function DashboardPage() {
             </div>
           </Link>
         </div>
+        )}
 
         {/* 4. Pharmacy Queue */}
+        {canOperate.pharmacy && (
         <div className="col-sm-6 col-xl-2">
           <Link to="/pharmacy/queue" className="text-decoration-none">
             <div className="metric-card d-flex flex-column justify-content-between h-100">
@@ -469,8 +530,10 @@ export function DashboardPage() {
             </div>
           </Link>
         </div>
+        )}
 
         {/* 5. Central Supply Items & Valuation */}
+        {canOperate.supply && (
         <div className="col-sm-6 col-xl-2">
           <Link to="/supply/issue" className="text-decoration-none">
             <div className="metric-card d-flex flex-column justify-content-between h-100">
@@ -493,8 +556,10 @@ export function DashboardPage() {
             </div>
           </Link>
         </div>
+        )}
 
         {/* 6. Cashier & Invoices */}
+        {canOperate.billing && (
         <div className="col-sm-6 col-xl-2">
           <Link to="/billing" className="text-decoration-none">
             <div className="metric-card d-flex flex-column justify-content-between h-100">
@@ -517,11 +582,13 @@ export function DashboardPage() {
             </div>
           </Link>
         </div>
+        )}
       </div>
 
       {/* ── Working Data Workbench & Live Activity ───────────────── */}
       <div className="row g-3 mb-4">
         {/* Main Live Activity Feed */}
+        {visibleTabs.length > 0 && (
         <div className="col-lg-8">
           <div className="clinic-card h-100">
             <div className="clinic-card-header d-flex justify-content-between align-items-center">
@@ -530,32 +597,38 @@ export function DashboardPage() {
                 <span className="small text-muted ms-2">real-time tenant encounters &amp; orders</span>
               </div>
               <div className="btn-group btn-group-sm" role="group" aria-label="Working data tabs">
+                {canOperate.clinical && (
                 <button
                   type="button"
-                  className={`btn btn-sm ${activeTab === "VISITS" ? "btn-cerulean" : "btn-outline-secondary"}`}
+                  className={`btn btn-sm ${effectiveTab === "VISITS" ? "btn-cerulean" : "btn-outline-secondary"}`}
                   onClick={() => setActiveTab("VISITS")}
                 >
                   Clinical Visits ({visits.length})
                 </button>
+                )}
+                {canOperate.laboratory && (
                 <button
                   type="button"
-                  className={`btn btn-sm ${activeTab === "LAB" ? "btn-cerulean" : "btn-outline-secondary"}`}
+                  className={`btn btn-sm ${effectiveTab === "LAB" ? "btn-cerulean" : "btn-outline-secondary"}`}
                   onClick={() => setActiveTab("LAB")}
                 >
                   Laboratory ({labOrders.length})
                 </button>
+                )}
+                {canOperate.pharmacy && (
                 <button
                   type="button"
-                  className={`btn btn-sm ${activeTab === "PHARMACY" ? "btn-cerulean" : "btn-outline-secondary"}`}
+                  className={`btn btn-sm ${effectiveTab === "PHARMACY" ? "btn-cerulean" : "btn-outline-secondary"}`}
                   onClick={() => setActiveTab("PHARMACY")}
                 >
                   Pharmacy ({prescriptions.length})
                 </button>
+                )}
               </div>
             </div>
 
             <div className="p-3">
-              {activeTab === "VISITS" && (
+              {effectiveTab === "VISITS" && (
                 <div>
                   {visits.length === 0 ? (
                     <div className="text-center py-4 text-muted small">
@@ -623,7 +696,7 @@ export function DashboardPage() {
                 </div>
               )}
 
-              {activeTab === "LAB" && (
+              {effectiveTab === "LAB" && (
                 <div>
                   {labOrders.length === 0 ? (
                     <div className="text-center py-4 text-muted small">
@@ -697,7 +770,7 @@ export function DashboardPage() {
                 </div>
               )}
 
-              {activeTab === "PHARMACY" && (
+              {effectiveTab === "PHARMACY" && (
                 <div>
                   {prescriptions.length === 0 ? (
                     <div className="text-center py-4 text-muted small">
@@ -759,6 +832,7 @@ export function DashboardPage() {
             </div>
           </div>
         </div>
+        )}
 
         {/* Tenant Security & Operations Info Panel */}
         <div className="col-lg-4">
@@ -834,6 +908,7 @@ export function DashboardPage() {
       </div>
 
       {/* ── Quick Action Hub (Department Workbenches) ─────────────── */}
+      {QUICK_ACTIONS.some(canOpenQuickAction) && (
       <div className="clinic-card">
         <div className="clinic-card-header d-flex justify-content-between align-items-center">
           <h2 className="clinic-card-title">Department Workbenches &amp; Operations Hub</h2>
@@ -854,7 +929,7 @@ export function DashboardPage() {
         </div>
         <div className="p-3">
           <div className="row g-3">
-            {QUICK_ACTIONS.map((action) => (
+            {QUICK_ACTIONS.filter(canOpenQuickAction).map((action) => (
               <div key={action.to} className="col-md-6 col-xl-3">
                 <Link to={action.to} className="text-decoration-none d-block h-100">
                   <div
@@ -909,6 +984,7 @@ export function DashboardPage() {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

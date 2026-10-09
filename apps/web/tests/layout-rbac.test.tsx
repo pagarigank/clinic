@@ -9,10 +9,11 @@ import { MainLayout } from "../src/shell/MainLayout.js";
 import { useStubHandler, type StubHandler } from "./setup.js";
 
 /**
- * Sidebar RBAC gating (architecture §5.3, specification §2.3, frontend §8):
- * a module group renders only when the tenant is entitled to the module AND the
- * caller holds at least one permission in that module's namespace, so a
- * clinical-only doctor never sees the pharmacy or laboratory rails.
+ * Sidebar RBAC gating (architecture §5.3, specification §2.2 module access
+ * matrix, §2.3 catalogue, frontend §8): a group renders only when the tenant is
+ * entitled to the module AND the caller holds the operative permission for at
+ * least one of its items. Cross-module *read* grants (a doctor's lab.order.read,
+ * lab.report.read, pharmacy.rx.read) do not surface another module's workbench.
  */
 
 function sessionFor(modules: string[], permissions: string[]) {
@@ -53,13 +54,13 @@ function renderShell() {
 }
 
 describe("MainLayout RBAC nav gating", () => {
-  it("hides entitled module groups the caller holds no permission for", async () => {
-    // Tenant owns four modules; the role is clinical-only.
+  it("hides entitled module groups the caller holds no operative permission for", async () => {
+    // Tenant owns four modules; the role only works the clinical surface.
     useStubHandler(
       stubSession(
         sessionFor(
           ["patients", "clinical", "pharmacy", "laboratory"],
-          ["clinical.consultation.read"],
+          ["clinical.appointment.read", "clinical.visit.read"],
         ),
       ),
     );
@@ -80,9 +81,14 @@ describe("MainLayout RBAC nav gating", () => {
     expect(screen.queryByText("Lab Workbench")).not.toBeInTheDocument(); // laboratory
   });
 
-  it("shows the pharmacy group to a pharmacist and hides clinical", async () => {
+  it("shows the pharmacy workbench group to a pharmacist and hides clinical", async () => {
     useStubHandler(
-      stubSession(sessionFor(["patients", "clinical", "pharmacy"], ["pharmacy.rx.verify"])),
+      stubSession(
+        sessionFor(
+          ["patients", "clinical", "pharmacy"],
+          ["pharmacy.rx.verify", "pharmacy.dispense.read"],
+        ),
+      ),
     );
     renderShell();
 
@@ -92,8 +98,40 @@ describe("MainLayout RBAC nav gating", () => {
     });
   });
 
+  it("hides pharmacy and laboratory workbenches from a doctor holding only clinical-workflow reads", async () => {
+    // The exact grants that previously leaked the rails via the namespace rule.
+    useStubHandler(
+      stubSession(
+        sessionFor(
+          ["patients", "clinical", "pharmacy", "laboratory"],
+          [
+            "clinical.appointment.read",
+            "clinical.queue.read",
+            "clinical.visit.read",
+            "clinical.rx.create",
+            "lab.order.create",
+            "lab.order.read",
+            "lab.result.read",
+            "lab.report.read",
+            "pharmacy.rx.read",
+          ],
+        ),
+      ),
+    );
+    renderShell();
+
+    await waitFor(() => {
+      expect(screen.getByText("Consultations & Chart")).toBeInTheDocument();
+      expect(screen.queryByText("Dispense Workbench")).not.toBeInTheDocument(); // pharmacy
+      expect(screen.queryByText("Lab Workbench")).not.toBeInTheDocument(); // laboratory
+      expect(screen.queryByText("Released Reports")).not.toBeInTheDocument();
+    });
+    expect(screen.queryByText("Verification Queue")).not.toBeInTheDocument();
+    expect(screen.queryByText("Result Entry & Flags")).not.toBeInTheDocument();
+  });
+
   it("still hides a group when the tenant is not entitled, regardless of permissions", async () => {
-    useStubHandler(stubSession(sessionFor(["patients"], ["pharmacy.rx.verify"])));
+    useStubHandler(stubSession(sessionFor(["patients"], ["pharmacy.dispense.read"])));
     renderShell();
 
     await waitFor(() => {

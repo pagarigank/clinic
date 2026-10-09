@@ -75,7 +75,7 @@ function renderPalette() {
 describe("Command palette (todo §2.3, frontend §9)", () => {
   it("opens with Ctrl+K, filters navigation, and deep-links on Enter", async () => {
     useStubHandler(
-      stubSession(sessionFor(["patients", "clinical"], ["patient.record.read", "clinical.consultation.read"])),
+      stubSession(sessionFor(["patients", "clinical"], ["patient.record.read", "clinical.visit.read"])),
     );
     let currentPath = "";
     render(
@@ -125,7 +125,7 @@ describe("Command palette (todo §2.3, frontend §9)", () => {
   it("skips navigation destinations the caller has no entitlement or permission for", async () => {
     // A clinical-only doctor: patients + clinical entitled, no supply/admin.
     useStubHandler(
-      stubSession(sessionFor(["patients", "clinical"], ["patient.record.read", "clinical.consultation.read"])),
+      stubSession(sessionFor(["patients", "clinical"], ["patient.record.read", "clinical.visit.read"])),
     );
     renderPalette();
 
@@ -147,6 +147,33 @@ describe("Command palette (todo §2.3, frontend §9)", () => {
     expect(screen.queryByText("Stock Explorer")).not.toBeInTheDocument();
     expect(screen.queryByText("Staff & Users")).not.toBeInTheDocument();
     expect(screen.queryByText("Platform Console")).not.toBeInTheDocument();
+  });
+
+  it("does not surface workbenches for a doctor holding only cross-module read/order grants", async () => {
+    // pharmacy.rx.read previously leaked the pharmacy destination via the
+    // namespace-prefix rule; the operative permission is pharmacy.dispense.read.
+    useStubHandler(
+      stubSession(
+        sessionFor(
+          ["patients", "clinical", "pharmacy", "laboratory"],
+          ["patient.record.read", "clinical.visit.read", "pharmacy.rx.read", "lab.order.read", "lab.report.read"],
+        ),
+      ),
+    );
+    renderPalette();
+
+    await waitFor(() => {
+      expect(Number(screen.getByTestId("perm-count").textContent)).toBeGreaterThan(0);
+    });
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
+    });
+
+    const input = screen.getByLabelText(/Search patients and pages/i);
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "pharmacy" } });
+    });
+    expect(screen.queryByText("Pharmacy Dispense Workbench")).not.toBeInTheDocument();
   });
 
   it("lists in-memory recents before typing and navigates to the id-only deep link", async () => {

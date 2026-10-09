@@ -250,13 +250,15 @@ export function MainLayout() {
   const pendingApprovalsCount = requests.filter((r) => r.status === "PENDING_APPROVAL").length;
 
   // Entitlement + permission gating of the shell (architecture §5.3,
-  // specification §2.3): a nav group only renders when its module is enabled
-  // for the tenant AND the caller holds at least one permission in that
-  // module's namespace, so a clinical-only role never sees the pharmacy, lab,
-  // supply or billing rails. Admin/patient items additionally require the
-  // matching permission. The API guards stay authoritative — this only shapes
-  // what the user can see/click.
-  const { hasModule, hasAnyPermission, hasAnyPermissionPrefix } = usePermissions();
+  // specification §2.2 module access matrix, §2.3 catalogue): a group renders
+  // only when its module is enabled for the tenant AND at least one of its items
+  // is permitted for the caller. Each item is gated by the permission its page
+  // actually operates with — the lab workbench by lab.result.*/lab.specimen.*,
+  // never "any `lab.` grant" — so a doctor holding only clinical-workflow reads
+  // (lab.order.read, lab.result.read, lab.report.read, pharmacy.rx.read) never
+  // sees the Pharmacy or Laboratory workbench rails, matching §2.2. The API
+  // guards stay authoritative — this only shapes what the user can see/click.
+  const { hasModule, hasAnyPermission } = usePermissions();
 
   const MODULE_BY_GROUP: Record<string, string> = {
     workspace: "patients",
@@ -268,21 +270,49 @@ export function MainLayout() {
     admin: "admin",
     compliance: "compliance",
   };
-  // Permission namespace that grants sight of a module group. Deliberately
-  // omits `workspace` and `system`: the dashboard is the shared landing surface
+  // Operative permission(s) for each nav item: the item is shown only when the
+  // caller holds at least one of them. Items absent from this map are always
+  // visible once their module is entitled (dashboard, report catalogue, System
+  // Health, medication administration for clinical roles). `workspace` and
+  // `system` have no module entry: the dashboard is the shared landing surface
   // and System Health is tenant-agnostic diagnostics, so both stay visible.
-  const PERMISSION_PREFIX_BY_GROUP: Record<string, string> = {
-    clinical: "clinical.",
-    pharmacy: "pharmacy.",
-    laboratory: "lab.",
-    supply: "supply.",
-    billing: "billing.",
-    admin: "admin.",
-    compliance: "compliance.",
-  };
   const PERMS_BY_ITEM: Record<string, string[]> = {
+    // Workspace
     "/patients": ["patient.record.read", "patients.read"],
     "/patients/duplicates": ["patient.record.merge", "patient.record.read", "patients.read"],
+    // Clinical
+    "/clinical/appointments": ["clinical.appointment.read", "clinical.schedule.read"],
+    "/clinical/queue": ["clinical.queue.read"],
+    "/clinical/visits": ["clinical.visit.read"],
+    // Pharmacy
+    "/pharmacy/queue": ["pharmacy.rx.verify"],
+    "/pharmacy/dispenses": ["pharmacy.dispense.read"],
+    "/pharmacy/controlled-register": ["pharmacy.controlled.read"],
+    "/pharmacy/sales": ["pharmacy.sale.read"],
+    "/pharmacy/administrations": ["pharmacy.dispense.read"],
+    "/pharmacy/catalog": ["pharmacy.product.read", "pharmacy.price.read"],
+    // Laboratory
+    "/laboratory/worklist": ["lab.specimen.collect", "lab.specimen.receive", "lab.specimen.read"],
+    "/laboratory/results": ["lab.result.enter"],
+    "/laboratory/verification": ["lab.result.verify"],
+    "/laboratory/critical-alerts": ["lab.critical.read"],
+    "/laboratory/qc": ["lab.qc.read"],
+    "/laboratory/reports": ["lab.report.release"],
+    "/laboratory/catalog": ["lab.config.read"],
+    // Supply
+    "/supply/dashboard": ["supply.stock.read", "supply.report.view"],
+    "/supply/stock": ["supply.stock.read"],
+    "/supply/grn": ["supply.grn.read"],
+    "/supply/requisitions": ["supply.req.read", "supply.pr.read", "supply.issue.read"],
+    "/supply/issue": ["supply.issue.read"],
+    "/supply/items": ["supply.item.read", "supply.supplier.read"],
+    // Billing
+    "/billing/invoices": ["billing.invoice.read"],
+    "/billing/pos": ["billing.invoice.create", "billing.payment.create"],
+    "/billing/shifts": ["billing.shift.read", "billing.shift.open"],
+    "/billing/credit-notes": ["billing.credit.read"],
+    "/billing/daily-close": ["billing.shift.close"],
+    // Tenant Administration
     "/admin/approvals": ["admin.user.read"],
     "/admin/users": ["admin.user.read"],
     "/admin/users/new": ["admin.user.create"],
@@ -290,8 +320,17 @@ export function MainLayout() {
     "/admin/roles": ["admin.role.read"],
     "/admin/branches": ["admin.branch.read"],
     "/admin/service-catalog": ["admin.service.read", "admin.price.read"],
+    "/admin/icd10": ["admin.settings.read"],
     "/admin/settings": ["admin.settings.read"],
     "/admin/clinic-profile": ["admin.settings.read"],
+    // Compliance
+    "/compliance?tab=audit": ["compliance.audit.read"],
+    "/compliance?tab=phi": ["compliance.access.read"],
+    "/compliance?tab=dsr": ["compliance.dsr.read"],
+    "/compliance?tab=breach": ["compliance.breach.read"],
+    "/compliance?tab=retention": ["compliance.retention.read"],
+    "/compliance?tab=access-reviews": ["compliance.access_review.read"],
+    "/compliance?tab=pidsr": ["compliance.audit.read", "compliance.breach.read"],
   };
 
   const navGroups = useMemo(
@@ -303,8 +342,6 @@ export function MainLayout() {
         const gate = session !== null;
         const requiredModule = MODULE_BY_GROUP[group.id];
         if (gate && requiredModule && !hasModule(requiredModule)) return null;
-        const permissionPrefix = PERMISSION_PREFIX_BY_GROUP[group.id];
-        if (gate && permissionPrefix && !hasAnyPermissionPrefix(permissionPrefix)) return null;
         const items = group.items.filter((item) => {
           if (!gate) return true;
           const needed = PERMS_BY_ITEM[item.to];
@@ -334,7 +371,7 @@ export function MainLayout() {
               : items;
         return { ...group, items: withBadges };
       }).filter((g): g is NavGroup => g !== null),
-    [pendingApprovalsCount, hasModule, hasAnyPermission, hasAnyPermissionPrefix, session],
+    [pendingApprovalsCount, hasModule, hasAnyPermission, session],
   );
 
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => {

@@ -69,31 +69,34 @@ interface NavDestination {
   keywords: string;
   /** Tenant module that must be entitled for this destination to appear. */
   module?: string;
-  /** Additional gate: the caller must hold a permission in this namespace. */
+  /** Operative permission(s): the caller must hold at least one to see it. */
+  codes?: string[];
+  /** Additional gate by namespace — reserved for platform-only surfaces. */
   prefix?: string;
 }
 
-// Entitlement + permission gating (frontend §7.2): global search skips
-// non-entitled modules and namespaces entirely, so a clinical-only role never
-// gets a dead link to supply, billing or admin surfaces. Dashboard and System
-// Health are shared/tenant-agnostic and stay visible regardless.
+// Entitlement + permission gating (frontend §7.2, specification §2.2): global
+// search skips non-entitled modules and non-operative permissions entirely, so a
+// doctor holding lab.order.read / pharmacy.rx.read does not get dead links to
+// the pharmacy or laboratory workbenches. Dashboard and System Health are
+// shared/tenant-agnostic and stay visible regardless.
 const DESTINATIONS: NavDestination[] = [
   { label: "Dashboard", path: "/dashboard", keywords: "home landing overview" },
-  { label: "Patient Registry", path: "/patients", keywords: "patients mpi register search", module: "patients", prefix: "patient." },
-  { label: "Duplicate Candidates (JOB-22)", path: "/patients/duplicates", keywords: "duplicates merge review job-22", module: "patients", prefix: "patient." },
-  { label: "Appointments", path: "/clinical/appointments", keywords: "scheduling calendar booking walk-in", module: "clinical", prefix: "clinical." },
-  { label: "Queue Board", path: "/clinical/queue", keywords: "queue tickets now serving", module: "clinical", prefix: "clinical." },
-  { label: "Consultations & Chart", path: "/clinical/visits", keywords: "visits encounters chart soap", module: "clinical", prefix: "clinical." },
-  { label: "Pharmacy Dispense Workbench", path: "/pharmacy/dispenses", keywords: "pharmacy dispense dispensing workbench rx prescriptions", module: "pharmacy", prefix: "pharmacy." },
-  { label: "Supply Dispensing & Issue Workbench", path: "/supply/issue", keywords: "supply dispense dispensing issue consumption consumables stock", module: "supply", prefix: "supply." },
-  { label: "Stock Explorer", path: "/supply/stock", keywords: "supply stock inventory batches fefo ledger", module: "supply", prefix: "supply." },
-  { label: "Staff & Users", path: "/admin/users", keywords: "users staff directory", module: "admin", prefix: "admin." },
-  { label: "Create Staff User", path: "/admin/users/new", keywords: "create user new staff invite member crud", module: "admin", prefix: "admin." },
-  { label: "Employee Records", path: "/admin/employees", keywords: "employee records hr staff profile license prc ptr s2 doctor nurse", module: "admin", prefix: "admin." },
-  { label: "Roles & Permissions", path: "/admin/roles", keywords: "roles rbac permissions sod", module: "admin", prefix: "admin." },
-  { label: "Branches & Units", path: "/admin/branches", keywords: "branches service units", module: "admin", prefix: "admin." },
-  { label: "Services & Prices", path: "/admin/service-catalog", keywords: "catalog prices discounts payments", module: "admin", prefix: "admin." },
-  { label: "Clinic Profile & Letterhead", path: "/admin/settings", keywords: "settings clinic letterhead profile doh philhealth accreditation modules entitlements policy", module: "admin", prefix: "admin." },
+  { label: "Patient Registry", path: "/patients", keywords: "patients mpi register search", module: "patients", codes: ["patient.record.read", "patients.read"] },
+  { label: "Duplicate Candidates (JOB-22)", path: "/patients/duplicates", keywords: "duplicates merge review job-22", module: "patients", codes: ["patient.record.merge", "patient.record.read", "patients.read"] },
+  { label: "Appointments", path: "/clinical/appointments", keywords: "scheduling calendar booking walk-in", module: "clinical", codes: ["clinical.appointment.read", "clinical.schedule.read"] },
+  { label: "Queue Board", path: "/clinical/queue", keywords: "queue tickets now serving", module: "clinical", codes: ["clinical.queue.read"] },
+  { label: "Consultations & Chart", path: "/clinical/visits", keywords: "visits encounters chart soap", module: "clinical", codes: ["clinical.visit.read"] },
+  { label: "Pharmacy Dispense Workbench", path: "/pharmacy/dispenses", keywords: "pharmacy dispense dispensing workbench rx prescriptions", module: "pharmacy", codes: ["pharmacy.dispense.read"] },
+  { label: "Supply Dispensing & Issue Workbench", path: "/supply/issue", keywords: "supply dispense dispensing issue consumption consumables stock", module: "supply", codes: ["supply.issue.read"] },
+  { label: "Stock Explorer", path: "/supply/stock", keywords: "supply stock inventory batches fefo ledger", module: "supply", codes: ["supply.stock.read"] },
+  { label: "Staff & Users", path: "/admin/users", keywords: "users staff directory", module: "admin", codes: ["admin.user.read"] },
+  { label: "Create Staff User", path: "/admin/users/new", keywords: "create user new staff invite member crud", module: "admin", codes: ["admin.user.create"] },
+  { label: "Employee Records", path: "/admin/employees", keywords: "employee records hr staff profile license prc ptr s2 doctor nurse", module: "admin", codes: ["admin.user.read"] },
+  { label: "Roles & Permissions", path: "/admin/roles", keywords: "roles rbac permissions sod", module: "admin", codes: ["admin.role.read"] },
+  { label: "Branches & Units", path: "/admin/branches", keywords: "branches service units", module: "admin", codes: ["admin.branch.read"] },
+  { label: "Services & Prices", path: "/admin/service-catalog", keywords: "catalog prices discounts payments", module: "admin", codes: ["admin.service.read", "admin.price.read"] },
+  { label: "Clinic Profile & Letterhead", path: "/admin/settings", keywords: "settings clinic letterhead profile doh philhealth accreditation modules entitlements policy", module: "admin", codes: ["admin.settings.read"] },
   { label: "System Health", path: "/ping", keywords: "health ping metrics" },
   { label: "Platform Console", path: "/platform/tenants", keywords: "platform tenants console superadmin", prefix: "platform." },
 ];
@@ -108,7 +111,7 @@ interface PaletteResult {
 export function CommandPalette() {
   const navigate = useNavigate();
   const { recentPatients, rememberPatient } = useSearchContext();
-  const { hasModule, hasAnyPermissionPrefix } = usePermissions();
+  const { hasModule, hasAnyPermission, hasAnyPermissionPrefix } = usePermissions();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [patientHits, setPatientHits] = useState<PatientRef[]>([]);
@@ -183,6 +186,7 @@ export function CommandPalette() {
     const q = query.trim().toLowerCase();
     const nav = DESTINATIONS.filter((d) => {
       if (d.module && !hasModule(d.module)) return false;
+      if (d.codes && !hasAnyPermission(d.codes)) return false;
       if (d.prefix && !hasAnyPermissionPrefix(d.prefix)) return false;
       return !q || d.label.toLowerCase().includes(q) || d.keywords.includes(q);
     }).map<PaletteResult>((d) => ({
@@ -213,7 +217,7 @@ export function CommandPalette() {
             }))
         : [];
     return [...patients, ...recents, ...nav].slice(0, 12);
-  }, [query, patientHits, recentPatients, navigate, openPatient, hasModule, hasAnyPermissionPrefix]);
+  }, [query, patientHits, recentPatients, navigate, openPatient, hasModule, hasAnyPermission, hasAnyPermissionPrefix]);
 
   useEffect(() => setActive(0), [results.length, query]);
 
