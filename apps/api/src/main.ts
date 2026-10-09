@@ -9,9 +9,11 @@ try {
   // .env file absent or already loaded
 }
 
-for (const key of ["DATABASE_URL_APP", "DATABASE_URL_MIGRATOR", "DATABASE_URL_REPORT", "CLINIC_DATABASE_URL"]) {
-  if (process.env[key] && process.env[key]!.includes("kpagarigan:") && !process.env[key]!.includes("kpagarigan2:")) {
-    process.env[key] = process.env[key]!.replace("kpagarigan:", "kpagarigan2:");
+if (process.platform === "win32") {
+  for (const key of ["DATABASE_URL_APP", "DATABASE_URL_MIGRATOR", "DATABASE_URL_REPORT", "CLINIC_DATABASE_URL"]) {
+    if (process.env[key] && process.env[key]!.includes("kpagarigan:") && !process.env[key]!.includes("kpagarigan2:")) {
+      process.env[key] = process.env[key]!.replace("kpagarigan:", "kpagarigan2:");
+    }
   }
 }
 

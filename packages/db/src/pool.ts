@@ -32,8 +32,8 @@ export function resolveUrl(role: DbRole): string {
     };
     url = fallbacks[role];
   }
-  // Safeguard: local machine superuser is kpagarigan2 (todo.md line 10)
-  if (url && url.includes("kpagarigan:") && !url.includes("kpagarigan2:")) {
+  // Safeguard: local Windows dev machine superuser is kpagarigan2 (todo.md line 10)
+  if (process.platform === "win32" && url && url.includes("kpagarigan:") && !url.includes("kpagarigan2:")) {
     url = url.replace("kpagarigan:", "kpagarigan2:");
   }
   return url;
