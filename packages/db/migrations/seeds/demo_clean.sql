@@ -376,8 +376,9 @@ ON CONFLICT (tenant_id, role_id, permission_id) DO NOTHING;
 
 -- ============================================================================
 -- 4. Staff accounts — tenant admin, doctor, nurse, pharmacist dispenser,
---    pharmacist verifier, receptionist, lab technologist, lab verifier.
---    All eight share the demo password  DemoPassw0rd!2026
+--    pharmacist verifier, receptionist, lab technologist, lab verifier,
+--    central-supply storekeeper.
+--    All nine share the demo password  DemoPassw0rd!2026
 --    (argon2id hash reused verbatim from migrations/seeds/demo.sql).
 --
 --    The pharmacist and receptionist exist because the demo tenant has to be
@@ -390,6 +391,10 @@ ON CONFLICT (tenant_id, role_id, permission_id) DO NOTHING;
 --    verify) and PHM-T1 (rx verify ≠ dispense post) independence controls can
 --    be demonstrated with two real logins instead of one role holding both
 --    sides of a sod_conflicts pair.
+--
+--    The storekeeper exists so the central-supply module (supply.*) can be
+--    exercised from a demo login; `tenant_admin` holds no supply.* operative
+--    codes, so without this account supply was unreachable in the demo tenant.
 --
 --    Resolved by NATURAL KEY (email / role code / branch code), never by UUID:
 --    ON CONFLICT keeps the existing row's own id, so pinning the child ids
@@ -414,6 +419,8 @@ FROM (VALUES
   ('labtech@demo-a.test',  'Demo A — Medical Technologist',
    '$argon2id$v=19$m=19456,t=2,p=1$PJbfK+fX4INlaV6B1J1P9Q$r8KelzGMcN1aCKjlBfUifGfeT1j7Wnk7sl8WlLr624I'),
   ('labverify@demo-a.test','Demo A — Lab Verifier',
+   '$argon2id$v=19$m=19456,t=2,p=1$PJbfK+fX4INlaV6B1J1P9Q$r8KelzGMcN1aCKjlBfUifGfeT1j7Wnk7sl8WlLr624I'),
+  ('storekeeper@demo-a.test','Demo A — Storekeeper',
    '$argon2id$v=19$m=19456,t=2,p=1$PJbfK+fX4INlaV6B1J1P9Q$r8KelzGMcN1aCKjlBfUifGfeT1j7Wnk7sl8WlLr624I')
 ) AS v(email, name, password_hash)
 ON CONFLICT (tenant_id, email) DO UPDATE
@@ -435,7 +442,8 @@ FROM (VALUES
   ('staff@demo-a.test',    'receptionist'),
   ('verifier@demo-a.test', 'pharmacist_verifier'),
   ('labtech@demo-a.test',  'lab_technologist'),
-  ('labverify@demo-a.test','lab_verifier')
+  ('labverify@demo-a.test','lab_verifier'),
+  ('storekeeper@demo-a.test','storekeeper')
 ) AS v(email, role_code)
 JOIN users u ON u.tenant_id = '11111111-1111-4111-8111-111111111111' AND u.email = v.email
 JOIN roles r ON r.tenant_id = u.tenant_id AND r.code = v.role_code
@@ -449,7 +457,7 @@ CROSS JOIN branches b
 WHERE u.tenant_id = '11111111-1111-4111-8111-111111111111'
   AND u.email IN ('admin@demo-a.test', 'doctor@demo-a.test', 'nurse@demo-a.test',
                   'dispenser@demo-a.test', 'staff@demo-a.test', 'verifier@demo-a.test',
-                  'labtech@demo-a.test', 'labverify@demo-a.test')
+                  'labtech@demo-a.test', 'labverify@demo-a.test', 'storekeeper@demo-a.test')
   AND b.tenant_id = u.tenant_id AND b.code = 'MAIN'
 ON CONFLICT (user_id, branch_id) DO UPDATE SET is_default = true;
 
@@ -477,7 +485,8 @@ FROM (VALUES
   ('staff@demo-a.test',  'DA-0005', 'Front Desk Receptionist','Front Desk',    'FULL_TIME',  NULL,                  NULL,            NULL,            NULL,            '(02) 8888-0105', DATE '2024-02-19'),
   ('verifier@demo-a.test','DA-0006','Pharmacist — Verification','Pharmacy',    'FULL_TIME',  'Clinical Pharmacy',   'PRC-1000006',   NULL,            NULL,            '(02) 8888-0106', DATE '2024-06-03'),
   ('labtech@demo-a.test','DA-0007', 'Medical Laboratory Technologist','Laboratory','FULL_TIME','Hematology',         'PRC-1000007',   NULL,            NULL,            '(02) 8888-0107', DATE '2024-04-15'),
-  ('labverify@demo-a.test','DA-0008','Pathologist',           'Laboratory',    'CONSULTANT', 'Anatomic & Clinical Pathology','PRC-1000008','PTR-1000008',NULL,          '(02) 8888-0108', DATE '2023-09-01')
+  ('labverify@demo-a.test','DA-0008','Pathologist',           'Laboratory',    'CONSULTANT', 'Anatomic & Clinical Pathology','PRC-1000008','PTR-1000008',NULL,          '(02) 8888-0108', DATE '2023-09-01'),
+  ('storekeeper@demo-a.test','DA-0009','Central Supply Storekeeper','Central Supply','FULL_TIME', NULL,               NULL,            NULL,            NULL,            '(02) 8888-0109', DATE '2024-07-01')
 ) AS v(email, employee_no, job_title, department, employment_type,
        specialization, prc_license_no, ptr_no, s2_license_no, phone, hire_date)
 JOIN users u ON u.tenant_id = '11111111-1111-4111-8111-111111111111' AND u.email = v.email
@@ -1128,19 +1137,20 @@ BEGIN
     RAISE EXCEPTION 'demo_clean: modules not ENABLED: %', v_missing;
   END IF;
 
-  -- The three staff accounts must each hold exactly the intended role.
+  -- The seeded staff accounts must each hold exactly the intended role.
   IF (SELECT count(*) FROM users u
       JOIN user_roles ur ON ur.tenant_id = u.tenant_id AND ur.user_id = u.id
       JOIN roles r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id
       WHERE u.tenant_id = '11111111-1111-4111-8111-111111111111'
         AND u.email IN ('admin@demo-a.test','doctor@demo-a.test','nurse@demo-a.test',
                         'dispenser@demo-a.test','staff@demo-a.test','verifier@demo-a.test',
-                        'labtech@demo-a.test','labverify@demo-a.test')
+                        'labtech@demo-a.test','labverify@demo-a.test','storekeeper@demo-a.test')
         AND u.status = 'ACTIVE'
         AND r.code IN ('tenant_admin','doctor','nurse','pharmacist_dispenser',
-                       'receptionist','pharmacist_verifier','lab_technologist','lab_verifier')
-     ) <> 8 THEN
-    RAISE EXCEPTION 'demo_clean: expected 8 active staff accounts, each with its seeded role';
+                       'receptionist','pharmacist_verifier','lab_technologist','lab_verifier',
+                       'storekeeper')
+     ) <> 9 THEN
+    RAISE EXCEPTION 'demo_clean: expected 9 active staff accounts, each with its seeded role';
   END IF;
 
   -- Every seeded account must be reachable from the tenant's MAIN branch (G-02).
@@ -1150,12 +1160,12 @@ BEGIN
       WHERE u.tenant_id = '11111111-1111-4111-8111-111111111111'
         AND u.email IN ('admin@demo-a.test','doctor@demo-a.test','nurse@demo-a.test',
                         'dispenser@demo-a.test','staff@demo-a.test','verifier@demo-a.test',
-                        'labtech@demo-a.test','labverify@demo-a.test')
-     ) <> 8 THEN
-    RAISE EXCEPTION 'demo_clean: all 8 seeded staff must be assigned to branch MAIN';
+                        'labtech@demo-a.test','labverify@demo-a.test','storekeeper@demo-a.test')
+     ) <> 9 THEN
+    RAISE EXCEPTION 'demo_clean: all 9 seeded staff must be assigned to branch MAIN';
   END IF;
 
-  -- All three seeded staff must carry an employee record, and the prescribing
+  -- All seeded staff must carry an employee record, and the prescribing
   -- doctor must hold the full licence set. Without this the prescription pad
   -- degrades to "Dr. Attending Physician, MD" with "N/A" licence numbers
   -- (specification CLN-T5, RA 6675 / RA 9165).
@@ -1164,10 +1174,10 @@ BEGIN
       WHERE u.tenant_id = '11111111-1111-4111-8111-111111111111'
         AND u.email IN ('admin@demo-a.test','doctor@demo-a.test','nurse@demo-a.test',
                         'dispenser@demo-a.test','staff@demo-a.test','verifier@demo-a.test',
-                        'labtech@demo-a.test','labverify@demo-a.test')
+                        'labtech@demo-a.test','labverify@demo-a.test','storekeeper@demo-a.test')
         AND e.status = 'ACTIVE' AND e.job_title <> ''
-     ) <> 8 THEN
-    RAISE EXCEPTION 'demo_clean: all 8 seeded staff must have an ACTIVE employees record';
+     ) <> 9 THEN
+    RAISE EXCEPTION 'demo_clean: all 9 seeded staff must have an ACTIVE employees record';
   END IF;
 
   IF (SELECT count(*) FROM users u

@@ -192,7 +192,10 @@ export class TenantConfigService {
 
   async listPaymentMethods(tenantId: string, userId: string) {
     return withTenant({ tenantId, userId }, async (tx) => {
-      const res = await tx.query(`SELECT * FROM payment_methods WHERE is_active = true ORDER BY name`);
+      const res = await tx.query(
+        `SELECT * FROM payment_methods WHERE tenant_id = $1 AND is_active = true ORDER BY name`,
+        [tenantId],
+      );
       return { data: res.rows };
     });
   }

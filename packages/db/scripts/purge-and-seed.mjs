@@ -14,11 +14,16 @@
  *       1. Maria Elena Santos   (PAT-2026-0001, PhilHealth Registered, Penicillin allergy)
  *       2. Juan Carlos Dela Cruz (PAT-2026-0002, PhilHealth Registered)
  *       3. Angelita Reyes       (PAT-2026-0003, PhilHealth Pending)
- *   - 4 Users (Password: DemoPassw0rd!2026):
- *       1. admin@demo-a.test  (role: tenant_admin)
- *       2. doctor@demo-a.test (role: doctor)
- *       3. nurse@demo-a.test  (role: nurse)
- *       4. staff@demo-a.test  (role: receptionist)
+ *   - 9 Users (Password: DemoPassw0rd!2026) — MUST match demo_clean.sql §4:
+ *       1. admin@demo-a.test      (role: tenant_admin)
+ *       2. doctor@demo-a.test     (role: doctor)
+ *       3. nurse@demo-a.test      (role: nurse)
+ *       4. dispenser@demo-a.test  (role: pharmacist_dispenser)
+ *       5. staff@demo-a.test      (role: receptionist)
+ *       6. verifier@demo-a.test   (role: pharmacist_verifier)
+ *       7. labtech@demo-a.test    (role: lab_technologist)
+ *       8. labverify@demo-a.test  (role: lab_verifier)
+ *       9. storekeeper@demo-a.test (role: storekeeper)
  *   - Comprehensive Masters:
  *       - Laboratory: Hematology, Chemistry, Microscopy, Serology, Microbiology
  *                     CBC, Urinalysis, Fecalysis, FBS, HbA1c, Lipid, Chem-8, Liver/Electrolytes, Dengue, etc.
@@ -46,11 +51,21 @@ const BRANCH_ID = getOption('--branch', 'a1000000-0000-4000-8000-000000000001');
 const DEMO_PASSWORD_HASH =
   '$argon2id$v=19$m=19456,t=2,p=1$PJbfK+fX4INlaV6B1J1P9Q$r8KelzGMcN1aCKjlBfUifGfeT1j7Wnk7sl8WlLr624I';
 
+// Keep this list in lockstep with demo_clean.sql §4 (the canonical demo staff
+// set) and with the login-page DEV shortcuts — a purge that drops an account
+// the login screen advertises presents as "login is broken", not "seeder drift".
+// The clinical/bench roles (dispenser, verifier, labtechnologist, labverifier,
+// storekeeper) get their grants from migrations 0055–0057, not from Step 9.
 const SEED_USERS = [
-  { email: 'admin@demo-a.test',  name: 'Demo A — Tenant Admin',         role: 'tenant_admin' },
-  { email: 'doctor@demo-a.test', name: 'Demo A — Doctor',               role: 'doctor'       },
-  { email: 'nurse@demo-a.test',  name: 'Demo A — Nurse',                role: 'nurse'        },
-  { email: 'staff@demo-a.test',  name: 'Demo A — Staff / Receptionist', role: 'receptionist' },
+  { email: 'admin@demo-a.test',      name: 'Demo A — Tenant Admin',          role: 'tenant_admin'          },
+  { email: 'doctor@demo-a.test',     name: 'Demo A — Doctor',                role: 'doctor'                },
+  { email: 'nurse@demo-a.test',      name: 'Demo A — Nurse',                 role: 'nurse'                 },
+  { email: 'dispenser@demo-a.test',  name: 'Demo A — Pharmacist',            role: 'pharmacist_dispenser'  },
+  { email: 'staff@demo-a.test',      name: 'Demo A — Receptionist',          role: 'receptionist'          },
+  { email: 'verifier@demo-a.test',   name: 'Demo A — Pharmacist Verifier',   role: 'pharmacist_verifier'   },
+  { email: 'labtech@demo-a.test',    name: 'Demo A — Medical Technologist',  role: 'lab_technologist'      },
+  { email: 'labverify@demo-a.test',  name: 'Demo A — Lab Verifier',          role: 'lab_verifier'          },
+  { email: 'storekeeper@demo-a.test', name: 'Demo A — Storekeeper',          role: 'storekeeper'           },
 ];
 
 const SEED_PATIENTS = [
@@ -144,6 +159,12 @@ const TRANSACTIONAL_TABLES = [
   'problem_list',
   'queue_tickets',
   'appointments',
+  // 4b. Patient supply requisitions bridge clinical -> supply: they FK to both
+  //     `visits` AND `patient_supply_request_items`, so they must be cleared
+  //     before `visits`. Added with the central-supply module; their absence
+  //     made Step 4 fail on visits_tenant_id_patient_id_fkey.
+  'patient_supply_request_items',
+  'patient_supply_requests',
   'visits',
   // 5. Supply & Inventory Transactions
   'stock_issue_items',
@@ -408,8 +429,8 @@ async function run() {
       console.log(`  ✓ Patient: ${p.firstName} ${p.lastName} (${p.patientNo})`);
     }
 
-    // Step 7: Seed / update the 4 staff users
-    console.log('Step 7: Seeding 4 staff accounts (Admin, Doctor, Nurse, Receptionist)...');
+    // Step 7: Seed / update the 9 staff users
+    console.log('Step 7: Seeding 9 staff accounts (Admin, Doctor, Nurse, Pharmacist, Receptionist, Pharmacist Verifier, Lab Technologist, Lab Verifier, Storekeeper)...');
     for (const u of SEED_USERS) {
       await client.query(
         `INSERT INTO users (tenant_id, email, name, password_hash, status, failed_login_count, mfa_enabled, mfa_secret)
@@ -455,7 +476,7 @@ async function run() {
     await seedComprehensiveMasterData(client, TENANT_ID, BRANCH_ID, { zeroStock: ZERO_STOCK });
 
     // Step 9: Configure tenant modules & role permissions
-    console.log('Step 9: Configuring tenant modules and permissions for all 4 roles...');
+    console.log('Step 9: Configuring tenant modules and permissions for the demo roles...');
     const MODULES = [
       'admin',
       'patients',
@@ -605,11 +626,16 @@ async function run() {
       console.log(`        * Maria Elena Santos (PAT-2026-0001)`);
       console.log(`        * Juan Carlos Dela Cruz (PAT-2026-0002)`);
       console.log(`        * Angelita Reyes (PAT-2026-0003)`);
-      console.log(`    - 4 Staff Accounts (Password: DemoPassw0rd!2026):`);
-      console.log(`        * admin@demo-a.test  (Tenant Admin)`);
-      console.log(`        * doctor@demo-a.test (Doctor)`);
-      console.log(`        * nurse@demo-a.test  (Nurse)`);
-      console.log(`        * staff@demo-a.test  (Staff / Receptionist)`);
+      console.log(`    - 9 Staff Accounts (Password: DemoPassw0rd!2026):`);
+      console.log(`        * admin@demo-a.test      (Tenant Admin)`);
+      console.log(`        * doctor@demo-a.test     (Doctor)`);
+      console.log(`        * nurse@demo-a.test      (Nurse)`);
+      console.log(`        * dispenser@demo-a.test  (Pharmacist / Dispenser)`);
+      console.log(`        * staff@demo-a.test      (Receptionist)`);
+      console.log(`        * verifier@demo-a.test   (Pharmacist — Verification)`);
+      console.log(`        * labtech@demo-a.test    (Lab Technologist)`);
+      console.log(`        * labverify@demo-a.test  (Lab Verifier)`);
+      console.log(`        * storekeeper@demo-a.test (Storekeeper — central supply)`);
       console.log(`    - Complete Master Data:`);
       console.log(`        * Laboratory: Sections, Specimens, Analyte Reference Ranges`);
       console.log(`        * Central Supply: 30 Consumables, Locations, UOMs`);

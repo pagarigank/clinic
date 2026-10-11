@@ -87,9 +87,9 @@ export function LoginPage() {
         case "i": email = "admin@demo-a.test"; break;
         case "b": email = "doctor@demo-a.test"; break;
         case "h": email = "labtech@demo-a.test"; break;
-        case "j": email = "reception@demo-a.test"; break;
-        case "p": email = "pharmacist@demo-a.test"; break;
-        case "m": email = "supply@demo-a.test"; break;
+        case "j": email = "staff@demo-a.test"; break;
+        case "p": email = "dispenser@demo-a.test"; break;
+        case "m": email = "storekeeper@demo-a.test"; break;
         default: return;
       }
 

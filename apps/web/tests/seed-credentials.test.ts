@@ -18,16 +18,24 @@ import { describe, expect, it } from "vitest";
  * specification G-14/generic responses), so a UI/seed mismatch fails silently
  * at runtime and nowhere in CI.
  *
- * This test parses both files and asserts they agree.
+ * The demo tenant + admin/doctor users come from `demo.sql`; the remaining
+ * staff accounts (nurse, dispenser, receptionist, verifier, lab technologist,
+ * lab verifier, supply storekeeper) come from `demo_clean.sql`. Both files must
+ * stay consistent with the DEV keyboard-shortcut targets in the login page.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
-const seedPath = resolve(here, "../../../packages/db/migrations/seeds/demo.sql");
+const demoSqlPath = resolve(here, "../../../packages/db/migrations/seeds/demo.sql");
+const demoCleanPath = resolve(here, "../../../packages/db/migrations/seeds/demo_clean.sql");
 const loginPath = resolve(here, "../src/features/auth/LoginPage.tsx");
 
-/** Tenant slugs created by the seed. */
+function read(path: string): string {
+  return readFileSync(path, "utf8");
+}
+
+/** Tenant slugs created by the demo seed. */
 function seedSlugs(): string[] {
-  const sql = readFileSync(seedPath, "utf8");
+  const sql = read(demoSqlPath);
   const slugs = new Set<string>();
   for (const m of sql.matchAll(/'\s*([a-z0-9-]+)'\s*,\s*'ACTIVE'\s*\)/gi)) {
     slugs.add(m[1]!);
@@ -35,15 +43,22 @@ function seedSlugs(): string[] {
   return [...slugs];
 }
 
-/** User emails inserted by the seed. */
+/** User emails inserted by either seed file. */
 function seedEmails(): string[] {
-  const sql = readFileSync(seedPath, "utf8");
-  return [...sql.matchAll(/'([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})'/gi)].map((m) => m[1]!.toLowerCase());
+  const sql = read(demoSqlPath) + "\n" + read(demoCleanPath);
+  return [...sql.matchAll(/'([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})'/gi)].map((m) =>
+    m[1]!.toLowerCase(),
+  );
+}
+
+/** Emails wired to the DEV keyboard shortcuts in the login page. */
+function shortcutEmails(src: string): string[] {
+  return [...src.matchAll(/case\s+"[a-z]":\s*email\s*=\s*"([^"]+)"/g)].map((m) => m[1]!);
 }
 
 /** Default state values declared in the login page. */
 function loginDefaults(): { slug: string; email: string; password: string } {
-  const src = readFileSync(loginPath, "utf8");
+  const src = read(loginPath);
   const slugM = src.match(/const \[slug, setSlug\] = useState\("([^"]*)"\)/);
   const emailM = src.match(/const \[email, setEmail\] = useState\("([^"]*)"\)/);
   const passM = src.match(/const \[password, setPassword\] = useState\("([^"]*)"\)/);
@@ -55,7 +70,8 @@ function loginDefaults(): { slug: string; email: string; password: string } {
 
 describe("login defaults for deployment", () => {
   it("has a readable seed and login page", () => {
-    expect(existsSync(seedPath)).toBe(true);
+    expect(existsSync(demoSqlPath)).toBe(true);
+    expect(existsSync(demoCleanPath)).toBe(true);
     expect(existsSync(loginPath)).toBe(true);
   });
 
@@ -68,28 +84,31 @@ describe("login defaults for deployment", () => {
 });
 
 describe("shortcut credentials match demo seed", () => {
-  it("every fillCredentials target is a real seeded tenant + user", () => {
-    const src = readFileSync(loginPath, "utf8");
-    const calls = [...src.matchAll(/fillCredentials\("([^"]+)",\s*"([^"]+)",\s*"([^"]+)"\)/g)];
-    expect(calls.length, "fillCredentials shortcut target missing").toBeGreaterThan(0);
+  it("every keyboard shortcut targets a real seeded tenant + user", () => {
+    const src = read(loginPath);
+    const emails = shortcutEmails(src);
+    expect(emails.length, "no shortcut email targets found in LoginPage.tsx").toBeGreaterThan(0);
 
     const slugs = seedSlugs();
-    const emails = seedEmails();
+    const seeded = seedEmails();
 
-    for (const c of calls) {
-      const [, slug, email] = c;
-      expect(slugs, `shortcut slug "${slug}" is not seeded`).toContain(slug);
-      expect(emails, `shortcut email "${email}" is not seeded`).toContain(email!.toLowerCase());
+    const slugM = src.match(/fillCredentials\("([^"]+)",\s*email,/);
+    expect(slugM, "shortcut fillCredentials does not fill a tenant slug").toBeTruthy();
+    expect(slugs, `shortcut slug "${slugM![1]}" is not seeded`).toContain(slugM![1]);
+
+    for (const email of emails) {
+      expect(seeded, `shortcut email "${email}" is not seeded`).toContain(email.toLowerCase());
     }
   });
 
   it("uses the demo password documented in the seed header", () => {
-    const sql = readFileSync(seedPath, "utf8");
+    const sql = read(demoSqlPath);
     const m = sql.match(/demo credential "([^"]+)"/);
     expect(m?.[1], "demo.sql no longer documents its credential").toBeTruthy();
 
-    const src = readFileSync(loginPath, "utf8");
-    const calls = [...src.matchAll(/fillCredentials\("([^"]+)",\s*"([^"]+)",\s*"([^"]+)"\)/g)];
-    expect(calls[0]![3]).toBe(m![1]);
+    const src = read(loginPath);
+    const passM = src.match(/fillCredentials\("[^"]+",\s*email,\s*"([^"]+)"\)/);
+    expect(passM, "shortcut password literal missing").toBeTruthy();
+    expect(passM![1]).toBe(m![1]);
   });
 });
