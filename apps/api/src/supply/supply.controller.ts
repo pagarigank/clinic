@@ -46,6 +46,7 @@ import {
   CreateSupplierInvoiceSchema, type CreateSupplierInvoiceRequest,
   CreateSupplierReturnSchema, type CreateSupplierReturnRequest,
 } from '@clinic/contracts';
+import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
 
 function getRequestId(req: RequestWithAuth): string {
   return ((req as any).headers?.['x-request-id'] as string) ?? req.correlationId ?? `req-${Date.now()}`;
@@ -72,9 +73,8 @@ export class SupplyController {
   @RequirePermission('supply.item.create')
   @Post('categories')
   @ApiOperation({ summary: 'Create item category' })
-  async createCategory(@Req() req: RequestWithAuth, @Body() body: CreateItemCategoryRequest) {
-    const parsed = CreateItemCategorySchema.parse(body);
-    return this.svc.createCategory(req.tenantId!, parsed);
+  async createCategory(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateItemCategorySchema)) body: CreateItemCategoryRequest) {
+    return this.svc.createCategory(req.tenantId!, body);
   }
 
   @RequirePermission('supply.item.read')
@@ -87,17 +87,15 @@ export class SupplyController {
   @RequirePermission('supply.item.create')
   @Post('uoms')
   @ApiOperation({ summary: 'Create unit of measure' })
-  async createUom(@Req() req: RequestWithAuth, @Body() body: CreateUomRequest) {
-    const parsed = CreateUomSchema.parse(body);
-    return this.svc.createUom(req.tenantId!, parsed);
+  async createUom(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateUomSchema)) body: CreateUomRequest) {
+    return this.svc.createUom(req.tenantId!, body);
   }
 
   @RequirePermission('supply.item.create')
   @Post('uoms/conversions')
   @ApiOperation({ summary: 'Create UOM conversion' })
-  async createUomConversion(@Req() req: RequestWithAuth, @Body() body: CreateUomConversionRequest) {
-    const parsed = CreateUomConversionSchema.parse(body);
-    return this.svc.createUomConversion(req.tenantId!, parsed);
+  async createUomConversion(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateUomConversionSchema)) body: CreateUomConversionRequest) {
+    return this.svc.createUomConversion(req.tenantId!, body);
   }
 
   @RequirePermission('supply.item.read')
@@ -121,25 +119,22 @@ export class SupplyController {
   @RequirePermission('supply.item.create')
   @Post('items')
   @ApiOperation({ summary: 'Create item' })
-  async createItem(@Req() req: RequestWithAuth, @Body() body: CreateItemRequest) {
-    const parsed = CreateItemSchema.parse(body);
-    return this.svc.createItem(req.tenantId!, parsed);
+  async createItem(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateItemSchema)) body: CreateItemRequest) {
+    return this.svc.createItem(req.tenantId!, body);
   }
 
   @RequirePermission('supply.item.update')
   @Patch('items/:id')
   @ApiOperation({ summary: 'Update item' })
-  async updateItem(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: UpdateItemRequest) {
-    const parsed = UpdateItemSchema.parse(body);
-    return this.svc.updateItem(req.tenantId!, id, parsed);
+  async updateItem(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(UpdateItemSchema)) body: UpdateItemRequest) {
+    return this.svc.updateItem(req.tenantId!, id, body);
   }
 
   @RequirePermission('supply.item.create')
   @Post('barcodes')
   @ApiOperation({ summary: 'Create item barcode' })
-  async createBarcode(@Req() req: RequestWithAuth, @Body() body: CreateItemBarcodeRequest) {
-    const parsed = CreateItemBarcodeSchema.parse(body);
-    return this.svc.createItemBarcode(req.tenantId!, parsed);
+  async createBarcode(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateItemBarcodeSchema)) body: CreateItemBarcodeRequest) {
+    return this.svc.createItemBarcode(req.tenantId!, body);
   }
 
   // ── Masters: Suppliers ─────────────────────────────────────────────────────
@@ -154,25 +149,22 @@ export class SupplyController {
   @RequirePermission('supply.supplier.create')
   @Post('suppliers')
   @ApiOperation({ summary: 'Create supplier' })
-  async createSupplier(@Req() req: RequestWithAuth, @Body() body: CreateSupplierRequest) {
-    const parsed = CreateSupplierSchema.parse(body);
-    return this.svc.createSupplier(req.tenantId!, parsed);
+  async createSupplier(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateSupplierSchema)) body: CreateSupplierRequest) {
+    return this.svc.createSupplier(req.tenantId!, body);
   }
 
   @RequirePermission('supply.supplier.update')
   @Patch('suppliers/:id')
   @ApiOperation({ summary: 'Update supplier' })
-  async updateSupplier(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: UpdateSupplierRequest) {
-    const parsed = UpdateSupplierSchema.parse(body);
-    return this.svc.updateSupplier(req.tenantId!, id, parsed);
+  async updateSupplier(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(UpdateSupplierSchema)) body: UpdateSupplierRequest) {
+    return this.svc.updateSupplier(req.tenantId!, id, body);
   }
 
   @RequirePermission('supply.supplier.create')
   @Post('suppliers/items')
   @ApiOperation({ summary: 'Map supplier item & price' })
-  async createSupplierItem(@Req() req: RequestWithAuth, @Body() body: CreateSupplierItemRequest) {
-    const parsed = CreateSupplierItemSchema.parse(body);
-    return this.svc.createSupplierItem(req.tenantId!, parsed);
+  async createSupplierItem(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateSupplierItemSchema)) body: CreateSupplierItemRequest) {
+    return this.svc.createSupplierItem(req.tenantId!, body);
   }
 
   @RequirePermission('supply.supplier.read')
@@ -194,25 +186,22 @@ export class SupplyController {
   @RequirePermission('supply.location.create')
   @Post('locations')
   @ApiOperation({ summary: 'Create stock location' })
-  async createLocation(@Req() req: RequestWithAuth, @Body() body: CreateStockLocationRequest) {
-    const parsed = CreateStockLocationSchema.parse(body);
-    return this.svc.createLocation(req.tenantId!, parsed);
+  async createLocation(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateStockLocationSchema)) body: CreateStockLocationRequest) {
+    return this.svc.createLocation(req.tenantId!, body);
   }
 
   @RequirePermission('supply.location.update')
   @Put('locations/params')
   @ApiOperation({ summary: 'Set min/max/par parameters per location/item' })
-  async updateLocationParams(@Req() req: RequestWithAuth, @Body() body: UpdateLocationItemParamsRequest) {
-    const parsed = UpdateLocationItemParamsSchema.parse(body);
-    return this.svc.updateLocationParams(req.tenantId!, parsed);
+  async updateLocationParams(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(UpdateLocationItemParamsSchema)) body: UpdateLocationItemParamsRequest) {
+    return this.svc.updateLocationParams(req.tenantId!, body);
   }
 
   @RequirePermission('supply.location.update')
   @Post('locations/params/bulk-csv')
   @ApiOperation({ summary: 'Bulk CSV import of location item params with error report' })
-  async bulkImportLocationParams(@Req() req: RequestWithAuth, @Body() body: BulkImportLocationParamsRequest) {
-    const parsed = BulkImportLocationParamsSchema.parse(body);
-    return this.svc.importLocationParamsCsv(req.tenantId!, parsed.csvContent);
+  async bulkImportLocationParams(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(BulkImportLocationParamsSchema)) body: BulkImportLocationParamsRequest) {
+    return this.svc.importLocationParamsCsv(req.tenantId!, body.csvContent);
   }
 
   @RequirePermission('supply.location.delete')
@@ -228,17 +217,15 @@ export class SupplyController {
   @RequirePermission('supply.period.lock')
   @Post('periods/lock')
   @ApiOperation({ summary: 'Lock accounting period' })
-  async lockPeriod(@Req() req: RequestWithAuth, @Body() body: PeriodActionRequest) {
-    const parsed = PeriodActionSchema.parse(body);
-    return this.svc.lockPeriod(req.tenantId!, req.authContext!.userId!, parsed);
+  async lockPeriod(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(PeriodActionSchema)) body: PeriodActionRequest) {
+    return this.svc.lockPeriod(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('supply.period.unlock')
   @Post('periods/unlock')
   @ApiOperation({ summary: 'Unlock accounting period' })
-  async unlockPeriod(@Req() req: RequestWithAuth, @Body() body: PeriodActionRequest) {
-    const parsed = PeriodActionSchema.parse(body);
-    return this.svc.unlockPeriod(req.tenantId!, req.authContext!.userId!, parsed);
+  async unlockPeriod(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(PeriodActionSchema)) body: PeriodActionRequest) {
+    return this.svc.unlockPeriod(req.tenantId!, req.authContext!.userId!, body);
   }
 
   // ── Batches ────────────────────────────────────────────────────────────────
@@ -253,17 +240,15 @@ export class SupplyController {
   @RequirePermission('supply.batch.quarantine')
   @Post('batches/:id/quarantine')
   @ApiOperation({ summary: 'Quarantine stock batch' })
-  async quarantineBatch(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: QuarantineBatchRequest) {
-    const parsed = QuarantineBatchSchema.parse(body);
-    return this.svc.quarantineBatch(req.tenantId!, id, parsed);
+  async quarantineBatch(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(QuarantineBatchSchema)) body: QuarantineBatchRequest) {
+    return this.svc.quarantineBatch(req.tenantId!, id, body);
   }
 
   @RequirePermission('supply.batch.release')
   @Post('batches/:id/release')
   @ApiOperation({ summary: 'Release quarantined stock batch' })
-  async releaseBatch(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: ReleaseBatchRequest) {
-    const parsed = ReleaseBatchSchema.parse(body);
-    return this.svc.releaseBatch(req.tenantId!, id, parsed);
+  async releaseBatch(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(ReleaseBatchSchema)) body: ReleaseBatchRequest) {
+    return this.svc.releaseBatch(req.tenantId!, id, body);
   }
 
   // ── Movements & Consumption ────────────────────────────────────────────────
@@ -271,19 +256,17 @@ export class SupplyController {
   @RequirePermission('supply.stock.read')
   @Post('movements')
   @ApiOperation({ summary: 'Post stock movement' })
-  async postMovement(@Req() req: RequestWithAuth, @Body() body: PostMovementRequest) {
-    const parsed = PostMovementSchema.parse(body);
+  async postMovement(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(PostMovementSchema)) body: PostMovementRequest) {
     const requestId = getRequestId(req);
-    return this.svc.postMovement(req.tenantId!, req.authContext!.userId!, requestId, parsed);
+    return this.svc.postMovement(req.tenantId!, req.authContext!.userId!, requestId, body);
   }
 
   @RequirePermission('supply.consumption.create')
   @Post('consumption')
   @ApiOperation({ summary: 'Post stock consumption (FEFO / procedure / house use)' })
-  async postConsumption(@Req() req: RequestWithAuth, @Body() body: PostConsumptionRequest) {
-    const parsed = PostConsumptionSchema.parse(body);
+  async postConsumption(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(PostConsumptionSchema)) body: PostConsumptionRequest) {
     const requestId = getRequestId(req);
-    return this.svc.postConsumption(req.tenantId!, req.authContext!.userId!, requestId, parsed);
+    return this.svc.postConsumption(req.tenantId!, req.authContext!.userId!, requestId, body);
   }
 
   // ── Patient Supply Requests (SUP-T10, specification §10) ────────────────────
@@ -304,10 +287,9 @@ export class SupplyController {
   @ApiOperation({ summary: 'Create a patient/visit-linked supply request' })
   async createPatientSupplyRequest(
     @Req() req: RequestWithAuth,
-    @Body() body: CreatePatientSupplyRequestRequest,
+    @Body(new ZodValidationPipe(CreatePatientSupplyRequestSchema)) body: CreatePatientSupplyRequestRequest,
   ) {
-    const parsed = CreatePatientSupplyRequestSchema.parse(body);
-    return this.svc.createPatientSupplyRequest(req.tenantId!, req.authContext!.userId!, parsed);
+    return this.svc.createPatientSupplyRequest(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('supply.consumption.create')
@@ -317,12 +299,11 @@ export class SupplyController {
     @Req() req: RequestWithAuth,
     @Param('id') id: string,
     @Param('itemId') itemId: string,
-    @Body() body: IssuePatientSupplyRequestRequest,
+    @Body(new ZodValidationPipe(IssuePatientSupplyRequestSchema)) body: IssuePatientSupplyRequestRequest,
   ) {
-    const parsed = IssuePatientSupplyRequestSchema.parse(body);
     const requestId = getRequestId(req);
     return this.svc.issuePatientSupplyRequestItem(
-      req.tenantId!, req.authContext!.userId!, id, itemId, requestId, parsed,
+      req.tenantId!, req.authContext!.userId!, id, itemId, requestId, body,
     );
   }
 
@@ -435,9 +416,8 @@ export class SupplyController {
   @RequirePermission('supply.grn.create')
   @Post('goods-receipts')
   @ApiOperation({ summary: 'Create goods receipt draft' })
-  async createGrn(@Req() req: RequestWithAuth, @Body() body: CreateGrnRequest) {
-    const parsed = CreateGrnSchema.parse(body);
-    return this.svc.createGrn(req.tenantId!, req.authContext!.userId!, parsed);
+  async createGrn(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateGrnSchema)) body: CreateGrnRequest) {
+    return this.svc.createGrn(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('supply.grn.post')
@@ -451,10 +431,9 @@ export class SupplyController {
   @RequirePermission('supply.grn.void')
   @Post('goods-receipts/:id/void')
   @ApiOperation({ summary: 'Void goods receipt (reversal movement)' })
-  async voidGrn(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: VoidGrnRequest) {
-    const parsed = VoidGrnSchema.parse(body);
+  async voidGrn(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(VoidGrnSchema)) body: VoidGrnRequest) {
     const requestId = getRequestId(req);
-    return this.svc.voidGrn(req.tenantId!, req.authContext!.userId!, requestId, id, parsed);
+    return this.svc.voidGrn(req.tenantId!, req.authContext!.userId!, requestId, id, body);
   }
 
   // ── Purchase Requests (PR) & Purchase Orders (PO) ──────────────────────────
@@ -469,9 +448,8 @@ export class SupplyController {
   @RequirePermission('supply.pr.create')
   @Post('purchase-requests')
   @ApiOperation({ summary: 'Create purchase request' })
-  async createPurchaseRequest(@Req() req: RequestWithAuth, @Body() body: CreatePrRequest) {
-    const parsed = CreatePrSchema.parse(body);
-    return this.svc.createPurchaseRequest(req.tenantId!, req.authContext!.userId!, parsed);
+  async createPurchaseRequest(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreatePrSchema)) body: CreatePrRequest) {
+    return this.svc.createPurchaseRequest(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('supply.pr.submit')
@@ -491,9 +469,8 @@ export class SupplyController {
   @RequirePermission('supply.pr.convert')
   @Post('purchase-requests/:id/convert-to-po')
   @ApiOperation({ summary: 'Convert PR to PO' })
-  async convertPrToPo(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: ConvertPrToPoRequest) {
-    const parsed = ConvertPrToPoSchema.parse(body);
-    return this.svc.convertPrToPo(req.tenantId!, req.authContext!.userId!, id, parsed);
+  async convertPrToPo(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(ConvertPrToPoSchema)) body: ConvertPrToPoRequest) {
+    return this.svc.convertPrToPo(req.tenantId!, req.authContext!.userId!, id, body);
   }
 
   @RequirePermission('supply.po.read')
@@ -506,9 +483,8 @@ export class SupplyController {
   @RequirePermission('supply.po.create')
   @Post('purchase-orders')
   @ApiOperation({ summary: 'Create purchase order draft' })
-  async createPo(@Req() req: RequestWithAuth, @Body() body: CreatePoRequest) {
-    const parsed = CreatePoSchema.parse(body);
-    return this.svc.createPo(req.tenantId!, req.authContext!.userId!, parsed);
+  async createPo(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreatePoSchema)) body: CreatePoRequest) {
+    return this.svc.createPo(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('supply.po.submit')
@@ -544,9 +520,8 @@ export class SupplyController {
   @RequirePermission('supply.invoice.match')
   @Post('supplier-invoices')
   @ApiOperation({ summary: 'Record and match supplier invoice (3-way match, SoD enforced)' })
-  async createSupplierInvoice(@Req() req: RequestWithAuth, @Body() body: CreateSupplierInvoiceRequest) {
-    const parsed = CreateSupplierInvoiceSchema.parse(body);
-    return this.svc.createSupplierInvoice(req.tenantId!, req.authContext!.userId!, parsed);
+  async createSupplierInvoice(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateSupplierInvoiceSchema)) body: CreateSupplierInvoiceRequest) {
+    return this.svc.createSupplierInvoice(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('supply.invoice.read')
@@ -561,9 +536,8 @@ export class SupplyController {
   @RequirePermission('supply.return.create')
   @Post('returns')
   @ApiOperation({ summary: 'Create return to supplier record (RTV)' })
-  async createSupplierReturn(@Req() req: RequestWithAuth, @Body() body: CreateSupplierReturnRequest) {
-    const parsed = CreateSupplierReturnSchema.parse(body);
-    return this.svc.createSupplierReturn(req.tenantId!, req.authContext!.userId!, parsed);
+  async createSupplierReturn(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateSupplierReturnSchema)) body: CreateSupplierReturnRequest) {
+    return this.svc.createSupplierReturn(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('supply.return.post')
@@ -635,9 +609,8 @@ export class SupplyController {
   @RequirePermission('supply.req.create')
   @Post('requisitions')
   @ApiOperation({ summary: 'Create department requisition' })
-  async createRequisition(@Req() req: RequestWithAuth, @Body() body: CreateRequisitionRequest) {
-    const parsed = CreateRequisitionSchema.parse(body);
-    return this.svc.createRequisition(req.tenantId!, req.authContext!.userId!, parsed);
+  async createRequisition(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateRequisitionSchema)) body: CreateRequisitionRequest) {
+    return this.svc.createRequisition(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('supply.req.submit')
@@ -657,19 +630,17 @@ export class SupplyController {
   @RequirePermission('supply.issue.create')
   @Post('requisitions/issues')
   @ApiOperation({ summary: 'Issue stock for requisition (FEFO pick & in-transit post)' })
-  async createIssue(@Req() req: RequestWithAuth, @Body() body: CreateIssueRequest) {
-    const parsed = CreateIssueSchema.parse(body);
+  async createIssue(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateIssueSchema)) body: CreateIssueRequest) {
     const requestId = getRequestId(req);
-    return this.svc.createIssue(req.tenantId!, req.authContext!.userId!, requestId, parsed);
+    return this.svc.createIssue(req.tenantId!, req.authContext!.userId!, requestId, body);
   }
 
   @RequirePermission('supply.req.receive')
   @Post('requisitions/acknowledge')
   @ApiOperation({ summary: 'Acknowledge requisition receipt (with discrepancy tracking)' })
-  async acknowledgeRequisition(@Req() req: RequestWithAuth, @Body() body: AcknowledgeRequisitionRequest) {
-    const parsed = AcknowledgeRequisitionSchema.parse(body);
+  async acknowledgeRequisition(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(AcknowledgeRequisitionSchema)) body: AcknowledgeRequisitionRequest) {
     const requestId = getRequestId(req);
-    return this.svc.acknowledgeRequisition(req.tenantId!, req.authContext!.userId!, requestId, parsed);
+    return this.svc.acknowledgeRequisition(req.tenantId!, req.authContext!.userId!, requestId, body);
   }
 
   // ── Stock Adjustments (SUP-T5) ──────────────────────────────────────────────
@@ -684,9 +655,8 @@ export class SupplyController {
   @RequirePermission('supply.adjust.create')
   @Post('adjustments')
   @ApiOperation({ summary: 'Create stock adjustment draft' })
-  async createAdjustment(@Req() req: RequestWithAuth, @Body() body: CreateAdjustmentRequest) {
-    const parsed = CreateAdjustmentSchema.parse(body);
-    return this.svc.createAdjustment(req.tenantId!, req.authContext!.userId!, parsed);
+  async createAdjustment(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateAdjustmentSchema)) body: CreateAdjustmentRequest) {
+    return this.svc.createAdjustment(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('supply.adjust.submit')
@@ -716,17 +686,15 @@ export class SupplyController {
   @RequirePermission('supply.count.create')
   @Post('counts')
   @ApiOperation({ summary: 'Create physical count sheet' })
-  async createCount(@Req() req: RequestWithAuth, @Body() body: CreateCountRequest) {
-    const parsed = CreateCountSchema.parse(body);
-    return this.svc.createCount(req.tenantId!, req.authContext!.userId!, parsed);
+  async createCount(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateCountSchema)) body: CreateCountRequest) {
+    return this.svc.createCount(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('supply.count.update')
   @Post('counts/:id/lines')
   @ApiOperation({ summary: 'Enter count sheet lines' })
-  async enterCountLines(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: EnterCountLinesRequest) {
-    const parsed = EnterCountLinesSchema.parse(body);
-    return this.svc.enterCountLines(req.tenantId!, id, parsed);
+  async enterCountLines(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(EnterCountLinesSchema)) body: EnterCountLinesRequest) {
+    return this.svc.enterCountLines(req.tenantId!, id, body);
   }
 
   @RequirePermission('supply.count.post')
@@ -742,9 +710,8 @@ export class SupplyController {
   @RequirePermission('supply.dispose.create')
   @Post('disposals')
   @ApiOperation({ summary: 'Create disposal record' })
-  async createDisposal(@Req() req: RequestWithAuth, @Body() body: CreateDisposalRequest) {
-    const parsed = CreateDisposalSchema.parse(body);
-    return this.svc.createDisposal(req.tenantId!, req.authContext!.userId!, parsed);
+  async createDisposal(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateDisposalSchema)) body: CreateDisposalRequest) {
+    return this.svc.createDisposal(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('supply.dispose.post')
@@ -760,9 +727,8 @@ export class SupplyController {
   @RequirePermission('supply.recall.create')
   @Post('recalls')
   @ApiOperation({ summary: 'Create lot recall (auto-quarantines batches)' })
-  async createRecall(@Req() req: RequestWithAuth, @Body() body: CreateRecallRequest) {
-    const parsed = CreateRecallSchema.parse(body);
-    return this.svc.createRecall(req.tenantId!, req.authContext!.userId!, parsed);
+  async createRecall(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateRecallSchema)) body: CreateRecallRequest) {
+    return this.svc.createRecall(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('supply.recall.read')
@@ -775,9 +741,8 @@ export class SupplyController {
   @RequirePermission('supply.recall.close')
   @Post('recalls/:id/close')
   @ApiOperation({ summary: 'Close recall with completed checklist' })
-  async closeRecall(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: CloseRecallRequest) {
-    const parsed = CloseRecallSchema.parse(body);
-    return this.svc.closeRecall(req.tenantId!, id, parsed);
+  async closeRecall(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(CloseRecallSchema)) body: CloseRecallRequest) {
+    return this.svc.closeRecall(req.tenantId!, id, body);
   }
 
   // ── Stock Explorer & Ledger APIs ───────────────────────────────────────────

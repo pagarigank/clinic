@@ -27,6 +27,7 @@ import {
   DailyCloseRunSchema, type DailyCloseRunRequest,
   SaveCashSessionSchema, type SaveCashSessionRequest,
 } from '@clinic/contracts';
+import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
 
 @ApiTags('Billing')
 @ApiBearerAuth()
@@ -118,25 +119,22 @@ export class BillingController {
   @RequirePermission('billing.invoice.create')
   @Post('invoices')
   @ApiOperation({ summary: 'Create invoice' })
-  async createInvoice(@Req() req: RequestWithAuth, @Body() body: CreateInvoiceRequest) {
-    const parsed = CreateInvoiceSchema.parse(body);
-    return this.svc.createInvoice(req.tenantId!, req.authContext!.userId!, parsed);
+  async createInvoice(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateInvoiceSchema)) body: CreateInvoiceRequest) {
+    return this.svc.createInvoice(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('billing.invoice.update')
   @Patch('invoices/:id')
   @ApiOperation({ summary: 'Update draft invoice' })
-  async updateInvoice(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: UpdateInvoiceRequest) {
-    const parsed = UpdateInvoiceSchema.parse(body);
-    return this.svc.updateInvoice(req.tenantId!, req.authContext!.userId!, id, parsed);
+  async updateInvoice(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(UpdateInvoiceSchema)) body: UpdateInvoiceRequest) {
+    return this.svc.updateInvoice(req.tenantId!, req.authContext!.userId!, id, body);
   }
 
   @RequirePermission('billing.invoice.update')
   @Post('invoices/:id/lines')
   @ApiOperation({ summary: 'Add line to draft invoice' })
-  async addInvoiceLine(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: AddInvoiceLineRequest) {
-    const parsed = AddInvoiceLineSchema.parse(body);
-    return this.svc.addInvoiceLine(req.tenantId!, req.authContext!.userId!, id, parsed);
+  async addInvoiceLine(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(AddInvoiceLineSchema)) body: AddInvoiceLineRequest) {
+    return this.svc.addInvoiceLine(req.tenantId!, req.authContext!.userId!, id, body);
   }
 
   @RequirePermission('billing.invoice.update')
@@ -153,17 +151,15 @@ export class BillingController {
   @RequirePermission('billing.invoice.update')
   @Post('invoices/:id/consume-charges')
   @ApiOperation({ summary: 'Consume captured charges into draft invoice' })
-  async consumeCharges(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: ConsumeChargesRequest) {
-    const parsed = ConsumeChargesSchema.parse(body);
-    return this.svc.consumeCharges(req.tenantId!, req.authContext!.userId!, id, parsed.chargeIds);
+  async consumeCharges(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(ConsumeChargesSchema)) body: ConsumeChargesRequest) {
+    return this.svc.consumeCharges(req.tenantId!, req.authContext!.userId!, id, body.chargeIds);
   }
 
   @RequirePermission('billing.invoice.void')
   @Post('invoices/:id/void')
   @ApiOperation({ summary: 'Void invoice' })
-  async voidInvoice(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: VoidInvoiceRequest) {
-    const parsed = VoidInvoiceSchema.parse(body);
-    return this.svc.voidInvoice(req.tenantId!, req.authContext!.userId!, id, parsed);
+  async voidInvoice(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(VoidInvoiceSchema)) body: VoidInvoiceRequest) {
+    return this.svc.voidInvoice(req.tenantId!, req.authContext!.userId!, id, body);
   }
 
   // ── 2. Discounts (BIL-T2) ──────────────────────────────────────────────────
@@ -178,9 +174,8 @@ export class BillingController {
   @RequirePermission('billing.discount.create')
   @Post('invoices/:id/discounts')
   @ApiOperation({ summary: 'Apply discount to invoice' })
-  async applyDiscount(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: ApplyDiscountRequest) {
-    const parsed = ApplyDiscountSchema.parse(body);
-    return this.svc.applyDiscount(req.tenantId!, req.authContext!.userId!, id, parsed);
+  async applyDiscount(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(ApplyDiscountSchema)) body: ApplyDiscountRequest) {
+    return this.svc.applyDiscount(req.tenantId!, req.authContext!.userId!, id, body);
   }
 
   @RequirePermission('billing.discount.revoke')
@@ -274,26 +269,23 @@ export class BillingController {
   @RequirePermission('billing.payment.create')
   @Post('payments')
   @ApiOperation({ summary: 'Take payment (split tender supported)' })
-  async createPayment(@Req() req: RequestWithAuth, @Body() body: CreatePaymentRequest) {
-    const parsed = CreatePaymentSchema.parse(body);
-    return this.svc.createPayment(req.tenantId!, req.authContext!.userId!, parsed);
+  async createPayment(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreatePaymentSchema)) body: CreatePaymentRequest) {
+    return this.svc.createPayment(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('billing.payment.read')
   @Post('payments/:id/reprint')
   @ApiOperation({ summary: 'Reprint receipt with audit log' })
-  async reprintReceipt(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: ReprintReceiptRequest) {
-    const parsed = ReprintReceiptSchema.parse(body);
-    return this.svc.reprintReceipt(req.tenantId!, req.authContext!.userId!, id, parsed);
+  async reprintReceipt(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(ReprintReceiptSchema)) body: ReprintReceiptRequest) {
+    return this.svc.reprintReceipt(req.tenantId!, req.authContext!.userId!, id, body);
   }
 
   @RequirePermission('billing.payment.void')
   @RequireStepUp()
   @Post('payments/:id/void')
   @ApiOperation({ summary: 'Void payment (requires step-up auth)' })
-  async voidPayment(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: VoidPaymentRequest) {
-    const parsed = VoidPaymentSchema.parse(body);
-    return this.svc.voidPayment(req.tenantId!, req.authContext!.userId!, id, parsed);
+  async voidPayment(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(VoidPaymentSchema)) body: VoidPaymentRequest) {
+    return this.svc.voidPayment(req.tenantId!, req.authContext!.userId!, id, body);
   }
 
   // ── 3.5 Cash Sessions (POS State) ──────────────────────────────────────────
@@ -308,9 +300,8 @@ export class BillingController {
   @RequirePermission('billing.payment.create')
   @Post('sessions/:id')
   @ApiOperation({ summary: 'Save or update POS session' })
-  async saveCashSession(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: SaveCashSessionRequest) {
-    const parsed = SaveCashSessionSchema.parse(body);
-    return this.svc.saveCashSession(req.tenantId!, req.authContext!.userId!, id, parsed);
+  async saveCashSession(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(SaveCashSessionSchema)) body: SaveCashSessionRequest) {
+    return this.svc.saveCashSession(req.tenantId!, req.authContext!.userId!, id, body);
   }
 
   // ── 4. Cashier Shifts (BIL-T5) ─────────────────────────────────────────────
@@ -364,17 +355,15 @@ export class BillingController {
   @RequirePermission('billing.shift.open')
   @Post('shifts/open')
   @ApiOperation({ summary: 'Open cashier shift' })
-  async openShift(@Req() req: RequestWithAuth, @Body() body: OpenShiftRequest) {
-    const parsed = OpenShiftSchema.parse(body);
-    return this.svc.openShift(req.tenantId!, req.authContext!.userId!, parsed);
+  async openShift(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(OpenShiftSchema)) body: OpenShiftRequest) {
+    return this.svc.openShift(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('billing.shift.close')
   @Post('shifts/:id/close')
   @ApiOperation({ summary: 'Close cashier shift with blind count' })
-  async closeShift(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: CloseShiftRequest) {
-    const parsed = CloseShiftSchema.parse(body);
-    return this.svc.closeShift(req.tenantId!, req.authContext!.userId!, id, parsed);
+  async closeShift(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(CloseShiftSchema)) body: CloseShiftRequest) {
+    return this.svc.closeShift(req.tenantId!, req.authContext!.userId!, id, body);
   }
 
   // ── 5. Credit Notes (BIL-T4) ───────────────────────────────────────────────
@@ -394,17 +383,15 @@ export class BillingController {
   @RequirePermission('billing.credit.create')
   @Post('credit-notes')
   @ApiOperation({ summary: 'Create credit note' })
-  async createCreditNote(@Req() req: RequestWithAuth, @Body() body: CreateCreditNoteRequest) {
-    const parsed = CreateCreditNoteSchema.parse(body);
-    return this.svc.createCreditNote(req.tenantId!, req.authContext!.userId!, parsed);
+  async createCreditNote(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateCreditNoteSchema)) body: CreateCreditNoteRequest) {
+    return this.svc.createCreditNote(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('billing.credit.approve')
   @Post('credit-notes/:id/approve')
   @ApiOperation({ summary: 'Approve credit note' })
-  async approveCreditNote(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: ApproveCreditNoteRequest) {
-    const parsed = ApproveCreditNoteSchema.parse(body);
-    return this.svc.approveCreditNote(req.tenantId!, req.authContext!.userId!, id, parsed);
+  async approveCreditNote(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(ApproveCreditNoteSchema)) body: ApproveCreditNoteRequest) {
+    return this.svc.approveCreditNote(req.tenantId!, req.authContext!.userId!, id, body);
   }
 
   // ── 6. Charges (Staging) ───────────────────────────────────────────────────
@@ -430,9 +417,8 @@ export class BillingController {
   @RequirePermission('billing.charge.create')
   @Post('charges')
   @ApiOperation({ summary: 'Create/post a charge line' })
-  async createCharge(@Req() req: RequestWithAuth, @Body() body: CreateChargeRequest) {
-    const parsed = CreateChargeSchema.parse(body);
-    return this.svc.createCharge(req.tenantId!, req.authContext!.userId!, parsed);
+  async createCharge(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateChargeSchema)) body: CreateChargeRequest) {
+    return this.svc.createCharge(req.tenantId!, req.authContext!.userId!, body);
   }
 
   // ── 7. Daily Close & Reports ───────────────────────────────────────────────
@@ -464,9 +450,8 @@ export class BillingController {
   @RequirePermission('billing.shift.close')
   @Post('daily-close')
   @ApiOperation({ summary: 'Trigger daily close summary on demand' })
-  async runDailyClose(@Req() req: RequestWithAuth, @Body() body: DailyCloseRunRequest) {
-    const parsed = DailyCloseRunSchema.parse(body);
-    return this.svc.runDailyClose(req.tenantId!, req.authContext!.userId!, parsed);
+  async runDailyClose(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(DailyCloseRunSchema)) body: DailyCloseRunRequest) {
+    return this.svc.runDailyClose(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('billing.invoice.read')

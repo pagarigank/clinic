@@ -9,6 +9,27 @@ import {
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { buildProblem, statusForCode } from "./problem.js";
 
+interface ZodLikeIssue {
+  path?: (string | number)[];
+  message?: string;
+}
+
+/**
+ * Duck-typed ZodError guard. We deliberately avoid `instanceof ZodError`
+ * because zod is duplicated across package boundaries (v3 in some services,
+ * v4 in @clinic/contracts), so an instanceof check can silently miss the
+ * error and leak it as a 500.
+ */
+function asZodErrors(exception: unknown): { path: string; message: string }[] | undefined {
+  if (typeof exception !== "object" || exception === null) return undefined;
+  const candidate = exception as { name?: unknown; issues?: unknown };
+  if (candidate.name !== "ZodError" || !Array.isArray(candidate.issues)) return undefined;
+  return (candidate.issues as ZodLikeIssue[]).map((issue) => ({
+    path: Array.isArray(issue.path) ? issue.path.join(".") : "",
+    message: typeof issue.message === "string" ? issue.message : "Invalid value",
+  }));
+}
+
 /**
  * Global error filter → RFC 9457 application/problem+json (todo 0.3,
  * architecture §11.2). Error bodies never contain PHI beyond what the caller
@@ -42,6 +63,16 @@ export class ProblemExceptionFilter implements ExceptionFilter {
         ...(Array.isArray(payload?.errors) ? { errors: payload.errors } : {}),
       });
       body.status = status;
+    } else if (asZodErrors(exception) !== undefined) {
+      // Safety net: inline `Schema.parse(body)` in controllers throws a raw
+      // ZodError which is not an HttpException. Surface it as 422 instead of
+      // a 500, matching ZodValidationPipe.
+      body = buildProblem("VALIDATION_FAILED", {
+        detail: "Request payload failed validation.",
+        correlationId,
+        errors: asZodErrors(exception),
+      });
+      body.status = 422;
     } else {
       body = buildProblem("UPSTREAM_UNAVAILABLE", { correlationId });
       // Unknown/unexpected: log internally, never leak internals to the client.

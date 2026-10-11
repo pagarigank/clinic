@@ -35,6 +35,7 @@ import {
   CreateLabSendOutSchema, type CreateLabSendOutRequest,
   ReceiveLabSendOutResultSchema, type ReceiveLabSendOutResultRequest,
 } from '@clinic/contracts';
+import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
 
 @ApiTags('Laboratory')
 @ApiBearerAuth()
@@ -57,17 +58,15 @@ export class LabController {
   @RequirePermission('lab.config.create')
   @Post('sections')
   @ApiOperation({ summary: 'Create lab section' })
-  async createSection(@Req() req: RequestWithAuth, @Body() body: CreateLabSectionRequest) {
-    const parsed = CreateLabSectionSchema.parse(body);
-    return this.svc.createSection(req.tenantId!, parsed);
+  async createSection(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateLabSectionSchema)) body: CreateLabSectionRequest) {
+    return this.svc.createSection(req.tenantId!, body);
   }
 
   @RequirePermission('lab.config.update')
   @Patch('sections/:id')
   @ApiOperation({ summary: 'Update lab section' })
-  async updateSection(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: UpdateLabSectionRequest) {
-    const parsed = UpdateLabSectionSchema.parse(body);
-    return this.svc.updateSection(req.tenantId!, id, parsed);
+  async updateSection(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(UpdateLabSectionSchema)) body: UpdateLabSectionRequest) {
+    return this.svc.updateSection(req.tenantId!, id, body);
   }
 
   @RequirePermission('lab.config.delete')
@@ -89,9 +88,8 @@ export class LabController {
   @RequirePermission('lab.config.create')
   @Post('specimen-types')
   @ApiOperation({ summary: 'Create specimen type' })
-  async createSpecimenType(@Req() req: RequestWithAuth, @Body() body: CreateLabSpecimenTypeRequest) {
-    const parsed = CreateLabSpecimenTypeSchema.parse(body);
-    return this.svc.createSpecimenType(req.tenantId!, parsed);
+  async createSpecimenType(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateLabSpecimenTypeSchema)) body: CreateLabSpecimenTypeRequest) {
+    return this.svc.createSpecimenType(req.tenantId!, body);
   }
 
   @RequirePermission('lab.config.delete')
@@ -127,17 +125,15 @@ export class LabController {
   @RequirePermission('lab.config.create')
   @Post('tests')
   @ApiOperation({ summary: 'Create lab test or panel' })
-  async createTest(@Req() req: RequestWithAuth, @Body() body: CreateLabTestRequest) {
-    const parsed = CreateLabTestSchema.parse(body);
-    return this.svc.createTest(req.tenantId!, parsed);
+  async createTest(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateLabTestSchema)) body: CreateLabTestRequest) {
+    return this.svc.createTest(req.tenantId!, body);
   }
 
   @RequirePermission('lab.config.update')
   @Patch('tests/:id')
   @ApiOperation({ summary: 'Update lab test' })
-  async updateTest(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: UpdateLabTestRequest) {
-    const parsed = UpdateLabTestSchema.parse(body);
-    return this.svc.updateTest(req.tenantId!, id, parsed);
+  async updateTest(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(UpdateLabTestSchema)) body: UpdateLabTestRequest) {
+    return this.svc.updateTest(req.tenantId!, id, body);
   }
 
   @RequirePermission('lab.config.delete')
@@ -162,10 +158,9 @@ export class LabController {
   async createAnalyte(
     @Req() req: RequestWithAuth,
     @Param('id') testId: string,
-    @Body() body: CreateLabAnalyteRequest,
+    @Body(new ZodValidationPipe(CreateLabAnalyteSchema)) body: CreateLabAnalyteRequest,
   ) {
-    const parsed = CreateLabAnalyteSchema.parse(body);
-    return this.svc.createAnalyte(req.tenantId!, testId, parsed);
+    return this.svc.createAnalyte(req.tenantId!, testId, body);
   }
 
   @RequirePermission('lab.config.delete')
@@ -190,10 +185,9 @@ export class LabController {
   async createReferenceRange(
     @Req() req: RequestWithAuth,
     @Param('id') analyteId: string,
-    @Body() body: CreateLabReferenceRangeRequest,
+    @Body(new ZodValidationPipe(CreateLabReferenceRangeSchema)) body: CreateLabReferenceRangeRequest,
   ) {
-    const parsed = CreateLabReferenceRangeSchema.parse(body);
-    return this.svc.createReferenceRange(req.tenantId!, analyteId, parsed);
+    return this.svc.createReferenceRange(req.tenantId!, analyteId, body);
   }
 
   // ── Configuration: Delta Rules ─────────────────────────────────────────────
@@ -211,10 +205,9 @@ export class LabController {
   async createDeltaRule(
     @Req() req: RequestWithAuth,
     @Param('id') analyteId: string,
-    @Body() body: CreateLabDeltaRuleRequest,
+    @Body(new ZodValidationPipe(CreateLabDeltaRuleSchema)) body: CreateLabDeltaRuleRequest,
   ) {
-    const parsed = CreateLabDeltaRuleSchema.parse(body);
-    return this.svc.createDeltaRule(req.tenantId!, analyteId, parsed);
+    return this.svc.createDeltaRule(req.tenantId!, analyteId, body);
   }
 
   @RequirePermission('lab.config.delete')
@@ -256,9 +249,8 @@ export class LabController {
   @RequirePermission('lab.config.create')
   @Post('instruments')
   @ApiOperation({ summary: 'Create lab instrument' })
-  async createInstrument(@Req() req: RequestWithAuth, @Body() body: CreateLabInstrumentRequest) {
-    const parsed = CreateLabInstrumentSchema.parse(body);
-    return this.svc.createInstrument(req.tenantId!, parsed);
+  async createInstrument(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateLabInstrumentSchema)) body: CreateLabInstrumentRequest) {
+    return this.svc.createInstrument(req.tenantId!, body);
   }
 
   @RequirePermission('lab.config.delete')
@@ -280,9 +272,8 @@ export class LabController {
   @RequirePermission('lab.qc.create')
   @Post('qc-materials')
   @ApiOperation({ summary: 'Create QC material' })
-  async createQcMaterial(@Req() req: RequestWithAuth, @Body() body: CreateLabQcMaterialRequest) {
-    const parsed = CreateLabQcMaterialSchema.parse(body);
-    return this.svc.createQcMaterial(req.tenantId!, parsed);
+  async createQcMaterial(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateLabQcMaterialSchema)) body: CreateLabQcMaterialRequest) {
+    return this.svc.createQcMaterial(req.tenantId!, body);
   }
 
   // ── Configuration: Report Templates ────────────────────────────────────────
@@ -297,9 +288,8 @@ export class LabController {
   @RequirePermission('lab.config.create')
   @Post('report-templates')
   @ApiOperation({ summary: 'Create report template' })
-  async createReportTemplate(@Req() req: RequestWithAuth, @Body() body: CreateLabReportTemplateRequest) {
-    const parsed = CreateLabReportTemplateSchema.parse(body);
-    return this.svc.createReportTemplate(req.tenantId!, parsed);
+  async createReportTemplate(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateLabReportTemplateSchema)) body: CreateLabReportTemplateRequest) {
+    return this.svc.createReportTemplate(req.tenantId!, body);
   }
 
   // ── Worklist & Orders (LAB-T1) ──────────────────────────────────────────────
@@ -336,9 +326,8 @@ export class LabController {
   @RequirePermission('lab.order.create')
   @Post('orders')
   @ApiOperation({ summary: 'Create lab order (expands panels)' })
-  async createOrder(@Req() req: RequestWithAuth, @Body() body: CreateLabOrderRequest) {
-    const parsed = CreateLabOrderSchema.parse(body);
-    return this.svc.createOrder(req.tenantId!, req.authContext?.userId!, parsed);
+  async createOrder(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateLabOrderSchema)) body: CreateLabOrderRequest) {
+    return this.svc.createOrder(req.tenantId!, req.authContext?.userId!, body);
   }
 
   @RequirePermission('lab.order.read')
@@ -351,9 +340,8 @@ export class LabController {
   @RequirePermission('lab.order.create')
   @Post('orders/:id/cancel')
   @ApiOperation({ summary: 'Cancel lab order' })
-  async cancelOrder(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: CancelLabOrderRequest) {
-    const parsed = CancelLabOrderSchema.parse(body);
-    return this.svc.cancelOrder(req.tenantId!, id, req.authContext?.userId!, parsed.reason);
+  async cancelOrder(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(CancelLabOrderSchema)) body: CancelLabOrderRequest) {
+    return this.svc.cancelOrder(req.tenantId!, id, req.authContext?.userId!, body.reason);
   }
 
   // ── Specimen Lifecycle (LAB-T2, LAB-T3) ────────────────────────────────────
@@ -365,10 +353,9 @@ export class LabController {
     @Req() req: RequestWithAuth,
     @Param('id') orderId: string,
     @Param('iid') itemId: string,
-    @Body() body: CollectSpecimenRequest,
+    @Body(new ZodValidationPipe(CollectSpecimenSchema)) body: CollectSpecimenRequest,
   ) {
-    const parsed = CollectSpecimenSchema.parse(body);
-    return this.svc.collectSpecimen(req.tenantId!, orderId, itemId, req.authContext?.userId!, parsed);
+    return this.svc.collectSpecimen(req.tenantId!, orderId, itemId, req.authContext?.userId!, body);
   }
 
   @RequirePermission('lab.specimen.receive')
@@ -378,10 +365,9 @@ export class LabController {
     @Req() req: RequestWithAuth,
     @Param('id') orderId: string,
     @Param('iid') itemId: string,
-    @Body() body: ReceiveSpecimenRequest,
+    @Body(new ZodValidationPipe(ReceiveSpecimenSchema)) body: ReceiveSpecimenRequest,
   ) {
-    const parsed = ReceiveSpecimenSchema.parse(body);
-    return this.svc.receiveSpecimen(req.tenantId!, orderId, itemId, req.authContext?.userId!, parsed);
+    return this.svc.receiveSpecimen(req.tenantId!, orderId, itemId, req.authContext?.userId!, body);
   }
 
   @RequirePermission('lab.result.enter')
@@ -416,10 +402,9 @@ export class LabController {
     @Req() req: RequestWithAuth,
     @Param('id') orderId: string,
     @Param('iid') itemId: string,
-    @Body() body: EnterLabResultsRequest,
+    @Body(new ZodValidationPipe(EnterLabResultsSchema)) body: EnterLabResultsRequest,
   ) {
-    const parsed = EnterLabResultsSchema.parse(body);
-    return this.svc.enterResults(req.tenantId!, orderId, itemId, req.authContext?.userId!, parsed);
+    return this.svc.enterResults(req.tenantId!, orderId, itemId, req.authContext?.userId!, body);
   }
 
   @RequirePermission('lab.result.verify')
@@ -438,10 +423,9 @@ export class LabController {
   async amendResult(
     @Req() req: RequestWithAuth,
     @Param('rid') resultId: string,
-    @Body() body: AmendLabResultRequest,
+    @Body(new ZodValidationPipe(AmendLabResultSchema)) body: AmendLabResultRequest,
   ) {
-    const parsed = AmendLabResultSchema.parse(body);
-    return this.svc.amendResult(req.tenantId!, resultId, req.authContext?.userId!, parsed);
+    return this.svc.amendResult(req.tenantId!, resultId, req.authContext?.userId!, body);
   }
 
   @RequirePermission('lab.result.read')
@@ -472,10 +456,9 @@ export class LabController {
   async acknowledgeCriticalAlert(
     @Req() req: RequestWithAuth,
     @Param('id') alertId: string,
-    @Body() body: AckCriticalNotificationRequest,
+    @Body(new ZodValidationPipe(AckCriticalNotificationSchema)) body: AckCriticalNotificationRequest,
   ) {
-    const parsed = AckCriticalNotificationSchema.parse(body);
-    return this.svc.acknowledgeCriticalAlert(req.tenantId!, alertId, req.authContext?.userId!, parsed);
+    return this.svc.acknowledgeCriticalAlert(req.tenantId!, alertId, req.authContext?.userId!, body);
   }
 
   // ── Reports (LAB-T8) ───────────────────────────────────────────────────────
@@ -486,10 +469,9 @@ export class LabController {
   async releaseReport(
     @Req() req: RequestWithAuth,
     @Param('id') orderId: string,
-    @Body() body: ReleaseLabReportRequest,
+    @Body(new ZodValidationPipe(ReleaseLabReportSchema)) body: ReleaseLabReportRequest,
   ) {
-    const parsed = ReleaseLabReportSchema.parse(body);
-    return this.svc.releaseReport(req.tenantId!, orderId, req.authContext?.userId!, parsed);
+    return this.svc.releaseReport(req.tenantId!, orderId, req.authContext?.userId!, body);
   }
 
   @RequirePermission('lab.report.read')
@@ -567,9 +549,8 @@ export class LabController {
   @RequirePermission('lab.qc.create')
   @Post('qc-runs')
   @ApiOperation({ summary: 'Record QC run with Westgard evaluation' })
-  async createQcRun(@Req() req: RequestWithAuth, @Body() body: CreateLabQcRunRequest) {
-    const parsed = CreateLabQcRunSchema.parse(body);
-    return this.svc.createQcRun(req.tenantId!, req.authContext?.userId!, parsed);
+  async createQcRun(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateLabQcRunSchema)) body: CreateLabQcRunRequest) {
+    return this.svc.createQcRun(req.tenantId!, req.authContext?.userId!, body);
   }
 
   // ── Send-outs (LAB-T11) ────────────────────────────────────────────────────
@@ -584,9 +565,8 @@ export class LabController {
   @RequirePermission('lab.sendout.create')
   @Post('send-outs')
   @ApiOperation({ summary: 'Create send-out referral' })
-  async createSendOut(@Req() req: RequestWithAuth, @Body() body: CreateLabSendOutRequest) {
-    const parsed = CreateLabSendOutSchema.parse(body);
-    return this.svc.createSendOut(req.tenantId!, req.authContext?.userId!, parsed);
+  async createSendOut(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateLabSendOutSchema)) body: CreateLabSendOutRequest) {
+    return this.svc.createSendOut(req.tenantId!, req.authContext?.userId!, body);
   }
 
   @RequirePermission('lab.sendout.update')
@@ -595,10 +575,9 @@ export class LabController {
   async receiveSendOutResult(
     @Req() req: RequestWithAuth,
     @Param('id') id: string,
-    @Body() body: ReceiveLabSendOutResultRequest,
+    @Body(new ZodValidationPipe(ReceiveLabSendOutResultSchema)) body: ReceiveLabSendOutResultRequest,
   ) {
-    const parsed = ReceiveLabSendOutResultSchema.parse(body);
-    return this.svc.receiveSendOutResult(req.tenantId!, id, req.authContext?.userId!, parsed);
+    return this.svc.receiveSendOutResult(req.tenantId!, id, req.authContext?.userId!, body);
   }
 
   // ── Specimens Chain of Custody & TAT ───────────────────────────────────────

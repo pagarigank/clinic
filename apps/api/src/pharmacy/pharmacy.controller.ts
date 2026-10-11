@@ -27,6 +27,7 @@ import {
   CreateMedicationAdminSchema, type CreateMedicationAdminRequest,
   CreatePatientReturnSchema, type CreatePatientReturnRequest,
 } from '@clinic/contracts';
+import { ZodValidationPipe } from '../http/zod-validation.pipe.js';
 
 function getRequestId(req: RequestWithAuth): string {
   return ((req as any).headers?.['x-request-id'] as string) ?? req.correlationId ?? `req-${Date.now()}`;
@@ -60,17 +61,15 @@ export class PharmacyController {
   @RequirePermission('pharmacy.product.create')
   @Post('generics')
   @ApiOperation({ summary: 'Create generic drug name' })
-  async createGeneric(@Req() req: RequestWithAuth, @Body() body: CreateGenericNameRequest) {
-    const parsed = CreateGenericNameSchema.parse(body);
-    return this.svc.createGeneric(req.tenantId!, parsed);
+  async createGeneric(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateGenericNameSchema)) body: CreateGenericNameRequest) {
+    return this.svc.createGeneric(req.tenantId!, body);
   }
 
   @RequirePermission('pharmacy.product.update')
   @Patch('generics/:id')
   @ApiOperation({ summary: 'Update generic drug name' })
-  async updateGeneric(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: UpdateGenericNameRequest) {
-    const parsed = UpdateGenericNameSchema.parse(body);
-    return this.svc.updateGeneric(req.tenantId!, id, parsed);
+  async updateGeneric(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(UpdateGenericNameSchema)) body: UpdateGenericNameRequest) {
+    return this.svc.updateGeneric(req.tenantId!, id, body);
   }
 
   @RequirePermission('pharmacy.product.delete')
@@ -99,17 +98,15 @@ export class PharmacyController {
   @RequirePermission('pharmacy.product.create')
   @Post('products')
   @ApiOperation({ summary: 'Create drug product (auto-creates items master)' })
-  async createProduct(@Req() req: RequestWithAuth, @Body() body: CreateDrugProductRequest) {
-    const parsed = CreateDrugProductSchema.parse(body);
-    return this.svc.createProduct(req.tenantId!, parsed);
+  async createProduct(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateDrugProductSchema)) body: CreateDrugProductRequest) {
+    return this.svc.createProduct(req.tenantId!, body);
   }
 
   @RequirePermission('pharmacy.product.update')
   @Patch('products/:id')
   @ApiOperation({ summary: 'Update drug product' })
-  async updateProduct(@Req() req: RequestWithAuth, @Param('id') id: string, @Body() body: UpdateDrugProductRequest) {
-    const parsed = UpdateDrugProductSchema.parse(body);
-    return this.svc.updateProduct(req.tenantId!, id, parsed);
+  async updateProduct(@Req() req: RequestWithAuth, @Param('id') id: string, @Body(new ZodValidationPipe(UpdateDrugProductSchema)) body: UpdateDrugProductRequest) {
+    return this.svc.updateProduct(req.tenantId!, id, body);
   }
 
   @RequirePermission('pharmacy.product.delete')
@@ -131,9 +128,8 @@ export class PharmacyController {
   @RequirePermission('pharmacy.product.create')
   @Post('interactions')
   @ApiOperation({ summary: 'Create or override drug interaction rule' })
-  async createInteraction(@Req() req: RequestWithAuth, @Body() body: CreateDrugInteractionRequest) {
-    const parsed = CreateDrugInteractionSchema.parse(body);
-    return this.svc.createInteraction(req.tenantId!, parsed);
+  async createInteraction(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateDrugInteractionSchema)) body: CreateDrugInteractionRequest) {
+    return this.svc.createInteraction(req.tenantId!, body);
   }
 
   @RequirePermission('pharmacy.product.delete')
@@ -155,9 +151,8 @@ export class PharmacyController {
   @RequirePermission('pharmacy.price.create')
   @Post('price-rules')
   @ApiOperation({ summary: 'Create pharmacy pricing rule' })
-  async createPriceRule(@Req() req: RequestWithAuth, @Body() body: CreatePriceRuleRequest) {
-    const parsed = CreatePriceRuleSchema.parse(body);
-    return this.svc.createPriceRule(req.tenantId!, parsed);
+  async createPriceRule(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreatePriceRuleSchema)) body: CreatePriceRuleRequest) {
+    return this.svc.createPriceRule(req.tenantId!, body);
   }
 
   // ── Verification Queue & Automated Checks (PHM-T1) ─────────────────────────
@@ -202,10 +197,9 @@ export class PharmacyController {
   async verifyPrescription(
     @Req() req: RequestWithAuth,
     @Param('id') id: string,
-    @Body() body: VerifyPrescriptionRequest,
+    @Body(new ZodValidationPipe(VerifyPrescriptionSchema)) body: VerifyPrescriptionRequest,
   ) {
-    const parsed = VerifyPrescriptionSchema.parse(body);
-    return this.svc.verifyPrescription(req.tenantId!, req.authContext!.userId!, id, parsed);
+    return this.svc.verifyPrescription(req.tenantId!, req.authContext!.userId!, id, body);
   }
 
   @RequirePermission('pharmacy.rx.verify')
@@ -214,14 +208,13 @@ export class PharmacyController {
   async createIntervention(
     @Req() req: RequestWithAuth,
     @Param('id') id: string,
-    @Body() body: CreateInterventionRequest,
+    @Body(new ZodValidationPipe(CreateInterventionSchema)) body: CreateInterventionRequest,
   ) {
-    const parsed = CreateInterventionSchema.parse(body);
     return this.svc.verifyPrescription(req.tenantId!, req.authContext!.userId!, id, {
       action: 'INTERVENE',
-      interventionType: parsed.type,
-      description: parsed.description,
-      outcome: parsed.outcome,
+      interventionType: body.type,
+      description: body.description,
+      outcome: body.outcome,
     });
   }
 
@@ -230,10 +223,9 @@ export class PharmacyController {
   @ApiOperation({ summary: 'Audit interaction alert decision' })
   async recordInteractionDecision(
     @Req() req: RequestWithAuth,
-    @Body() body: RecordInteractionDecisionRequest,
+    @Body(new ZodValidationPipe(RecordInteractionDecisionSchema)) body: RecordInteractionDecisionRequest,
   ) {
-    const parsed = RecordInteractionDecisionSchema.parse(body);
-    return this.svc.recordInteractionDecision(req.tenantId!, req.authContext!.userId!, parsed);
+    return this.svc.recordInteractionDecision(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('pharmacy.rx.read')
@@ -267,9 +259,8 @@ export class PharmacyController {
   @RequirePermission('pharmacy.dispense.create')
   @Post('dispenses')
   @ApiOperation({ summary: 'Create draft dispense order' })
-  async createDispense(@Req() req: RequestWithAuth, @Body() body: CreateDispenseRequest) {
-    const parsed = CreateDispenseSchema.parse(body);
-    return this.svc.createDispense(req.tenantId!, req.authContext!.userId!, parsed);
+  async createDispense(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateDispenseSchema)) body: CreateDispenseRequest) {
+    return this.svc.createDispense(req.tenantId!, req.authContext!.userId!, body);
   }
 
   @RequirePermission('pharmacy.dispense.create')
@@ -289,11 +280,10 @@ export class PharmacyController {
   async postDispense(
     @Req() req: RequestWithAuth,
     @Param('id') id: string,
-    @Body() body: PostDispenseRequest,
+    @Body(new ZodValidationPipe(PostDispenseSchema)) body: PostDispenseRequest,
   ) {
-    const parsed = PostDispenseSchema.parse(body);
     const requestId = getRequestId(req);
-    return this.svc.postDispense(req.tenantId!, req.authContext!.userId!, requestId, id, parsed);
+    return this.svc.postDispense(req.tenantId!, req.authContext!.userId!, requestId, id, body);
   }
 
   @RequirePermission('pharmacy.dispense.void')
@@ -302,11 +292,10 @@ export class PharmacyController {
   async voidDispense(
     @Req() req: RequestWithAuth,
     @Param('id') id: string,
-    @Body() body: VoidDispenseRequest,
+    @Body(new ZodValidationPipe(VoidDispenseSchema)) body: VoidDispenseRequest,
   ) {
-    const parsed = VoidDispenseSchema.parse(body);
     const requestId = getRequestId(req);
-    return this.svc.voidDispense(req.tenantId!, req.authContext!.userId!, requestId, id, parsed);
+    return this.svc.voidDispense(req.tenantId!, req.authContext!.userId!, requestId, id, body);
   }
 
   @RequirePermission('pharmacy.dispense.read')
@@ -337,10 +326,9 @@ export class PharmacyController {
   @RequirePermission('pharmacy.sale.create')
   @Post('sales')
   @ApiOperation({ summary: 'Process OTC walk-in sale (hard rejection of controlled items)' })
-  async createOtcSale(@Req() req: RequestWithAuth, @Body() body: CreateOtcSaleRequest) {
-    const parsed = CreateOtcSaleSchema.parse(body);
+  async createOtcSale(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateOtcSaleSchema)) body: CreateOtcSaleRequest) {
     const requestId = getRequestId(req);
-    return this.svc.createAndPostOtcSale(req.tenantId!, req.authContext!.userId!, requestId, parsed);
+    return this.svc.createAndPostOtcSale(req.tenantId!, req.authContext!.userId!, requestId, body);
   }
 
   // ── In-Clinic Medication Administration (PHM-T6) ───────────────────────────
@@ -355,10 +343,9 @@ export class PharmacyController {
   @RequirePermission('pharmacy.admin.create')
   @Post('administrations')
   @ApiOperation({ summary: 'Record in-clinic medication administration with CONSUMPTION movement' })
-  async recordAdministration(@Req() req: RequestWithAuth, @Body() body: CreateMedicationAdminRequest) {
-    const parsed = CreateMedicationAdminSchema.parse(body);
+  async recordAdministration(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateMedicationAdminSchema)) body: CreateMedicationAdminRequest) {
     const requestId = getRequestId(req);
-    return this.svc.recordMedicationAdministration(req.tenantId!, req.authContext!.userId!, requestId, parsed);
+    return this.svc.recordMedicationAdministration(req.tenantId!, req.authContext!.userId!, requestId, body);
   }
 
   // ── Patient Returns (PHM-T5) ───────────────────────────────────────────────
@@ -366,10 +353,9 @@ export class PharmacyController {
   @RequirePermission('pharmacy.return.create')
   @Post('returns')
   @ApiOperation({ summary: 'Process patient drug return with disposition' })
-  async recordReturn(@Req() req: RequestWithAuth, @Body() body: CreatePatientReturnRequest) {
-    const parsed = CreatePatientReturnSchema.parse(body);
+  async recordReturn(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreatePatientReturnSchema)) body: CreatePatientReturnRequest) {
     const requestId = getRequestId(req);
-    return this.svc.recordPatientReturn(req.tenantId!, req.authContext!.userId!, requestId, parsed);
+    return this.svc.recordPatientReturn(req.tenantId!, req.authContext!.userId!, requestId, body);
   }
 
   // ── Special Rx Records (AC-7) ──────────────────────────────────────────────
@@ -384,9 +370,8 @@ export class PharmacyController {
   @RequirePermission('pharmacy.controlled.write')
   @Post('special-rx')
   @ApiOperation({ summary: 'Record new special Rx yellow slip' })
-  async createSpecialRx(@Req() req: RequestWithAuth, @Body() body: CreateSpecialRxRecordRequest) {
-    const parsed = CreateSpecialRxRecordSchema.parse(body);
-    return this.svc.createSpecialRxRecord(req.tenantId!, parsed);
+  async createSpecialRx(@Req() req: RequestWithAuth, @Body(new ZodValidationPipe(CreateSpecialRxRecordSchema)) body: CreateSpecialRxRecordRequest) {
+    return this.svc.createSpecialRxRecord(req.tenantId!, body);
   }
 
   // ── Controlled Register & Stock (PHM-T4, PHM-T9, RPT-PHM-03) ───────────────
