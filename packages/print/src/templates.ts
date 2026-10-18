@@ -2820,4 +2820,507 @@ export function renderDailyCloseSummaryHtml(doc: DailyCloseSummaryDocument): str
   return shell(`Daily Close Summary - ${doc.closeDate}`, body);
 }
 
+// ── Formal Dialysis Treatment Sheet & Flowsheet Document (specification §13A, §19.10) ───
+
+export interface DialysisFlowsheetRow {
+  recordedAt: string;
+  bpSitting?: string | null;
+  pulseRate?: number | null;
+  bloodFlowRate?: number | null;
+  dialysateFlowRate?: number | null;
+  arterialPressure?: number | null;
+  venousPressure?: number | null;
+  tmp?: number | null;
+  ufRate?: number | null;
+  cumulativeUf?: number | null;
+  heparinDose?: string | null;
+  salineFlushes?: string | null;
+  symptoms?: string | null;
+  interventions?: string | null;
+  recordedBy?: string | null;
+}
+
+export interface DialysisTreatmentSheetDocument {
+  clinicName: string;
+  branchName?: string;
+  dohAccreditationNo?: string;
+  philhealthAccreditationNo?: string;
+  clinicAddress?: string;
+  clinicPhone?: string;
+
+  sessionNo: string;
+  scheduledDate: string;
+  shiftName?: string;
+  stationNo?: string;
+  machineSerial?: string;
+  machineBrandModel?: string;
+  totalOperatingHours?: number;
+
+  patientName: string;
+  patientNo?: string;
+  patientAge?: string | number;
+  patientSex?: string;
+  patientDob?: string;
+  hbsagPositive?: boolean;
+  hcvPositive?: boolean;
+
+  accessType?: string;
+  accessSite?: string;
+  accessSide?: string;
+  bruitThrillPresent?: boolean;
+  cannulationNotes?: string;
+
+  modality: string;
+  targetDryWeightKg?: number;
+  preWeightKg?: number;
+  weightGainKg?: number;
+  targetUfLiters?: number;
+  plannedDurationMinutes?: number;
+  dialyzerModel?: string;
+  dialyzerSerial?: string;
+  dialyzerReuseCount?: number;
+  dialyzerBaselineVolumeMl?: number;
+  dialyzerBundleVolumePct?: number;
+  heparinBolusUnits?: number;
+  heparinMaintenanceUnitsPerHour?: number;
+  dialysateComposition?: { k?: number; ca?: number; na?: number; hco3?: number };
+
+  preBpSitting?: string;
+  preBpStanding?: string;
+  prePulse?: number;
+  preTemperature?: number;
+  preWaterChlorinePass?: boolean;
+
+  flowsheets: DialysisFlowsheetRow[];
+
+  postWeightKg?: number;
+  postBpSitting?: string;
+  postBpStanding?: string;
+  postPulse?: number;
+  actualDurationMinutes?: number;
+  actualUfRemovedLiters?: number;
+  hemostasisTimeMinutes?: number;
+  postConditionNotes?: string;
+  postDialyzerVolumeMl?: number;
+  postResidualTestNegative?: boolean;
+
+  primaryNurseName: string;
+  primaryNurseLicenseNo?: string;
+  nephrologistName?: string;
+  nephrologistLicenseNo?: string;
+  nephrologistPtrNo?: string;
+}
+
+export function renderDialysisTreatmentSheetHtml(doc: DialysisTreatmentSheetDocument): string {
+  const flowsheetRows = doc.flowsheets.length === 0
+    ? `<tr><td colspan="12" style="text-align:center; color:#64748b; font-style:italic; padding:4mm 0;">No intra-dialytic flowsheet vitals recorded for this session.</td></tr>`
+    : doc.flowsheets.map((f) => `
+        <tr>
+          <td class="doc-no" style="font-size:8.5pt;">${escapeHtml(String(f.recordedAt).slice(11, 16) || f.recordedAt)}</td>
+          <td style="font-weight:600;">${escapeHtml(f.bpSitting || '—')}</td>
+          <td class="num">${escapeHtml(f.pulseRate ?? '—')}</td>
+          <td class="num">${escapeHtml(f.bloodFlowRate ?? '—')}</td>
+          <td class="num">${escapeHtml(f.dialysateFlowRate ?? '—')}</td>
+          <td class="num">${escapeHtml(f.arterialPressure ?? '—')}</td>
+          <td class="num">${escapeHtml(f.venousPressure ?? '—')}</td>
+          <td class="num">${escapeHtml(f.tmp ?? '—')}</td>
+          <td class="num">${f.ufRate != null ? Number(f.ufRate).toFixed(2) : '—'}</td>
+          <td class="num" style="font-weight:700; color:#0369a1;">${f.cumulativeUf != null ? Number(f.cumulativeUf).toFixed(2) : '—'}</td>
+          <td style="font-size:8pt;">${escapeHtml([f.heparinDose, f.salineFlushes, f.symptoms, f.interventions].filter(Boolean).join('; ') || 'Stable')}</td>
+          <td style="font-size:8pt; text-align:center;">${escapeHtml(f.recordedBy || 'RN')}</td>
+        </tr>
+      `).join('');
+
+  const body = `
+    <header style="border-bottom: 2pt solid #0f2942; padding-bottom: 3mm; margin-bottom: 3mm;">
+      <table style="width: 100%; border: none; margin: 0;">
+        <tr>
+          <td style="border: none; padding: 0; vertical-align: top;">
+            <div class="clinic" style="font-size: 14pt; font-weight: 800; color: #0f2942; text-transform: uppercase;">${escapeHtml(doc.clinicName)}</div>
+            ${doc.branchName ? `<div style="font-size: 9.5pt; font-weight: 600; color: #0284c7; text-transform: uppercase;">${escapeHtml(doc.branchName)} &middot; Hemodialysis Center</div>` : ''}
+            <div class="muted" style="font-size: 8pt; color: #64748b; margin-top: 1mm;">
+              ${escapeHtml(doc.clinicAddress || 'DOH Licensed Hemodialysis Center')}
+              ${doc.dohAccreditationNo ? ` &middot; DOH LTO: ${escapeHtml(doc.dohAccreditationNo)}` : ''}
+              ${doc.philhealthAccreditationNo ? ` &middot; PhilHealth Accr: ${escapeHtml(doc.philhealthAccreditationNo)}` : ''}
+            </div>
+          </td>
+          <td style="border: none; padding: 0; vertical-align: top; text-align: right; width: 190px;">
+            <div style="display: inline-block; background: #0f2942; color: #fff; font-size: 8.5pt; font-weight: 700; padding: 1mm 3mm; border-radius: 3px; letter-spacing: 0.5pt;">
+              HEMODIALYSIS RECORD
+            </div>
+            <div class="doc-no" style="font-size: 10pt; font-weight: 700; color: #0f172a; margin-top: 1.5mm;">Session ${escapeHtml(doc.sessionNo)}</div>
+            <div style="font-size: 8.5pt; color: #64748b;">Treatment Date: <strong>${escapeHtml(doc.scheduledDate)}</strong></div>
+            <div style="font-size: 8pt; color: #64748b;">Station ${escapeHtml(doc.stationNo || '—')} &middot; Machine ${escapeHtml(doc.machineSerial || '—')}</div>
+          </td>
+        </tr>
+      </table>
+    </header>
+
+    <!-- Patient Demographics & Access -->
+    <div style="border: 0.5pt solid #cbd5e1; border-radius: 4px; padding: 2.5mm 3.5mm; background: #f8fafc; margin-bottom: 3mm; display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 2mm 4mm; font-size: 8.5pt;">
+      <div>
+        <span class="muted" style="text-transform:uppercase; font-size:7.5pt;">Patient Name:</span><br>
+        <strong style="font-size: 10pt; color: #0f172a;">${escapeHtml(doc.patientName)}</strong>
+        ${doc.patientNo ? ` <span class="muted font-monospace">(${escapeHtml(doc.patientNo)})</span>` : ''}
+      </div>
+      <div>
+        <span class="muted" style="text-transform:uppercase; font-size:7.5pt;">Age / Sex / DOB:</span><br>
+        <span>${escapeHtml(doc.patientAge || '—')} yo / ${escapeHtml(doc.patientSex || '—')} ${doc.patientDob ? `(${escapeHtml(doc.patientDob)})` : ''}</span>
+      </div>
+      <div>
+        <span class="muted" style="text-transform:uppercase; font-size:7.5pt;">Vascular Access:</span><br>
+        <strong>${escapeHtml(doc.accessType || 'AVF')}</strong> — ${escapeHtml(doc.accessSite || 'Arm')} (${escapeHtml(doc.accessSide || 'L')})
+      </div>
+      <div>
+        <span class="muted" style="text-transform:uppercase; font-size:7.5pt;">Serology / Infection:</span><br>
+        ${doc.hbsagPositive ? '<span style="color:#b91c1c; font-weight:700;">⚠ HBsAg POSITIVE (ISOLATION)</span>' : '<span style="color:#15803d; font-weight:600;">HBsAg Non-Reactive</span>'}
+      </div>
+    </div>
+
+    <!-- Treatment Target Parameters & Water Safety -->
+    <div style="border: 0.5pt solid #cbd5e1; border-radius: 4px; padding: 2.5mm 3.5mm; background: #fff; margin-bottom: 3mm;">
+      <div style="font-size: 8.5pt; font-weight: 700; color: #0f2942; border-bottom: 0.5pt solid #e2e8f0; padding-bottom: 1mm; margin-bottom: 2mm; display: flex; justify-content: space-between;">
+        <span>PRESCRIPTION &amp; TREATMENT PARAMETERS (${escapeHtml(doc.modality)})</span>
+        <span style="font-size: 8pt; color: ${doc.preWaterChlorinePass !== false ? '#15803d' : '#b91c1c'}; font-weight: 700;">
+          ✓ Water Safety: Pre-shift Chlorine &lt; 0.1 ppm Certified
+        </span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 2mm 3mm; font-size: 8.5pt;">
+        <div>
+          <span class="muted" style="font-size:7.5pt;">Target Dry Weight:</span><br>
+          <strong>${doc.targetDryWeightKg != null ? `${doc.targetDryWeightKg} kg` : '—'}</strong>
+        </div>
+        <div>
+          <span class="muted" style="font-size:7.5pt;">Pre-Weight / IDWG:</span><br>
+          <strong>${doc.preWeightKg != null ? `${doc.preWeightKg} kg` : '—'}</strong>
+          ${doc.weightGainKg != null ? ` <span style="color:#b91c1c;">(+${doc.weightGainKg} kg)</span>` : ''}
+        </div>
+        <div>
+          <span class="muted" style="font-size:7.5pt;">Target UF Volume:</span><br>
+          <strong style="color:#0284c7;">${doc.targetUfLiters != null ? `${doc.targetUfLiters} L` : '—'}</strong>
+          <span class="muted">(${doc.plannedDurationMinutes ? `${doc.plannedDurationMinutes / 60}h` : '4h'})</span>
+        </div>
+        <div>
+          <span class="muted" style="font-size:7.5pt;">Dialyzer &amp; Reuse:</span><br>
+          <strong>${escapeHtml(doc.dialyzerModel || 'High-Flux')}</strong>
+          ${doc.dialyzerReuseCount != null ? ` <span class="muted">(Use #${doc.dialyzerReuseCount}${doc.dialyzerBundleVolumePct ? `, ${doc.dialyzerBundleVolumePct}% TCV` : ''})</span>` : ''}
+        </div>
+        <div>
+          <span class="muted" style="font-size:7.5pt;">Heparin Protocol:</span><br>
+          <span>Bolus: <strong>${doc.heparinBolusUnits ?? 1000}u</strong> &middot; Maint: <strong>${doc.heparinMaintenanceUnitsPerHour ?? 500}u/h</strong></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pre-Dialysis Intake Vitals -->
+    <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 2fr; gap: 2mm 3mm; background: #f1f5f9; padding: 2mm 3mm; border-radius: 4px; margin-bottom: 3mm; font-size: 8.5pt;">
+      <div>
+        <span class="muted" style="font-size:7.5pt;">Pre-Dialysis BP:</span><br>
+        <strong>Sitting: ${escapeHtml(doc.preBpSitting || '—')}</strong> &middot; Stand: ${escapeHtml(doc.preBpStanding || '—')}
+      </div>
+      <div>
+        <span class="muted" style="font-size:7.5pt;">Pulse Rate:</span><br>
+        <strong>${doc.prePulse ? `${doc.prePulse} bpm` : '—'}</strong>
+      </div>
+      <div>
+        <span class="muted" style="font-size:7.5pt;">Temperature:</span><br>
+        <strong>${doc.preTemperature ? `${doc.preTemperature} °C` : '—'}</strong>
+      </div>
+      <div>
+        <span class="muted" style="font-size:7.5pt;">Access Bruit/Thrill:</span><br>
+        <strong>${doc.bruitThrillPresent !== false ? 'Positive (Normal)' : 'Absent / Bruit Weak'}</strong>
+      </div>
+      <div>
+        <span class="muted" style="font-size:7.5pt;">Cannulation &amp; Pre-Notes:</span><br>
+        <span style="font-size:8pt;">${escapeHtml(doc.cannulationNotes || 'Smooth two-needle cannulation; no hematoma')}</span>
+      </div>
+    </div>
+
+    <!-- Intra-Dialytic Flowsheet Monitoring Table -->
+    <div style="margin-bottom: 3mm;">
+      <div style="font-size: 8.5pt; font-weight: 700; color: #0f2942; margin-bottom: 1mm;">
+        INTRA-DIALYTIC FLOWSHEET &amp; CLINICAL MONITORING
+      </div>
+      <table style="width: 100%; border-collapse: collapse; font-size: 8pt;">
+        <thead>
+          <tr style="background: #0f2942; color: #fff;">
+            <th style="padding: 1.5mm 1mm; font-size: 7.5pt;">Time</th>
+            <th style="padding: 1.5mm 1mm; font-size: 7.5pt;">BP (mmHg)</th>
+            <th style="padding: 1.5mm 1mm; font-size: 7.5pt; text-align:right;">HR</th>
+            <th style="padding: 1.5mm 1mm; font-size: 7.5pt; text-align:right;">Qb</th>
+            <th style="padding: 1.5mm 1mm; font-size: 7.5pt; text-align:right;">Qd</th>
+            <th style="padding: 1.5mm 1mm; font-size: 7.5pt; text-align:right;">Art P</th>
+            <th style="padding: 1.5mm 1mm; font-size: 7.5pt; text-align:right;">Ven P</th>
+            <th style="padding: 1.5mm 1mm; font-size: 7.5pt; text-align:right;">TMP</th>
+            <th style="padding: 1.5mm 1mm; font-size: 7.5pt; text-align:right;">UF Rate</th>
+            <th style="padding: 1.5mm 1mm; font-size: 7.5pt; text-align:right;">Cum UF (L)</th>
+            <th style="padding: 1.5mm 1mm; font-size: 7.5pt;">Medications &amp; Interventions</th>
+            <th style="padding: 1.5mm 1mm; font-size: 7.5pt; text-align:center;">Staff</th>
+          </tr>
+        </thead>
+        <tbody>${flowsheetRows}</tbody>
+      </table>
+    </div>
+
+    <!-- Post-Dialysis Discharge Evaluation -->
+    <div style="border: 0.5pt solid #cbd5e1; border-radius: 4px; padding: 2.5mm 3.5mm; background: #fff; margin-bottom: 4mm;">
+      <div style="font-size: 8.5pt; font-weight: 700; color: #0f2942; border-bottom: 0.5pt solid #e2e8f0; padding-bottom: 1mm; margin-bottom: 2mm;">
+        POST-DIALYSIS EVALUATION &amp; DISCHARGE SUMMARY
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 2mm 3mm; font-size: 8.5pt;">
+        <div>
+          <span class="muted" style="font-size:7.5pt;">Post-Weight:</span><br>
+          <strong style="color:#0f172a;">${doc.postWeightKg != null ? `${doc.postWeightKg} kg` : '—'}</strong>
+        </div>
+        <div>
+          <span class="muted" style="font-size:7.5pt;">Actual UF Removed:</span><br>
+          <strong style="color:#15803d;">${doc.actualUfRemovedLiters != null ? `${doc.actualUfRemovedLiters} L` : '—'}</strong>
+        </div>
+        <div>
+          <span class="muted" style="font-size:7.5pt;">Actual Run Time:</span><br>
+          <strong>${doc.actualDurationMinutes != null ? `${Math.floor(doc.actualDurationMinutes / 60)}h ${doc.actualDurationMinutes % 60}m` : '—'}</strong>
+        </div>
+        <div>
+          <span class="muted" style="font-size:7.5pt;">Discharge BP (Sit/St):</span><br>
+          <strong>${escapeHtml(doc.postBpSitting || '—')}</strong> / ${escapeHtml(doc.postBpStanding || '—')}
+        </div>
+        <div>
+          <span class="muted" style="font-size:7.5pt;">Hemostasis Time:</span><br>
+          <strong>${doc.hemostasisTimeMinutes != null ? `${doc.hemostasisTimeMinutes} mins` : '10 mins'}</strong>
+        </div>
+        <div>
+          <span class="muted" style="font-size:7.5pt;">Dialyzer Cleaned / Test:</span><br>
+          <span>${doc.postResidualTestNegative !== false ? '✓ Cleaned / Residual Neg' : 'Pending'}</span>
+        </div>
+      </div>
+      ${doc.postConditionNotes ? `
+        <div style="margin-top: 2mm; font-size: 8pt; color: #334155;">
+          <span class="muted">Discharge Condition / Instructions:</span> ${escapeHtml(doc.postConditionNotes)}
+        </div>
+      ` : ''}
+    </div>
+
+    <!-- Sign-off Block -->
+    <div style="display: flex; justify-content: space-between; margin-top: 6mm;">
+      <div style="width: 75mm; border-top: 0.5pt solid #0f172a; padding-top: 1.5mm; font-size: 8.5pt;">
+        <strong>${escapeHtml(doc.primaryNurseName)}</strong><br>
+        <span class="muted">Primary Dialysis Nurse (RN)</span><br>
+        <span class="muted">PRC Lic. No: ${escapeHtml(doc.primaryNurseLicenseNo || 'Registered Nurse')}</span>
+      </div>
+      <div style="width: 75mm; border-top: 0.5pt solid #0f172a; padding-top: 1.5mm; font-size: 8.5pt;">
+        <strong>${escapeHtml(doc.nephrologistName || 'Attending Nephrologist')}</strong><br>
+        <span class="muted">Attending Nephrologist / Physician</span><br>
+        <span class="muted">PRC Lic. No: ${escapeHtml(doc.nephrologistLicenseNo || 'Physician')}${doc.nephrologistPtrNo ? ` &middot; PTR: ${escapeHtml(doc.nephrologistPtrNo)}` : ''}</span>
+      </div>
+    </div>
+
+    <footer style="margin-top: 5mm;">
+      <span>${escapeHtml(doc.clinicName)} &middot; Hemodialysis Clinical Record &middot; DOH AO 2012-0001 / AO 2020-0035 Compliant</span>
+      <span>PhilHealth Dialysis Benefit Package &middot; Document Digest</span>
+    </footer>
+  `;
+
+  return shell(`Dialysis Treatment Record - ${doc.sessionNo}`, body);
+}
+
+// ── Formal Tabular Report Document (master RPT-* catalogue) ──────────────────
+
+export interface FormalReportSummaryCard {
+  label: string;
+  value: string;
+  tone?: 'normal' | 'success' | 'warning' | 'danger' | 'info';
+  caption?: string;
+}
+
+export interface FormalReportColumn {
+  key: string;
+  label: string;
+  align?: 'left' | 'right' | 'center';
+  width?: string;
+  isMonospace?: boolean;
+  isCurrency?: boolean;
+}
+
+export interface FormalReportDocument {
+  clinicName: string;
+  branchName?: string;
+  dohAccreditationNo?: string;
+  philhealthAccreditationNo?: string;
+  clinicAddress?: string;
+  clinicPhone?: string;
+
+  reportId: string;
+  title: string;
+  category: string;
+  description?: string;
+  periodText?: string;
+  generatedAt: string;
+  generatedBy?: string;
+
+  filterSummary?: Record<string, string>;
+  summaryCards?: FormalReportSummaryCard[];
+  columns: FormalReportColumn[];
+  rows: Record<string, any>[];
+  totalsRow?: Record<string, any>;
+
+  preparedByLabel?: string;
+  certifiedByLabel?: string;
+  regulatoryNote?: string;
+}
+
+export function renderFormalReportHtml(doc: FormalReportDocument): string {
+  const cardsHtml = !doc.summaryCards || doc.summaryCards.length === 0
+    ? ''
+    : `
+      <div style="display: grid; grid-template-columns: repeat(${Math.min(doc.summaryCards.length, 4)}, 1fr); gap: 3mm; margin-bottom: 4mm;">
+        ${doc.summaryCards.map((c) => {
+          let toneColor = '#0f2942';
+          if (c.tone === 'success') toneColor = '#15803d';
+          else if (c.tone === 'warning') toneColor = '#d97706';
+          else if (c.tone === 'danger') toneColor = '#dc2626';
+          else if (c.tone === 'info') toneColor = '#0284c7';
+
+          return `
+            <div style="border: 0.5pt solid #cbd5e1; border-top: 2.5pt solid ${toneColor}; padding: 2.5mm 3.5mm; background: #fff; border-radius: 3px;">
+              <div class="muted" style="font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.3pt;">${escapeHtml(c.label)}</div>
+              <div style="font-size: 13pt; font-weight: 700; color: ${toneColor}; margin-top: 1mm;">${escapeHtml(c.value)}</div>
+              ${c.caption ? `<div class="muted" style="font-size: 7.5pt; margin-top: 0.5mm;">${escapeHtml(c.caption)}</div>` : ''}
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+
+  const filtersHtml = !doc.filterSummary || Object.keys(doc.filterSummary).length === 0
+    ? ''
+    : `
+      <div style="display: flex; gap: 3mm; flex-wrap: wrap; margin-bottom: 3mm; font-size: 8pt; color: #475569;">
+        ${Object.entries(doc.filterSummary).map(([k, v]) => `
+          <span style="background: #e2e8f0; padding: 1mm 2.5mm; border-radius: 3px;">
+            <strong>${escapeHtml(k)}:</strong> ${escapeHtml(v)}
+          </span>
+        `).join('')}
+      </div>
+    `;
+
+  const tableHeaders = doc.columns.map((c) => `
+    <th style="padding: 1.8mm 2mm; text-align: ${c.align || 'left'}; font-size: 8pt; ${c.width ? `width: ${c.width};` : ''}">
+      ${escapeHtml(c.label)}
+    </th>
+  `).join('');
+
+  const tableRows = doc.rows.length === 0
+    ? `<tr><td colspan="${doc.columns.length}" style="text-align: center; color: #64748b; font-style: italic; padding: 6mm 0;">No records found for the selected reporting criteria.</td></tr>`
+    : doc.rows.map((row) => `
+        <tr>
+          ${doc.columns.map((col) => {
+            const rawVal = row[col.key];
+            let formattedVal = rawVal ?? '—';
+            if (col.isCurrency && typeof rawVal === 'number') {
+              formattedVal = `₱${money(rawVal)}`;
+            } else if (typeof rawVal === 'number') {
+              formattedVal = Number.isInteger(rawVal) ? String(rawVal) : rawVal.toFixed(2);
+            } else if (rawVal instanceof Date) {
+              formattedVal = rawVal.toISOString().slice(0, 10);
+            } else if (typeof rawVal === 'boolean') {
+              formattedVal = rawVal ? 'Yes' : 'No';
+            } else if (typeof rawVal === 'object' && rawVal !== null) {
+              formattedVal = JSON.stringify(rawVal);
+            }
+
+            return `
+              <td style="text-align: ${col.align || 'left'}; font-size: 8.5pt;" class="${col.isMonospace ? 'doc-no' : ''} ${col.align === 'right' ? 'num' : ''}">
+                ${escapeHtml(formattedVal)}
+              </td>
+            `;
+          }).join('')}
+        </tr>
+      `).join('');
+
+  const totalsHtml = !doc.totalsRow
+    ? ''
+    : `
+      <tfoot>
+        <tr style="background: #f1f5f9; font-weight: 700;">
+          ${doc.columns.map((col) => {
+            const val = doc.totalsRow![col.key] ?? '';
+            return `
+              <td style="text-align: ${col.align || 'left'}; font-size: 8.5pt;" class="${col.align === 'right' ? 'num' : ''}">
+                ${escapeHtml(val)}
+              </td>
+            `;
+          }).join('')}
+        </tr>
+      </tfoot>
+    `;
+
+  const body = `
+    <header style="border-bottom: 2pt solid #0f2942; padding-bottom: 3mm; margin-bottom: 4mm;">
+      <table style="width: 100%; border: none; margin: 0;">
+        <tr>
+          <td style="border: none; padding: 0; vertical-align: top;">
+            <div class="clinic" style="font-size: 14pt; font-weight: 800; color: #0f2942; text-transform: uppercase;">${escapeHtml(doc.clinicName)}</div>
+            ${doc.branchName ? `<div style="font-size: 9.5pt; font-weight: 600; color: #0284c7; text-transform: uppercase;">${escapeHtml(doc.branchName)}</div>` : ''}
+            <div class="muted" style="font-size: 8pt; color: #64748b; margin-top: 0.5mm;">
+              ${escapeHtml(doc.clinicAddress || 'Healthcare Operations Platform')}
+              ${doc.dohAccreditationNo ? ` &middot; DOH LTO: ${escapeHtml(doc.dohAccreditationNo)}` : ''}
+              ${doc.philhealthAccreditationNo ? ` &middot; PhilHealth: ${escapeHtml(doc.philhealthAccreditationNo)}` : ''}
+            </div>
+          </td>
+          <td style="border: none; padding: 0; vertical-align: top; text-align: right; width: 220px;">
+            <div style="display: inline-block; background: #0f2942; color: #fff; font-size: 8.5pt; font-weight: 700; padding: 1mm 3mm; border-radius: 3px; letter-spacing: 0.5pt;">
+              ${escapeHtml(doc.category.toUpperCase())} REPORT
+            </div>
+            <div class="doc-no" style="font-size: 10pt; font-weight: 700; color: #0f172a; margin-top: 1.5mm;">${escapeHtml(doc.reportId)}</div>
+            <div style="font-size: 8.5pt; color: #64748b;">Generated: ${escapeHtml(String(doc.generatedAt).slice(0, 19).replace('T', ' '))}</div>
+            ${doc.periodText ? `<div style="font-size: 8pt; color: #0284c7; font-weight: 600;">Period: ${escapeHtml(doc.periodText)}</div>` : ''}
+          </td>
+        </tr>
+      </table>
+    </header>
+
+    <div style="margin-bottom: 3mm;">
+      <h1 style="font-size: 13pt; font-weight: 800; color: #0f172a; margin: 0 0 1mm; text-transform: uppercase;">
+        ${escapeHtml(doc.title)}
+      </h1>
+      ${doc.description ? `<div style="font-size: 8.5pt; color: #475569; margin-bottom: 2mm;">${escapeHtml(doc.description)}</div>` : ''}
+      ${filtersHtml}
+    </div>
+
+    ${cardsHtml}
+
+    <div style="margin-bottom: 4mm;">
+      <table style="width: 100%; border-collapse: collapse;">
+        <thead>
+          <tr style="background: #f8fafc; border-bottom: 1.5pt solid #cbd5e1;">
+            ${tableHeaders}
+          </tr>
+        </thead>
+        <tbody>${tableRows}</tbody>
+        ${totalsHtml}
+      </table>
+    </div>
+
+    <!-- Sign-off Block -->
+    <div style="display: flex; justify-content: space-between; margin-top: 8mm;">
+      <div style="width: 70mm; border-top: 0.5pt solid #0f172a; padding-top: 1.5mm; font-size: 8.5pt;">
+        <strong>${escapeHtml(doc.preparedByLabel || 'Prepared by: ' + (doc.generatedBy || 'System Operator'))}</strong><br>
+        <span class="muted">Staff Signature / Timestamp</span>
+      </div>
+      <div style="width: 70mm; border-top: 0.5pt solid #0f172a; padding-top: 1.5mm; font-size: 8.5pt;">
+        <strong>${escapeHtml(doc.certifiedByLabel || 'Reviewed & Certified by (Unit Head / Director)')}</strong><br>
+        <span class="muted">Physician / Administrator Signature</span>
+      </div>
+    </div>
+
+    <footer>
+      <span>${escapeHtml(doc.clinicName)} &middot; ${escapeHtml(doc.reportId)} ${escapeHtml(doc.title)}</span>
+      <span>${escapeHtml(doc.regulatoryNote || 'Confidential Healthcare Statistical Record &middot; DOH &amp; PhilHealth Statutory Standards')}</span>
+    </footer>
+  `;
+
+  return shell(`${doc.reportId} - ${doc.title}`, body);
+}
+
+
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Link } from "react-router";
 import { Alert } from "@clinic/ui";
 import { renalApi, type PhilHealthUsage, type DialysisSession } from "./api.js";
+import { ReportPdfModal } from "../../shared/reports/ReportPdfModal.js";
 
 export function PhilHealthTrackingPage() {
   const [sessions, setSessions] = useState<DialysisSession[]>([]);
@@ -9,6 +10,7 @@ export function PhilHealthTrackingPage() {
   const [usage, setUsage] = useState<PhilHealthUsage | null>(null);
   const [, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
 
   const currentYear = new Date().getFullYear();
 
@@ -78,6 +80,14 @@ export function PhilHealthTrackingPage() {
           </p>
         </div>
         <div className="d-flex gap-2">
+          <button
+            type="button"
+            className="btn btn-outline-danger shadow-sm d-flex align-items-center gap-1"
+            onClick={() => setIsPdfModalOpen(true)}
+            title="Download/Print Formal PhilHealth 156-Session Register (True Vector PDF)"
+          >
+            <span>📄</span> Export 156-Session Register (PDF)
+          </button>
           <Link to="/renal/dashboard" className="btn btn-outline-secondary">
             &larr; Unit Dashboard
           </Link>
@@ -247,6 +257,15 @@ export function PhilHealthTrackingPage() {
           </table>
         </div>
       </div>
+
+      {/* ── Formal PhilHealth 156-Session Dialysis Benefit Register PDF ── */}
+      <ReportPdfModal
+        isOpen={isPdfModalOpen}
+        onClose={() => setIsPdfModalOpen(false)}
+        reportId="RPT-REN-05"
+        reportTitle="PhilHealth 156-Session Hemodialysis Benefit Ceiling Register"
+        filename="PhilHealth_Dialysis_Claims_Register.pdf"
+      />
     </div>
   );
 }

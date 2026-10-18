@@ -6,6 +6,8 @@ import { PharmacyController } from '../src/pharmacy/pharmacy.controller.js';
 import { SupplyController } from '../src/supply/supply.controller.js';
 import { LabController } from '../src/lab/lab.controller.js';
 import { BillingController } from '../src/billing/billing.controller.js';
+import { RenalController } from '../src/renal/renal.controller.js';
+import { ReportsController } from '../src/reports/reports.controller.js';
 import type { RequestWithAuth } from '../src/auth/auth-context.js';
 
 /**
@@ -280,5 +282,41 @@ describe('sealed stored report PDF', () => {
       status: 409,
     });
     expect(f.body).toBeUndefined();
+  });
+
+  it('serves renal dialysis treatment sheet with exact SHA-256 digest', async () => {
+    const renalSvc = {
+      renderTreatmentSheetPdf: vi.fn().mockResolvedValue({
+        bytes: PDF_BYTES,
+        sha256: PDF_SHA,
+      }),
+    };
+    const renal = new RenalController(renalSvc as any);
+    const f = fakeReply();
+    await renal.getTreatmentSheetPdf(mockReq, f.reply, 'session-123');
+
+    expect(f.headers['content-type']).toBe('application/pdf');
+    expect(f.headers['content-disposition']).toContain('TreatmentSheet-');
+    expect(f.headers['x-document-sha256']).toBe(PDF_SHA);
+    expect(f.body).toBe(PDF_BYTES);
+    expect(createHash('sha256').update(f.body!).digest('hex')).toBe(f.headers['x-document-sha256']);
+  });
+
+  it('serves formal reports PDF with exact SHA-256 digest', async () => {
+    const reportsSvc = {
+      renderReportPdf: vi.fn().mockResolvedValue({
+        bytes: PDF_BYTES,
+        sha256: PDF_SHA,
+      }),
+    };
+    const reports = new ReportsController(reportsSvc as any);
+    const f = fakeReply();
+    await reports.getReportPdf({ authContext: { tenantId: TENANT_ID, userId: USER_ID } } as any, f.reply, 'RPT-REN-01', {});
+
+    expect(f.headers['content-type']).toBe('application/pdf');
+    expect(f.headers['content-disposition']).toContain('rpt-ren-01_report.pdf');
+    expect(f.headers['x-document-sha256']).toBe(PDF_SHA);
+    expect(f.body).toBe(PDF_BYTES);
+    expect(createHash('sha256').update(f.body!).digest('hex')).toBe(f.headers['x-document-sha256']);
   });
 });

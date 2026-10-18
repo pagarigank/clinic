@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Link } from "react-router";
 import { Alert } from "@clinic/ui";
 import { renalApi, type RenalStation, type DialysisMachine, type DialysisSession, type WaterTreatmentLog } from "./api.js";
+import { ReportPdfModal } from "../../shared/reports/ReportPdfModal.js";
 
 export function RenalDashboardPage() {
   const [stations, setStations] = useState<RenalStation[]>([]);
@@ -10,6 +11,9 @@ export function RenalDashboardPage() {
   const [latestWaterLog, setLatestWaterLog] = useState<WaterTreatmentLog | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeReportId, setActiveReportId] = useState<string | null>(null);
+  const [activeReportTitle, setActiveReportTitle] = useState<string>('');
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
 
   const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -337,6 +341,111 @@ export function RenalDashboardPage() {
           )}
         </div>
       </div>
+
+      {/* ── 4. STATUTORY & REGULATORY REPORTS CENTER (True Vector PDF) ────────── */}
+      <div className="card shadow-sm border-0 rounded-3 mb-4 mt-4">
+        <div className="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+          <div>
+            <h5 className="mb-1 text-primary fw-bold d-flex align-items-center gap-2">
+              <span>🏛️</span> DOH &amp; PhilHealth Statutory Reports (True Vector PDF)
+            </h5>
+            <p className="text-muted mb-0 small">
+              Official statutory reporting with facility letterhead, accreditation IDs, clinical telemetry, and doctor/nurse signature lines.
+            </p>
+          </div>
+          <span className="badge bg-primary-subtle text-primary border border-primary-subtle px-2 py-1">
+            Server Rendered (Playwright Chromium)
+          </span>
+        </div>
+        <div className="card-body p-4">
+          <div className="row g-3">
+            {[
+              {
+                id: 'RPT-REN-01',
+                title: 'Philippine Renal Disease Registry (PRDR)',
+                desc: 'Mandated DOH AO 2012-0001 census of hemodialysis patients, etiology, modalities, and outcomes.',
+                icon: '🏛️',
+                badge: 'DOH Mandate',
+              },
+              {
+                id: 'RPT-REN-02',
+                title: 'Water Safety & Chlorine Testing Log',
+                desc: 'AAMI / ISO 23500 pre-shift chlorine breakthrough surveillance (< 0.1 ppm) and RO rejection records.',
+                icon: '💧',
+                badge: 'Daily Safety',
+              },
+              {
+                id: 'RPT-REN-03',
+                title: 'Dialyzer Reprocessing & Reuse Register',
+                desc: 'DOH AO 2020-0035 single-patient dialyzer tracking with ≥ 80% volume cutoff and disinfectant tests.',
+                icon: '🔄',
+                badge: 'Infection Control',
+              },
+              {
+                id: 'RPT-REN-04',
+                title: 'Hemodialysis Adverse Events & Pyrogenic Log',
+                desc: 'Clinical complications register: hypotensive episodes, dialyzer clotting, and pyrogenic reactions.',
+                icon: '⚠️',
+                badge: 'QA & Safety',
+              },
+              {
+                id: 'RPT-REN-05',
+                title: 'PhilHealth 156-Session Dialysis Benefit Register',
+                desc: 'Official calendar year claim utilization registry tracking session sequence (1…156) and copays.',
+                icon: '💳',
+                badge: 'PhilHealth eClaims',
+              },
+              {
+                id: 'RPT-REN-06',
+                title: 'Hemodialysis Adequacy & Kt/V Register',
+                desc: 'Daugirdas spKt/V and Urea Reduction Ratio (URR) monthly clinical adequacy surveillance.',
+                icon: '🧪',
+                badge: 'Clinical Outcome',
+              },
+            ].map((rpt) => (
+              <div key={rpt.id} className="col-md-6 col-lg-4">
+                <div className="card h-100 border shadow-sm rounded-3 p-3 d-flex flex-column justify-content-between hover-shadow">
+                  <div>
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                      <span className="badge bg-light text-dark border font-monospace">{rpt.id}</span>
+                      <span className="badge bg-secondary-subtle text-secondary">{rpt.badge}</span>
+                    </div>
+                    <h6 className="fw-bold mb-1 text-dark d-flex align-items-center gap-1">
+                      <span>{rpt.icon}</span> {rpt.title}
+                    </h6>
+                    <p className="text-muted small mb-3" style={{ fontSize: '0.8rem' }}>
+                      {rpt.desc}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-danger w-100 d-flex align-items-center justify-content-center gap-1 shadow-sm mt-2"
+                    onClick={() => {
+                      setActiveReportId(rpt.id);
+                      setActiveReportTitle(rpt.title);
+                      setIsReportModalOpen(true);
+                    }}
+                  >
+                    <span>📄</span> View / Print True PDF
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── 5. FORMAL REPORT PDF MODAL ────────────────────────────────────────── */}
+      <ReportPdfModal
+        isOpen={isReportModalOpen}
+        onClose={() => {
+          setIsReportModalOpen(false);
+          setActiveReportId(null);
+        }}
+        reportId={activeReportId || undefined}
+        reportTitle={activeReportTitle}
+        filename={activeReportId ? `${activeReportId.toLowerCase()}_formal_report.pdf` : undefined}
+      />
     </div>
   );
 }

@@ -48,6 +48,8 @@ export {
   renderShiftReportHtml,
   renderReceivablesAgingHtml,
   renderDailyCloseSummaryHtml,
+  renderDialysisTreatmentSheetHtml,
+  renderFormalReportHtml,
 } from "./templates.js";
 export type {
   MedicalCertificate,
@@ -81,6 +83,11 @@ export type {
   ReceivablesAgingRow,
   DailyCloseSummaryDocument,
   DailyCloseSummaryRow,
+  DialysisTreatmentSheetDocument,
+  DialysisFlowsheetRow,
+  FormalReportDocument,
+  FormalReportColumn,
+  FormalReportSummaryCard,
 } from "./templates.js";
 
 

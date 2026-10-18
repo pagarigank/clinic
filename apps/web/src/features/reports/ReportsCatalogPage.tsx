@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { apiGet, apiPost, apiDelete, ApiError } from '../../shared/api/client.js';
+import { ReportPdfModal } from '../../shared/reports/ReportPdfModal.js';
 
 interface ReportDefinition {
   id: string;
@@ -48,6 +49,9 @@ export function ReportsCatalogPage() {
   const [activeReport, setActiveReport] = useState<ReportDefinition | null>(null);
   const [runResult, setRunResult] = useState<ReportRunResult | null>(null);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [pdfReportId, setPdfReportId] = useState<string | null>(null);
+  const [pdfReportTitle, setPdfReportTitle] = useState<string>('');
 
   // Schedule form state
   const [scheduleCron, setScheduleCron] = useState('0 8 * * *');
@@ -326,6 +330,19 @@ export function ReportsCatalogPage() {
                       </button>
                       <button
                         type="button"
+                        className="btn btn-sm btn-outline-danger"
+                        style={{ fontSize: '0.78rem' }}
+                        onClick={() => {
+                          setPdfReportId(report.id);
+                          setPdfReportTitle(report.name);
+                          setPdfModalOpen(true);
+                        }}
+                        title="View / Print Formal True PDF"
+                      >
+                        📄 PDF
+                      </button>
+                      <button
+                        type="button"
                         className="btn btn-sm btn-outline-secondary"
                         style={{ fontSize: '0.78rem' }}
                         onClick={() => handleExportReport(report, 'CSV')}
@@ -431,6 +448,17 @@ export function ReportsCatalogPage() {
               <span className="text-muted small ms-2">({runResult.rowCount} rows returned)</span>
             </div>
             <div className="d-flex gap-2">
+              <button
+                type="button"
+                className="btn btn-sm btn-danger d-flex align-items-center gap-1 shadow-sm"
+                onClick={() => {
+                  setPdfReportId(runResult.reportId);
+                  setPdfReportTitle(runResult.reportName);
+                  setPdfModalOpen(true);
+                }}
+              >
+                <span>📄</span> Formal PDF View / Print
+              </button>
               <button
                 type="button"
                 className="btn btn-sm btn-outline-primary"
@@ -541,6 +569,18 @@ export function ReportsCatalogPage() {
           </div>
         </div>
       )}
+
+      {/* ── Formal True Vector PDF Report Viewer Modal ── */}
+      <ReportPdfModal
+        isOpen={pdfModalOpen}
+        onClose={() => {
+          setPdfModalOpen(false);
+          setPdfReportId(null);
+        }}
+        reportId={pdfReportId || undefined}
+        reportTitle={pdfReportTitle}
+        filename={pdfReportId ? `${pdfReportId.toLowerCase()}_formal_report.pdf` : undefined}
+      />
     </div>
   );
 }

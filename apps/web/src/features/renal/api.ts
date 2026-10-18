@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from "../../shared/api/client.js";
+import { apiGet, apiPost, apiGetBlob } from "../../shared/api/client.js";
 import type {
   CreateRenalStationRequest,
   CreateDialysisMachineRequest,
@@ -229,6 +229,8 @@ export const renalApi = {
     ),
   cancelSession: (id: string, dto: CancelDialysisSessionRequest) =>
     apiPost<DialysisSession>(`/renal/sessions/${id}/cancel`, dto),
+  getTreatmentSheetPdfBlob: (id: string) =>
+    apiGetBlob(`/renal/sessions/${id}/treatment-sheet-pdf`),
 
   // PhilHealth Tracking
   getPhilHealthUsage: (patientId: string, calendarYear?: number) =>

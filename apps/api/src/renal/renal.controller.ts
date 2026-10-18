@@ -8,15 +8,18 @@ import {
   Body,
   Param,
   Query,
+  Res,
   UseGuards,
   Req,
 } from '@nestjs/common';
+import type { FastifyReply } from 'fastify';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '../auth/guards/auth.guard.js';
 import { TenantContextGuard } from '../auth/guards/tenant-context.guard.js';
 import { Module } from '../rbac/module.guard.js';
 import { RequirePermission } from '../rbac/require-permission.decorator.js';
 import { RequireStepUp, type RequestWithAuth } from '../auth/auth-context.js';
+import { sendPdf } from '../http/pdf-response.js';
 import { RenalService } from './renal.service.js';
 import {
   CreateRenalStationSchema, type CreateRenalStationRequest,
@@ -407,6 +410,18 @@ export class RenalController {
     @Param('id') id: string,
   ) {
     return this.svc.getSession(req.tenantId!, id);
+  }
+
+  @RequirePermission('renal.session.read')
+  @Get('sessions/:id/treatment-sheet-pdf')
+  @ApiOperation({ summary: 'Render formal Hemodialysis Treatment Flowsheet PDF (DOH/PhilHealth format)' })
+  async getTreatmentSheetPdf(
+    @Req() req: RequestWithAuth,
+    @Res() reply: FastifyReply,
+    @Param('id') id: string,
+  ) {
+    const doc = await this.svc.renderTreatmentSheetPdf(req.tenantId!, id);
+    void sendPdf(reply, doc, `TreatmentSheet-${id.slice(0, 8)}.pdf`);
   }
 
   @RequirePermission('renal.session.create')

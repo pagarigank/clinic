@@ -5,6 +5,8 @@ import {
   Delete,
   Param,
   Body,
+  Query,
+  Res,
   UseGuards,
   Req,
   Inject,
@@ -22,9 +24,10 @@ import {
   type ReportExportRequest,
 } from '@clinic/contracts';
 import { ReportsService } from './reports.service.js';
-import type { FastifyRequest } from 'fastify';
+import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { RequestWithAuth } from '../auth/auth-context.js';
 import { ProblemException } from '../http/problem.exception.js';
+import { sendPdf } from '../http/pdf-response.js';
 
 @ApiTags('Reports')
 @ApiBearerAuth()
@@ -58,6 +61,23 @@ export class ReportsController {
     }
 
     return this.reportsService.runReport(auth.tenantId, auth.userId, reportId, body);
+  }
+
+  @Get('reports/:reportId/pdf')
+  @ApiOperation({ summary: 'Render formal PDF version of report (true vector PDF via Playwright)' })
+  async getReportPdf(
+    @Req() req: FastifyRequest & RequestWithAuth,
+    @Res() reply: FastifyReply,
+    @Param('reportId') reportId: string,
+    @Query() query: Record<string, any>,
+  ) {
+    const auth = req.authContext;
+    if (!auth?.tenantId || !auth?.userId) {
+      throw new ProblemException('TENANT_CONTEXT_MISSING', { detail: 'Authenticated user and tenant required' });
+    }
+
+    const doc = await this.reportsService.renderReportPdf(auth.tenantId, auth.userId, reportId, query);
+    void sendPdf(reply, doc, `${reportId.toLowerCase()}_report.pdf`);
   }
 
   @Post('reports/:reportId/export')

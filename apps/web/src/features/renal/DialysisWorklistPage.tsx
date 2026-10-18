@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { Alert, Modal } from "@clinic/ui";
 import { renalApi, type DialysisSession } from "./api.js";
 import { useAuth } from "../../shared/auth/AuthContext.js";
+import { ReportPdfModal } from "../../shared/reports/ReportPdfModal.js";
 
 type StageFilter = "ALL" | "SCHEDULED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
 
@@ -25,6 +26,8 @@ export function DialysisWorklistPage() {
   const [isFlowsheetModalOpen, setIsFlowsheetModalOpen] = useState(false);
   const [isPostModalOpen, setIsPostModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [selectedSessionForPdf, setSelectedSessionForPdf] = useState<DialysisSession | null>(null);
+  const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
 
   // Pre-Dialysis Intake Form State
   const [preWeight, setPreWeight] = useState<number>(68.0);
@@ -463,6 +466,17 @@ export function DialysisWorklistPage() {
                             onClick={() => handleOpenDetail(s)}
                           >
                             Details
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-danger d-flex align-items-center gap-1 shadow-sm"
+                            onClick={() => {
+                              setSelectedSessionForPdf(s);
+                              setIsPdfModalOpen(true);
+                            }}
+                            title="Formal DOH/PhilHealth Treatment Flowsheet (True Vector PDF)"
+                          >
+                            <span>📄</span> Treatment Sheet
                           </button>
                         </div>
                       </td>
@@ -997,8 +1011,41 @@ export function DialysisWorklistPage() {
               </div>
             </div>
           )}
+
+          <div className="pt-2 border-top d-flex justify-content-end gap-2">
+            <button
+              type="button"
+              className="btn btn-sm btn-danger d-flex align-items-center gap-1 shadow-sm"
+              onClick={() => {
+                setSelectedSessionForPdf(selectedSession);
+                setIsPdfModalOpen(true);
+              }}
+            >
+              <span>📄</span> Print Formal Treatment Record (True PDF)
+            </button>
+          </div>
         </div>
       </Modal>
+
+      {/* ── 5. FORMAL TREATMENT SHEET PDF MODAL (DOH / PhilHealth Standard) ── */}
+      <ReportPdfModal
+        isOpen={isPdfModalOpen}
+        onClose={() => {
+          setIsPdfModalOpen(false);
+          setSelectedSessionForPdf(null);
+        }}
+        reportTitle={`Hemodialysis Treatment Flowsheet - ${selectedSessionForPdf?.session_no || ''}`}
+        pdfEndpoint={
+          selectedSessionForPdf
+            ? `/renal/sessions/${selectedSessionForPdf.id}/treatment-sheet-pdf`
+            : undefined
+        }
+        filename={
+          selectedSessionForPdf
+            ? `TreatmentSheet-${selectedSessionForPdf.session_no}.pdf`
+            : undefined
+        }
+      />
     </div>
   );
 }

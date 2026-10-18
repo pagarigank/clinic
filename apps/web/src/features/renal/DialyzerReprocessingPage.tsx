@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { Alert, Modal } from "@clinic/ui";
 import { renalApi, type Dialyzer } from "./api.js";
 import { useAuth } from "../../shared/auth/AuthContext.js";
+import { ReportPdfModal } from "../../shared/reports/ReportPdfModal.js";
 
 export function DialyzerReprocessingPage() {
   const { session } = useAuth();
@@ -11,6 +12,7 @@ export function DialyzerReprocessingPage() {
   const [dialyzers, setDialyzers] = useState<Dialyzer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
 
   // Search & Filter
   const [searchBarcode, setSearchBarcode] = useState("");
@@ -113,6 +115,14 @@ export function DialyzerReprocessingPage() {
           </p>
         </div>
         <div className="d-flex gap-2">
+          <button
+            type="button"
+            className="btn btn-outline-danger shadow-sm d-flex align-items-center gap-1"
+            onClick={() => setIsPdfModalOpen(true)}
+            title="Download/Print Formal Dialyzer Reuse Register (True Vector PDF)"
+          >
+            <span>📄</span> Export Reuse Register (PDF)
+          </button>
           <Link to="/renal/dashboard" className="btn btn-outline-secondary">
             &larr; Unit Dashboard
           </Link>
@@ -461,6 +471,15 @@ export function DialyzerReprocessingPage() {
           </form>
         )}
       </Modal>
+
+      {/* ── Formal Dialyzer Reprocessing & Reuse Register PDF (DOH AO 2020-0035) ── */}
+      <ReportPdfModal
+        isOpen={isPdfModalOpen}
+        onClose={() => setIsPdfModalOpen(false)}
+        reportId="RPT-REN-03"
+        reportTitle="Dialyzer Reprocessing & Single-Patient Reuse Register (DOH AO 2020-0035)"
+        filename="Dialyzer_Reuse_Register_DOH.pdf"
+      />
     </div>
   );
 }

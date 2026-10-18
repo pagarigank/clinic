@@ -6,6 +6,13 @@ import type {
   ReportScheduleRequest,
   ReportExportRequest,
 } from '@clinic/contracts';
+import {
+  renderPdf,
+  renderFormalReportHtml,
+  type FormalReportDocument,
+  type FormalReportColumn,
+  type FormalReportSummaryCard,
+} from '@clinic/print';
 
 @Injectable()
 export class ReportsService {
@@ -316,48 +323,182 @@ export class ReportsService {
         });
       }
 
-      // 2. Create queued report_run
+      // 2. Run report to fetch actual data
+      const runData = await this.runReport(tenantId, userId, reportId, { parameters: dto?.parameters });
+
+      // 3. Create queued report_run
       const runRes = await tx.query<{ id: string }>(
         `INSERT INTO report_runs (
-           tenant_id, report_id, parameters, status, executed_by
+           tenant_id, report_id, parameters, status, row_count, executed_by
          )
-         VALUES ($1, $2, $3::jsonb, 'QUEUED', $4)
+         VALUES ($1, $2, $3::jsonb, 'QUEUED', $4, $5)
          RETURNING id`,
-        [tenantId, reportId, JSON.stringify(dto?.parameters || {}), userId],
+        [tenantId, reportId, JSON.stringify(dto?.parameters || {}), runData.rowCount, userId],
       );
 
       const runId = runRes.rows[0]?.id || '';
+      const format = (dto?.format || 'CSV').toUpperCase();
+      let mimeType = 'text/csv';
+      let sizeBytes = 0;
+      let fileName = '';
 
-      // 3. Generate export file inline/mock for test or worker execution
-      const fileName = `${reportId.toLowerCase()}_export_${Date.now()}.${(dto?.format || 'CSV').toLowerCase()}`;
+      if (format === 'PDF') {
+        const rendered = await this.renderReportPdf(tenantId, userId, reportId, dto?.parameters);
+        mimeType = 'application/pdf';
+        sizeBytes = rendered.byteLength;
+        fileName = `${reportId.toLowerCase()}_${new Date().toISOString().slice(0, 10)}.pdf`;
+      } else {
+        // Build real CSV
+        const headers = runData.permittedFields;
+        const csvLines = [headers.join(',')];
+        for (const row of runData.data) {
+          const line = headers.map((h) => {
+            const val = row[h] ?? '';
+            const str = typeof val === 'object' ? JSON.stringify(val) : String(val);
+            return `"${str.replace(/"/g, '""')}"`;
+          }).join(',');
+          csvLines.push(line);
+        }
+        const payload = csvLines.join('\n');
+        sizeBytes = Buffer.byteLength(payload, 'utf8');
+        fileName = `${reportId.toLowerCase()}_${new Date().toISOString().slice(0, 10)}.csv`;
+      }
+
       const objectKey = `t/${tenantId}/reports/${fileName}`;
-      const payload = `Report: ${def.name}\nExportedAt: ${new Date().toISOString()}\n`;
-      const sizeBytes = Buffer.byteLength(payload, 'utf8');
 
       const fileRes = await tx.query<{ id: string }>(
         `INSERT INTO files (tenant_id, object_key, file_name, mime_type, size_bytes, status, uploaded_by)
-         VALUES ($1, $2, $3, 'text/csv', $4, 'READY', $5)
+         VALUES ($1, $2, $3, $4, $5, 'READY', $6)
          RETURNING id`,
-        [tenantId, objectKey, fileName, sizeBytes, userId],
+        [tenantId, objectKey, fileName, mimeType, sizeBytes, userId],
       );
 
       const fileId = fileRes.rows[0]?.id || '';
 
       await tx.query(
         `UPDATE report_runs
-         SET status = 'COMPLETED', file_id = $1, row_count = 1, completed_at = now()
-         WHERE id = $2 AND tenant_id = $3`,
-        [fileId, runId, tenantId],
+         SET status = 'COMPLETED', file_id = $1, row_count = $2, completed_at = now()
+         WHERE id = $3 AND tenant_id = $4`,
+        [fileId, runData.rowCount, runId, tenantId],
       );
 
       return {
         runId,
         reportId,
-        format: dto?.format || 'CSV',
+        format,
         status: 'COMPLETED',
         fileId,
         fileName,
       };
+    });
+  }
+
+  /**
+   * Render formal statutory or operational report PDF (true vector PDF via Playwright Chromium).
+   */
+  async renderReportPdf(tenantId: string, userId: string, reportId: string, query?: Record<string, any>) {
+    return withTenant({ tenantId, userId }, async (tx) => {
+      // 1. Run the report
+      const runRes = await this.runReport(tenantId, userId, reportId, { parameters: query });
+
+      // 2. Fetch clinic details
+      const tenantRes = await tx.query<{ name: string; email: string; phone: string; address: string }>(
+        `SELECT name, email, phone, address FROM tenants WHERE id = $1`,
+        [tenantId],
+      );
+      const clinic = tenantRes.rows[0] ?? { name: 'Healthcare Facility', email: '', phone: '', address: '' };
+
+      let branchName = '';
+      if (query?.branchId) {
+        const branchRes = await tx.query<{ name: string }>(
+          `SELECT name FROM branches WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, query.branchId],
+        );
+        if (branchRes.rows[0]?.name) branchName = branchRes.rows[0].name;
+      }
+
+      // 3. User details for signature block
+      const userRes = await tx.query<{ name: string; email: string }>(
+        `SELECT name, email FROM users WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, userId],
+      );
+      const userName = userRes.rows[0]?.name || userRes.rows[0]?.email || 'Reporting Officer';
+
+      // 4. Form columns
+      const sampleRow = runRes.data[0] || {};
+      const allKeys = Object.keys(sampleRow).length > 0 ? Object.keys(sampleRow) : runRes.permittedFields;
+
+      const columns: FormalReportColumn[] = allKeys.map((key) => {
+        const sampleVal = sampleRow[key];
+        const isNum = typeof sampleVal === 'number';
+        const isMoney = key.toLowerCase().includes('amount') || key.toLowerCase().includes('copay') || key.toLowerCase().includes('balance') || key.toLowerCase().includes('price');
+        const isCode = key.toLowerCase().includes('no') || key.toLowerCase().includes('code') || key.toLowerCase().includes('id') || key.toLowerCase().includes('serial') || key.toLowerCase().includes('barcode');
+
+        const label = key
+          .split('_')
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ')
+          .replace('Ppm', '(ppm)')
+          .replace('Us', '(µS)')
+          .replace('Pct', '(%)')
+          .replace('Kg', '(kg)')
+          .replace('Ml', '(mL)')
+          .replace('Uf', 'UF');
+
+        return {
+          key,
+          label,
+          align: isNum ? 'right' : 'left',
+          isMonospace: isCode,
+          isCurrency: isMoney,
+        };
+      });
+
+      // 5. Build summary cards
+      const summaryCards: FormalReportSummaryCard[] = [
+        { label: 'Total Records', value: String(runRes.rowCount), tone: 'info' },
+      ];
+
+      for (const col of columns) {
+        if (col.isCurrency) {
+          const sum = runRes.data.reduce((acc, row) => acc + (Number(row[col.key]) || 0), 0);
+          summaryCards.push({
+            label: `Total ${col.label}`,
+            value: `₱${sum.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            tone: 'success',
+          });
+        }
+      }
+
+      if (summaryCards.length > 4) {
+        summaryCards.splice(4);
+      }
+
+      const doc: FormalReportDocument = {
+        clinicName: clinic.name,
+        branchName: branchName || undefined,
+        clinicAddress: clinic.address,
+        clinicPhone: clinic.phone,
+        reportId: runRes.reportId,
+        title: runRes.reportName,
+        category: runRes.module.toUpperCase(),
+        description: `Official statutory and operational reporting register for ${runRes.module} operations.`,
+        periodText: query?.period || (query?.startDate ? `${query.startDate} to ${query.endDate || 'Present'}` : 'Current Calendar Period'),
+        generatedAt: new Date().toISOString(),
+        generatedBy: userName,
+        filterSummary: query && Object.keys(query).length > 0 ? query : undefined,
+        summaryCards,
+        columns,
+        rows: runRes.data,
+        preparedByLabel: `Prepared by: ${userName}`,
+        certifiedByLabel: 'Reviewed & Certified by (Unit Head / Medical Director)',
+      };
+
+      const html = renderFormalReportHtml(doc);
+      return renderPdf(html, {
+        format: 'A4',
+        landscape: columns.length > 5,
+      });
     });
   }
 

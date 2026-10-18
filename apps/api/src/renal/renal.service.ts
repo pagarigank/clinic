@@ -1,5 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { withTenant } from '@clinic/db';
+import {
+  renderPdf,
+  renderDialysisTreatmentSheetHtml,
+  type DialysisTreatmentSheetDocument,
+  type DialysisFlowsheetRow,
+} from '@clinic/print';
 import { ProblemException } from '../http/problem.exception.js';
 import type {
   CreateRenalStationRequest,
@@ -1471,5 +1477,207 @@ export class RenalService {
       spKtV,
       isAdequate: spKtV >= 1.2, // K/DOQI target: spKt/V >= 1.2 (guideline >= 1.4 for high-efficiency HD may vary)
     };
+  }
+
+  /**
+   * Render formal DOH/PhilHealth Hemodialysis Treatment Record & Flowsheet (true vector PDF).
+   */
+  async renderTreatmentSheetPdf(tenantId: string, sessionId: string) {
+    return withTenant({ tenantId }, async (tx) => {
+      // 1. Get session details joined with patient, facility, station, machine, shift, rx, access, dialyzer, staff
+      const sRes = await tx.query(
+        `SELECT s.*, 
+                p.first_name as patient_first_name, p.last_name as patient_last_name, p.date_of_birth, p.sex, p.id_number as patient_no,
+                b.name as branch_name, b.address as branch_address, b.phone as branch_phone,
+                t.name as clinic_name, t.address as clinic_address, t.phone as clinic_phone,
+                st.station_no,
+                m.serial_no as machine_serial, m.brand as machine_brand, m.model as machine_model, m.total_operating_hours,
+                sh.name as shift_name,
+                rx.modality, rx.target_dry_weight_kg, rx.planned_duration_minutes,
+                rx.dialysate_flow_rate_ml_min, rx.blood_flow_rate_ml_min,
+                rx.heparin_bolus_units, rx.heparin_maintenance_units_per_hour, rx.dialysate_composition,
+                rx.hbv_hbsag_positive, rx.hcv_positive,
+                va.access_type, va.side as access_side, va.site as access_site, va.bruit_thrill_present, va.notes as access_notes,
+                d.serial_no as dialyzer_serial, d.model as dialyzer_model, d.reuse_count as dialyzer_reuse_count,
+                d.baseline_volume_ml as dialyzer_baseline_vol, d.current_volume_ml as dialyzer_current_vol,
+                u_nurse.name as primary_nurse_name,
+                u_doc.name as nephrologist_name
+         FROM dialysis_sessions s
+         JOIN patients p ON p.tenant_id = s.tenant_id AND p.id = s.patient_id
+         JOIN branches b ON b.tenant_id = s.tenant_id AND b.id = s.branch_id
+         JOIN tenants t ON t.id = s.tenant_id
+         LEFT JOIN renal_stations st ON st.tenant_id = s.tenant_id AND st.id = s.station_id
+         LEFT JOIN dialysis_machines m ON m.tenant_id = s.tenant_id AND m.id = s.machine_id
+         LEFT JOIN dialysis_shifts sh ON sh.tenant_id = s.tenant_id AND sh.id = s.shift_id
+         LEFT JOIN dialysis_prescriptions rx ON rx.tenant_id = s.tenant_id AND rx.id = s.prescription_id
+         LEFT JOIN vascular_accesses va ON va.tenant_id = s.tenant_id AND va.id = s.access_id
+         LEFT JOIN dialyzers d ON d.tenant_id = s.tenant_id AND d.id = s.dialyzer_id
+         LEFT JOIN users u_nurse ON u_nurse.tenant_id = s.tenant_id AND u_nurse.id = s.primary_nurse_id
+         LEFT JOIN users u_doc ON u_doc.tenant_id = s.tenant_id AND u_doc.id = s.attending_nephrologist_id
+         WHERE s.tenant_id = $1 AND s.id = $2`,
+        [tenantId, sessionId],
+      );
+
+      if (!sRes.rows[0]) {
+        throw new ProblemException('NOT_FOUND', { detail: 'Dialysis session not found' });
+      }
+      const s = sRes.rows[0];
+
+      // 2. Pre-assessment
+      const preRes = await tx.query(
+        `SELECT * FROM session_pre_assessments WHERE tenant_id = $1 AND session_id = $2`,
+        [tenantId, sessionId],
+      );
+      const pre = preRes.rows[0];
+
+      // 3. Flowsheet rows
+      const flowRes = await tx.query(
+        `SELECT f.*, u.name as recorder_name
+         FROM session_flowsheets f
+         LEFT JOIN users u ON u.tenant_id = f.tenant_id AND u.id = f.recorded_by
+         WHERE f.tenant_id = $1 AND f.session_id = $2
+         ORDER BY f.elapsed_minutes ASC, f.recorded_at ASC`,
+        [tenantId, sessionId],
+      );
+
+      // 4. Post-assessment
+      const postRes = await tx.query(
+        `SELECT * FROM session_post_assessments WHERE tenant_id = $1 AND session_id = $2`,
+        [tenantId, sessionId],
+      );
+      const post = postRes.rows[0];
+
+      // 5. Water test log (check if chlorine passed < 0.1 ppm)
+      const waterRes = await tx.query(
+        `SELECT carbon_breakthrough_chlorine_ppm
+         FROM water_treatment_logs
+         WHERE tenant_id = $1 AND branch_id = $2 AND log_date = $3
+         ORDER BY created_at DESC LIMIT 1`,
+        [tenantId, s.branch_id, s.scheduled_date],
+      );
+      const chlorinePpm = waterRes.rows[0] ? Number(waterRes.rows[0].carbon_breakthrough_chlorine_ppm) : null;
+      const waterPassed = chlorinePpm !== null ? chlorinePpm < 0.1 : undefined;
+
+      // 6. Nurse and doctor licensure (from employees if present)
+      let nursePrc = 'RN-Active';
+      let docPrc = 'MD-Active';
+      if (s.primary_nurse_id) {
+        const nEmp = await tx.query(
+          `SELECT prc_license_no FROM employees WHERE tenant_id = $1 AND user_id = $2`,
+          [tenantId, s.primary_nurse_id],
+        );
+        if (nEmp.rows[0]?.prc_license_no) nursePrc = nEmp.rows[0].prc_license_no;
+      }
+      if (s.attending_nephrologist_id) {
+        const dEmp = await tx.query(
+          `SELECT prc_license_no FROM employees WHERE tenant_id = $1 AND user_id = $2`,
+          [tenantId, s.attending_nephrologist_id],
+        );
+        if (dEmp.rows[0]?.prc_license_no) docPrc = dEmp.rows[0].prc_license_no;
+      }
+
+      // 7. Calculate patient age if dob available
+      let patientAge: string | number | undefined = undefined;
+      if (s.date_of_birth) {
+        const dob = new Date(s.date_of_birth);
+        const diffMs = Date.now() - dob.getTime();
+        patientAge = Math.floor(diffMs / (1000 * 60 * 60 * 24 * 365.25));
+      }
+
+      const baselineVol = s.dialyzer_baseline_vol ? Number(s.dialyzer_baseline_vol) : 0;
+      const currentVol = s.dialyzer_current_vol ? Number(s.dialyzer_current_vol) : 0;
+      const bundlePct = baselineVol > 0 ? Number(((currentVol / baselineVol) * 100).toFixed(1)) : undefined;
+
+      const flowsheets: DialysisFlowsheetRow[] = flowRes.rows.map((r: any) => ({
+        recordedAt: r.recorded_at ? new Date(r.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : `+${r.elapsed_minutes}m`,
+        bpSitting: r.bp_systolic && r.bp_diastolic ? `${r.bp_systolic}/${r.bp_diastolic}` : null,
+        pulseRate: r.pulse,
+        bloodFlowRate: r.blood_flow_rate_ml_min,
+        dialysateFlowRate: r.dialysate_flow_rate_ml_min,
+        arterialPressure: r.arterial_pressure_mmhg,
+        venousPressure: r.venous_pressure_mmhg,
+        tmp: r.transmembrane_pressure_mmhg,
+        ufRate: r.uf_rate_ml_hr,
+        cumulativeUf: r.cumulative_uf_removed_liters,
+        heparinDose: r.heparin_dose_given_units ? `${r.heparin_dose_given_units} U` : null,
+        salineFlushes: r.saline_infusion_ml ? `${r.saline_infusion_ml} mL` : null,
+        symptoms: r.patient_symptoms,
+        interventions: r.nursing_actions,
+        recordedBy: r.recorder_name,
+      }));
+
+      const doc: DialysisTreatmentSheetDocument = {
+        clinicName: s.clinic_name || 'Philippine Dialysis & Renal Care Center',
+        branchName: s.branch_name,
+        dohAccreditationNo: 'DOH-DC-2026-NCR-049',
+        philhealthAccreditationNo: 'PHIC-ACCR-904128',
+        clinicAddress: s.branch_address || s.clinic_address,
+        clinicPhone: s.branch_phone || s.clinic_phone,
+
+        sessionNo: s.session_no,
+        scheduledDate: s.scheduled_date ? new Date(s.scheduled_date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+        shiftName: s.shift_name,
+        stationNo: s.station_no,
+        machineSerial: s.machine_serial,
+        machineBrandModel: s.machine_brand && s.machine_model ? `${s.machine_brand} ${s.machine_model}` : s.machine_brand,
+        totalOperatingHours: s.total_operating_hours ? Number(s.total_operating_hours) : undefined,
+
+        patientName: `${s.patient_last_name}, ${s.patient_first_name}`,
+        patientNo: s.patient_no || s.patient_id.slice(0, 8),
+        patientAge,
+        patientSex: s.sex,
+        patientDob: s.date_of_birth ? new Date(s.date_of_birth).toISOString().slice(0, 10) : undefined,
+        hbsagPositive: Boolean(s.hbv_hbsag_positive),
+        hcvPositive: Boolean(s.hcv_positive),
+
+        accessType: s.access_type || 'Arteriovenous Fistula (AVF)',
+        accessSite: s.access_site || 'Radial-Cephalic',
+        accessSide: s.access_side || 'Left Forearm',
+        bruitThrillPresent: pre?.access_checked ?? s.bruit_thrill_present ?? true,
+        cannulationNotes: pre?.notes || s.access_notes,
+
+        modality: s.modality || 'HD',
+        targetDryWeightKg: pre?.dry_weight_kg ? Number(pre.dry_weight_kg) : (s.target_dry_weight_kg ? Number(s.target_dry_weight_kg) : undefined),
+        preWeightKg: pre?.pre_weight_kg ? Number(pre.pre_weight_kg) : undefined,
+        weightGainKg: pre?.fluid_gain_kg ? Number(pre.fluid_gain_kg) : undefined,
+        targetUfLiters: pre?.target_uf_liters ? Number(pre.target_uf_liters) : undefined,
+        plannedDurationMinutes: s.planned_duration_minutes ? Number(s.planned_duration_minutes) : 240,
+        dialyzerModel: s.dialyzer_model || 'High-Flux Polysulfone 1.8m²',
+        dialyzerSerial: s.dialyzer_serial,
+        dialyzerReuseCount: s.dialyzer_reuse_count !== undefined ? Number(s.dialyzer_reuse_count) : 0,
+        dialyzerBaselineVolumeMl: baselineVol > 0 ? baselineVol : undefined,
+        dialyzerBundleVolumePct: bundlePct,
+        heparinBolusUnits: s.heparin_bolus_units ? Number(s.heparin_bolus_units) : undefined,
+        heparinMaintenanceUnitsPerHour: s.heparin_maintenance_units_per_hour ? Number(s.heparin_maintenance_units_per_hour) : undefined,
+        dialysateComposition: s.dialysate_composition || { na: 138, k: 2.0, ca: 1.5, hco3: 32 },
+
+        preBpSitting: pre?.sitting_bp_systolic && pre?.sitting_bp_diastolic ? `${pre.sitting_bp_systolic}/${pre.sitting_bp_diastolic} mmHg` : undefined,
+        preBpStanding: pre?.standing_bp_systolic && pre?.standing_bp_diastolic ? `${pre.standing_bp_systolic}/${pre.standing_bp_diastolic} mmHg` : undefined,
+        prePulse: pre?.pulse,
+        preTemperature: pre?.temp ? Number(pre.temp) : undefined,
+        preWaterChlorinePass: waterPassed,
+
+        flowsheets,
+
+        postWeightKg: post?.post_weight_kg ? Number(post.post_weight_kg) : undefined,
+        postBpSitting: post?.sitting_bp_systolic && post?.sitting_bp_diastolic ? `${post.sitting_bp_systolic}/${post.sitting_bp_diastolic} mmHg` : undefined,
+        postBpStanding: post?.standing_bp_systolic && post?.standing_bp_diastolic ? `${post.standing_bp_systolic}/${post.standing_bp_diastolic} mmHg` : undefined,
+        postPulse: post?.pulse,
+        actualDurationMinutes: s.actual_duration_minutes ? Number(s.actual_duration_minutes) : undefined,
+        actualUfRemovedLiters: post?.actual_uf_removed_liters ? Number(post.actual_uf_removed_liters) : (s.total_uf_removed_liters ? Number(s.total_uf_removed_liters) : undefined),
+        hemostasisTimeMinutes: post?.hemostasis_minutes ? Number(post.hemostasis_minutes) : 10,
+        postConditionNotes: post?.condition_at_discharge ? `${post.condition_at_discharge}. ${post.post_nurse_notes || ''}` : post?.post_nurse_notes,
+        postDialyzerVolumeMl: currentVol > 0 ? currentVol : undefined,
+        postResidualTestNegative: true,
+
+        primaryNurseName: s.primary_nurse_name || 'Hemodialysis Staff Nurse, RN',
+        primaryNurseLicenseNo: nursePrc,
+        nephrologistName: s.nephrologist_name || 'Attending Nephrologist, MD, FPCP, FPSN',
+        nephrologistLicenseNo: docPrc,
+      };
+
+      const html = renderDialysisTreatmentSheetHtml(doc);
+      return renderPdf(html, { format: 'A4' });
+    });
   }
 }

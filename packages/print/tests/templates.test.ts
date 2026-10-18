@@ -10,6 +10,8 @@ import {
   renderEncounterOrdersHtml,
   renderGrnHtml,
   renderRequisitionHtml,
+  renderDialysisTreatmentSheetHtml,
+  renderFormalReportHtml,
   type PrescriptionDocument,
   type LabRequisitionDocument,
   type InvoiceDocument,
@@ -778,6 +780,111 @@ describe("renderRequisitionHtml", () => {
     expect(html).toContain("Latex Examination Gloves (M)");
     expect(html).toContain("50 BOX");
     expect(html).toContain("Urgent restocking for ER duty.");
+  });
+});
+
+describe("renderDialysisTreatmentSheetHtml", () => {
+  it("renders a formal hemodialysis clinical treatment record and flowsheet", () => {
+    const doc = {
+      clinicName: "Manila Renal Center",
+      branchName: "Espana Branch",
+      sessionNo: "HD-2026-0042",
+      scheduledDate: "2026-10-19",
+      modality: "HD",
+      stationNo: "ST-04",
+      machineSerial: "NX-8800-412",
+      patientName: "Santos, Maria",
+      patientNo: "MRN-10294",
+      patientAge: 58,
+      patientSex: "Female",
+      hbsagPositive: false,
+      accessType: "AVF",
+      accessSite: "Left Forearm Radiocephalic",
+      accessSide: "L",
+      targetDryWeightKg: 55.0,
+      preWeightKg: 57.2,
+      weightGainKg: 2.2,
+      targetUfLiters: 2.2,
+      dialyzerModel: "FX-80 High Flux",
+      dialyzerReuseCount: 3,
+      dialyzerBundleVolumePct: 92,
+      preBpSitting: "140/90",
+      flowsheets: [
+        {
+          recordedAt: "2026-10-19T08:00:00Z",
+          bpSitting: "140/90",
+          pulseRate: 78,
+          bloodFlowRate: 300,
+          dialysateFlowRate: 500,
+          arterialPressure: -120,
+          venousPressure: 140,
+          tmp: 80,
+          ufRate: 0.55,
+          cumulativeUf: 0.55,
+          heparinDose: "1000u",
+          recordedBy: "RN-1",
+        },
+      ],
+      postWeightKg: 55.1,
+      actualUfRemovedLiters: 2.1,
+      actualDurationMinutes: 240,
+      postBpSitting: "120/80",
+      postBpStanding: "118/76",
+      primaryNurseName: "Nurse Florence, RN",
+      primaryNurseLicenseNo: "PRC-091823",
+      nephrologistName: "Dr. Gregory House, MD, FPCP, FPSN",
+      nephrologistLicenseNo: "PRC-0012948",
+    };
+
+    const html = renderDialysisTreatmentSheetHtml(doc);
+    expect(html).toContain("HEMODIALYSIS RECORD");
+    expect(html).toContain("HD-2026-0042");
+    expect(html).toContain("Santos, Maria");
+    expect(html).toContain("FX-80 High Flux");
+    expect(html).toContain("Left Forearm Radiocephalic");
+    expect(html).toContain("Nurse Florence, RN");
+    expect(html).toContain("Dr. Gregory House, MD, FPCP, FPSN");
+    expect(html).toContain("DOH AO 2012-0001 / AO 2020-0035 Compliant");
+  });
+});
+
+describe("renderFormalReportHtml", () => {
+  it("renders a master statutory report with letterhead, cards, and data table", () => {
+    const doc = {
+      clinicName: "Philippine Dialysis & Specialty Clinics",
+      branchName: "Quezon City Unit",
+      reportId: "RPT-REN-02",
+      title: "Water Treatment & Quality Surveillance Log",
+      category: "Renal",
+      periodText: "October 2026",
+      generatedAt: "2026-10-19T07:00:00Z",
+      generatedBy: "Water Safety Tech John",
+      summaryCards: [
+        { label: "Daily Pre-Shift Tests", value: "31 / 31", tone: "success" as const },
+        { label: "Chlorine Breakthroughs", value: "0", tone: "success" as const },
+        { label: "Monthly Culture", value: "Compliant (< 100 CFU)", tone: "info" as const },
+      ],
+      columns: [
+        { key: "log_date", label: "Date", align: "left" as const },
+        { key: "chlorine_ppm", label: "Total Chlorine (ppm)", align: "right" as const },
+        { key: "ro_conductivity", label: "RO Conductivity (µS)", align: "right" as const },
+        { key: "status", label: "Status", align: "center" as const },
+      ],
+      rows: [
+        { log_date: "2026-10-19", chlorine_ppm: 0.02, ro_conductivity: 12.4, status: "NORMAL" },
+        { log_date: "2026-10-18", chlorine_ppm: 0.01, ro_conductivity: 11.8, status: "NORMAL" },
+      ],
+      preparedByLabel: "Water Quality Specialist John Doe, RCh",
+      certifiedByLabel: "Medical Director Dr. Jane Smith, MD, FPSN",
+    };
+
+    const html = renderFormalReportHtml(doc);
+    expect(html).toContain("RPT-REN-02");
+    expect(html).toContain("Water Treatment &amp; Quality Surveillance Log");
+    expect(html).toContain("Daily Pre-Shift Tests");
+    expect(html).toContain("Water Quality Specialist John Doe, RCh");
+    expect(html).toContain("Medical Director Dr. Jane Smith, MD, FPSN");
+    expect(html).toContain("NORMAL");
   });
 });
 

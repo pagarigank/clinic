@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { Alert, Modal } from "@clinic/ui";
 import { renalApi, type WaterTreatmentLog } from "./api.js";
 import { useAuth } from "../../shared/auth/AuthContext.js";
+import { ReportPdfModal } from "../../shared/reports/ReportPdfModal.js";
 
 export function WaterTreatmentLogPage() {
   const { session } = useAuth();
@@ -14,6 +15,7 @@ export function WaterTreatmentLogPage() {
 
   // New log form state (AC-31)
   const [isLogModalOpen, setIsLogModalOpen] = useState(false);
+  const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
   const [logDate, setLogDate] = useState(new Date().toISOString().slice(0, 10));
   const [chlorinePpm, setChlorinePpm] = useState<number>(0.02);
   const [roConductivity, setRoConductivity] = useState<number>(8.5);
@@ -79,6 +81,14 @@ export function WaterTreatmentLogPage() {
           </p>
         </div>
         <div className="d-flex gap-2">
+          <button
+            type="button"
+            className="btn btn-outline-danger shadow-sm d-flex align-items-center gap-1"
+            onClick={() => setIsPdfModalOpen(true)}
+            title="Download/Print Formal Water Safety Register (True Vector PDF)"
+          >
+            <span>📄</span> Export Water Safety Register (PDF)
+          </button>
           <Link to="/renal/dashboard" className="btn btn-outline-secondary">
             &larr; Unit Dashboard
           </Link>
@@ -304,6 +314,15 @@ export function WaterTreatmentLogPage() {
           </div>
         </form>
       </Modal>
+
+      {/* ── Formal Water Safety Register PDF (AAMI / ISO 23500 Standard) ── */}
+      <ReportPdfModal
+        isOpen={isPdfModalOpen}
+        onClose={() => setIsPdfModalOpen(false)}
+        reportId="RPT-REN-02"
+        reportTitle="Hemodialysis Water Treatment & Safety Register (AAMI Standard)"
+        filename="Water_Safety_Register_AAMI.pdf"
+      />
     </div>
   );
 }
