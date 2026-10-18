@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export * from "./permissions.js";
 
-/** Ten tenant-facing module keys (specification §4.3 PLT-T7). */
+/** Eleven tenant-facing module keys (specification §4.3 PLT-T7). */
 export const MODULE_KEYS = [
   "admin",
   "patients",
@@ -14,6 +14,7 @@ export const MODULE_KEYS = [
   "compliance",
   "notifications",
   "reports",
+  "renal",
 ] as const;
 export type ModuleKey = (typeof MODULE_KEYS)[number];
 
@@ -24,6 +25,7 @@ export const MODULE_HARD_DEPENDENCIES: Partial<Record<ModuleKey, readonly Module
   pharmacy: ["patients"],
   billing: ["patients", "clinical"],
   reports: ["clinical"], // "at least one of …" simplified to the common case in v1
+  renal: ["patients", "clinical"],
 };
 
 /**
@@ -78,6 +80,14 @@ export const ERROR_CODES = {
   UPSTREAM_UNAVAILABLE: 503,
   SCHEDULE_OVERLAP: 409,
   PATIENT_MISMATCH: 422,
+  WATER_SAFETY_LOCKOUT: 422,
+  DIALYZER_VOLUME_CUTOFF: 422,
+  DIALYZER_PATIENT_MISMATCH: 422,
+  PRESCRIPTION_NOT_ACTIVE: 422,
+  STATION_ISOLATION_MISMATCH: 422,
+  PHILHEALTH_CEILING_EXCEEDED: 422,
+  RENAL_ISOLATION_REQUIRED: 422,
+  RESIDUAL_TEST_REQUIRED: 422,
 } as const;
 export type ErrorCode = keyof typeof ERROR_CODES;
 
@@ -371,6 +381,9 @@ export const SYSTEM_ROLE_CODES = [
   "purchaser",
   "auditor",
   "dpo",
+  "nephrologist",
+  "dialysis_nurse",
+  "dialysis_tech",
 ] as const;
 export type SystemRoleCode = (typeof SYSTEM_ROLE_CODES)[number];
 
@@ -1195,7 +1208,7 @@ export const PostConsumptionSchema = z.object({
   batchId: z.string().uuid().optional(), // optional -> auto FEFO
   qty: z.number().positive(),
   uomId: z.string().uuid(),
-  refType: z.enum(['VISIT', 'LAB', 'PROCEDURE', 'HOUSE_USE']),
+  refType: z.enum(['VISIT', 'LAB', 'PROCEDURE', 'HOUSE_USE', 'DIALYSIS_SESSION']),
   refId: z.string().uuid().optional(),
   notes: z.string().max(500).optional(),
 });
@@ -2106,4 +2119,6 @@ export * from "./compliance.js";
 export * from "./notifications.js";
 export * from "./reports.js";
 export * from "./platform.js";
+export * from "./renal.js";
+
 

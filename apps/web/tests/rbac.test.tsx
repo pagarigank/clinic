@@ -354,6 +354,78 @@ describe("RolesPage live matrix", () => {
     expect(patchBody.permissions).toContain("patients.read");
   });
 
+  it("allows assigning renal care permissions to roles in RolesPage", async () => {
+    let patchBody: any = null;
+    const renalRole = {
+      id: "3f1d3f1d-0000-4000-8000-0000000000b1",
+      code: "hemodialysis_nurse",
+      name: "Hemodialysis Nurse",
+      isSystem: false,
+      permissions: ["renal.station.read"],
+      rowVersion: 1,
+    };
+
+    useStubHandler((req, res) => {
+      const url = req.url ?? "";
+      if (req.method === "GET" && url.includes("/admin/roles")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify([...ROLES, renalRole]));
+        return;
+      }
+      if (req.method === "GET" && url.includes("/admin/permissions")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify([
+            ...CATALOGUE,
+            {
+              module: "renal",
+              permissions: [
+                { code: "renal.station.read", description: "View renal stations" },
+                { code: "renal.session.start", description: "Initiate pre-dialysis intake" },
+                { code: "renal.water.record", description: "Record pre-shift water treatment surveillance" },
+              ],
+            },
+          ]),
+        );
+        return;
+      }
+      if (req.method === "PATCH" && url.includes(`/admin/roles/${renalRole.id}`)) {
+        let raw = "";
+        req.on("data", (c: Buffer) => (raw += c.toString()));
+        req.on("end", () => {
+          patchBody = JSON.parse(raw);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ...renalRole, permissions: patchBody.permissions, rowVersion: 2 }));
+        });
+        return;
+      }
+      baseHandler(req, res);
+    });
+
+    renderWithProviders(<Route path="*" element={<RolesPage />} />);
+    await waitFor(() => expect(screen.getByText("Hemodialysis Nurse")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Hemodialysis Nurse"));
+
+    // Check that RENAL filter button appears
+    const renalBtn = await waitFor(() => screen.getByRole("button", { name: "RENAL" }));
+    expect(renalBtn).toBeInTheDocument();
+    fireEvent.click(renalBtn);
+
+    // Verify checkbox for renal.session.start is visible and editable
+    const startCb = await waitFor(() => {
+      const cb = screen.getByRole("checkbox", { name: /Grant renal\.session\.start on Hemodialysis Nurse/ });
+      expect(cb).not.toBeChecked();
+      expect(cb).not.toBeDisabled();
+      return cb;
+    });
+
+    fireEvent.click(startCb);
+
+    await waitFor(() => expect(patchBody).not.toBeNull());
+    expect(patchBody.permissions).toContain("renal.station.read");
+    expect(patchBody.permissions).toContain("renal.session.start");
+  });
+
   it("hides nav groups for modules the tenant does not have (rendered via MainLayout contract)", async () => {
     // Indirectly covered here: canAccess requires BOTH module and permission.
     let probe: { canAccess: (m: string, c: string[]) => boolean } | null = null;

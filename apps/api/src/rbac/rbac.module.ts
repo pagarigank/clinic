@@ -31,6 +31,6 @@ import { ModuleGuard } from "./module.guard.js";
     { provide: APP_GUARD, useClass: ModuleGuard },
     { provide: APP_GUARD, useClass: PermissionGuard },
   ],
-  exports: [RbacService],
+  exports: [RbacService, UsersService],
 })
 export class RbacModule {}

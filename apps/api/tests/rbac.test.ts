@@ -53,7 +53,7 @@ describe("permission catalogue (todo 1.3, spec §2.3)", () => {
 
   it("covers the §2.1 system roles and template grants resolve to catalogue codes", () => {
     expect(SYSTEM_ROLE_CODES).toContain("tenant_admin");
-    expect(SYSTEM_ROLE_CODES).toHaveLength(16);
+    expect(SYSTEM_ROLE_CODES).toHaveLength(19);
     for (const [role, perms] of Object.entries(SYSTEM_ROLE_TEMPLATES)) {
       expect(SYSTEM_ROLE_CODES).toContain(role);
       const unknown = perms.filter((p) => !ALL_PERMISSIONS.includes(p));

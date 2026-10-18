@@ -282,7 +282,7 @@ describe("ModuleGuard - platform scope", () => {
 });
 
 describe("module key catalogue", () => {
-  it("declares exactly the ten module keys from architecture §5.3", () => {
+  it("declares exactly the eleven module keys from architecture §5.3", () => {
     expect([...MODULES]).toEqual([
       "admin",
       "patients",
@@ -293,6 +293,7 @@ describe("module key catalogue", () => {
       "billing",
       "compliance",
       "notifications",
+      "renal",
       "reports",
     ]);
   });

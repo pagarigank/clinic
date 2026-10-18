@@ -179,6 +179,75 @@ export class ReportsService {
           [tenantId],
         );
         rows = q.rows;
+      } else if (def.module === 'renal') {
+        if (reportId === 'RPT-REN-01') {
+          const q = await tx.query(
+            `SELECT s.id, s.session_no, s.scheduled_date, s.status, s.actual_duration_minutes,
+                    st.station_no, m.serial_no as machine_serial, rx.modality
+             FROM dialysis_sessions s
+             JOIN renal_stations st ON st.tenant_id = s.tenant_id AND st.id = s.station_id
+             JOIN dialysis_machines m ON m.tenant_id = s.tenant_id AND m.id = s.machine_id
+             JOIN dialysis_prescriptions rx ON rx.tenant_id = s.tenant_id AND rx.id = s.prescription_id
+             WHERE s.tenant_id = $1
+             ORDER BY s.scheduled_date DESC LIMIT 500`,
+            [tenantId],
+          );
+          rows = q.rows;
+        } else if (reportId === 'RPT-REN-02') {
+          const q = await tx.query(
+            `SELECT id, log_date, carbon_breakthrough_chlorine_ppm, ro_conductivity_us,
+                    ro_rejection_rate_pct, status, created_at
+             FROM water_treatment_logs
+             WHERE tenant_id = $1
+             ORDER BY log_date DESC LIMIT 500`,
+            [tenantId],
+          );
+          rows = q.rows;
+        } else if (reportId === 'RPT-REN-03') {
+          const q = await tx.query(
+            `SELECT d.id, d.serial_barcode, d.dialyzer_model, d.baseline_volume_ml,
+                    d.current_volume_ml, d.reuse_count, d.max_allowed_reuses, d.status, d.discard_reason
+             FROM dialyzers d
+             WHERE d.tenant_id = $1
+             ORDER BY d.created_at DESC LIMIT 500`,
+            [tenantId],
+          );
+          rows = q.rows;
+        } else if (reportId === 'RPT-REN-04') {
+          const q = await tx.query(
+            `SELECT a.id, a.access_type, a.anatomical_site, a.side, a.status, a.created_date,
+                    p.first_name, p.last_name
+             FROM vascular_accesses a
+             JOIN patients p ON p.tenant_id = a.tenant_id AND p.id = a.patient_id
+             WHERE a.tenant_id = $1
+             ORDER BY a.created_at DESC LIMIT 500`,
+            [tenantId],
+          );
+          rows = q.rows;
+        } else if (reportId === 'RPT-REN-05') {
+          const q = await tx.query(
+            `SELECT c.id, c.claim_no, c.calendar_year, c.session_sequence_no, c.claim_amount,
+                    c.copay_amount, c.eclaims_status, p.first_name, p.last_name
+             FROM philhealth_dialysis_claims c
+             JOIN patients p ON p.tenant_id = c.tenant_id AND p.id = c.patient_id
+             WHERE c.tenant_id = $1
+             ORDER BY c.calendar_year DESC, c.session_sequence_no ASC LIMIT 500`,
+            [tenantId],
+          );
+          rows = q.rows;
+        } else {
+          // RPT-REN-06
+          const q = await tx.query(
+            `SELECT s.id, s.session_no, s.scheduled_date, s.actual_duration_minutes,
+                    s.total_uf_removed_liters, rx.target_dry_weight_kg
+             FROM dialysis_sessions s
+             JOIN dialysis_prescriptions rx ON rx.tenant_id = s.tenant_id AND rx.id = s.prescription_id
+             WHERE s.tenant_id = $1 AND s.status = 'COMPLETED'
+             ORDER BY s.scheduled_date DESC LIMIT 500`,
+            [tenantId],
+          );
+          rows = q.rows;
+        }
       } else {
         // Generic fallback for admin / platform
         const q = await tx.query(

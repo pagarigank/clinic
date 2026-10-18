@@ -8,8 +8,8 @@ import {
 } from "../src/index.js";
 
 describe("module catalogue", () => {
-  it("has exactly the ten PLT-T7 module keys", () => {
-    expect(MODULE_KEYS).toHaveLength(10);
+  it("has exactly the eleven PLT-T7 module keys", () => {
+    expect(MODULE_KEYS).toHaveLength(11);
   });
 
   it("hard dependencies reference known modules", () => {

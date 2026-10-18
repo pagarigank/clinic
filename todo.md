@@ -5,7 +5,7 @@
 
 This is the execution order for the platform described in the other three documents. Each phase has a scope, a task list, an **exit gate** that must pass before the next phase starts, and the acceptance scenarios (specification §17) it discharges. Tasks are ordered within a phase by dependency; the ones on the critical path are marked ⛔.
 
-**Companion identifiers.** `JOB-01…JOB-50` = [specification §14](specification.md) · `RPT-*` = [specification §15](specification.md) · `AC-#` = [specification §17](specification.md) · 🔒 = idempotency/transaction-protected endpoint ([specification §18](specification.md)) · `ADR-#` = [architecture §3](architecture.md).
+**Companion identifiers.** `JOB-01…JOB-54` = [specification §14](specification.md) · `RPT-*` = [specification §15](specification.md) · `AC-#` = [specification §17](specification.md) · 🔒 = idempotency/transaction-protected endpoint ([specification §18](specification.md)) · `ADR-#` = [architecture §3](architecture.md).
 
 postgres credentials: user:kpagarigan2, password:P@ssw0rd, host:localhost, port:5432
 
@@ -24,6 +24,7 @@ postgres credentials: user:kpagarigan2, password:P@ssw0rd, host:localhost, port:
 - [Phase 5 — Pharmacy](#phase-5--pharmacy)
 - [Phase 6 — Laboratory](#phase-6--laboratory)
 - [Phase 7 — Billing & cashiering](#phase-7--billing--cashiering)
+- [Phase 7A — Renal care module: hemodialysis, dialyzer reprocessing, water safety, and PhilHealth dialysis package](#phase-7a--renal-care-hemodialysis-dialyzer-reprocessing-water-safety-and-philhealth-dialysis-package)
 - [Phase 8 — Compliance](#phase-8--compliance-audit-consent-dsr-retention)
 - [Phase 9 — Notifications, files, reports, platform console](#phase-9--notifications-files-reports-platform-console-completion)
 - [Phase 10 — Offline & PWA](#phase-10--offline--pwa)
@@ -76,6 +77,11 @@ flowchart LR
   P4 --> P6
   P3 --> P7[Phase 7 Billing]
   P5 --> P7
+  P3 --> P7A[Phase 7A Renal Care]
+  P4 --> P7A
+  P5 --> P7A
+  P6 --> P7A
+  P7A --> P7
   P1 --> P8[Phase 8 Compliance]
   P7 --> P8
   P1 --> P9[Phase 9 Notifications & Platform console]
@@ -84,7 +90,7 @@ flowchart LR
   P10 --> P11[Phase 11 Hardening & GA]
 ```
 
-**Critical path:** P0 → P1 → P2 → P3 → P4 → P5/P6 → P7 → P11. Compliance (P8) and Notifications/Platform (P9) branch off earlier and can run in parallel from P1.
+**Critical path:** P0 → P1 → P2 → P3 → P4 → P5/P6 → P7/P7A → P11. Compliance (P8) and Notifications/Platform (P9) branch off earlier and can run in parallel from P1.
 
 ---
 
@@ -472,6 +478,62 @@ This is the gate every later phase builds on: a phase cannot ship a module's scr
   - Web UI in `apps/web`: `MainLayout.tsx` with notification bell badge, drawer with deep links, quiet hours modal; `ReportsCatalogPage.tsx` with search, category filtering, runner modal & table, and delivery scheduling; `TenantDetailPage.tsx` with Subscription & Lifecycle tab, DLQ Job Monitor tab, and `RPT-PLT-09` Transparency tab (verified free of PHI).
 ---
 
+## Phase 7A — Renal care module: hemodialysis, dialyzer reprocessing, water safety, and PhilHealth dialysis package
+
+**Goal:** operational hemodialysis workflows, infection-control dialyzer reprocessing, pre-shift water safety, and PhilHealth 156-session benefit accounting are fully implemented, tested, and audited under tenant isolation. **Size:** L. **Depends on:** Phase 3, Phase 4, Phase 5, Phase 6; connects with Phase 7. **Discharges:** AC-29, AC-30, AC-31, AC-32.
+
+### Renal stations, machine registry, and scheduling roster
+- [x] ⛔ `renal_stations` and `dialysis_machines` schema with forced RLS, `branch_id`, isolation station flag (`is_isolation` for HBsAg+ patients), and machine service/disinfection logs
+- [x] Weekly recurring shift templates (`dialysis_shifts`) and chair assignments (`dialysis_schedules`); conflict detector prevents station double-booking across overlapping shifts
+- [x] Machine operating hours tracking and chemical disinfection log; prevents assignment of machines in `MAINTENANCE` or `QUARANTINE`
+
+### Vascular access and dialysis prescriptions
+- [x] Vascular access registry (`vascular_accesses`): AV fistula, AV graft, tunneled/temporary catheters, anatomical site, laterality, and surgical history
+- [x] Pre-cannulation access assessment (`access_assessments`): bruit, thrill, signs of infection, and cannulation complication notes
+- [x] Dialysis prescriptions (`dialysis_prescriptions`): modality (HD/HDF), target dry weight, treatment duration, dialyzer model, dialysate composition (K+, Ca++, Na+, HCO3-), blood/dialysate flow targets, and heparinization protocol
+- [x] Nephrologist prescription sign-off flow (`POST /renal/prescriptions/{id}/sign` 🔒): requires step-up authentication; mid-treatment prescription amendments require explicit physician authorization
+
+### Dialysis encounter lifecycle, pre-dialysis intake, intra-dialytic flowsheet, and post-dialysis close
+- [x] ⛔ `dialysis_sessions` encounter engine: `SCHEDULED` → `PRE_DIALYSIS` → `IN_PROGRESS` → `POST_DIALYSIS` → `COMPLETED`
+- [x] **Pre-dialysis intake gate** (`POST /renal/sessions/{id}/pre-dialysis` 🔒): sitting/standing BP, pre-weight, dry weight, interdialytic fluid gain calculation, UF target calculation; **clinical safety gate** asserts compliant pre-shift water test and validates assigned dialyzer
+- [x] **Intra-dialytic flowsheet logging** (`POST /renal/sessions/{id}/flowsheet`): periodic recordings (15–30 min) of BP, pulse, arterial/venous pressures, TMP, blood flow, dialysate flow, UF rate, cumulative UF volume, symptoms, and interventions
+- [x] Intra-dialytic medication administration: EPO, IV iron sucrose, and heparin doses logged and consumed through Pharmacy/Supply integration
+- [x] **Post-dialysis discharge and closing** (`POST /renal/sessions/{id}/post-dialysis` 🔒): post-weight, orthostatic discharge BP, actual UF removed, hemostasis time, nurse sign-off; automatically posts session charge bundle to Billing
+
+### Dialyzer reprocessing, reuse tracking, and volume safety gate
+- [x] ⛔ `dialyzers` master with forced RLS and composite constraint `UNIQUE (tenant_id, id, patient_id)`: **strict single-patient binding**; dialyzer scan validation prevents cross-patient allocation
+- [x] Dialyzer reprocessing workflow (`POST /renal/dialyzers/{id}/reprocess` 🔒): records measured total cell volume (TCV) / bundle volume, baseline percentage, and pressure leak test result
+- [x] **Dialyzer volume cutoff gate**: dialyzer with measured volume < 80% baseline, failed pressure leak test, or reaching max reuse limit (default 10) is rejected and forced to `DISCARDED` status
+- [x] Residual chemical disinfectant check: verified negative prior to priming and patient connection
+
+### Water treatment monitoring, chlorine breakthrough lockout, and quality surveillance
+- [x] ⛔ `water_treatment_logs` and pre-shift testing: RO product conductivity, water softener hardness, and carbon bed chlorine/chloramine testing
+- [x] **Water safety fail-closed lockout**: total chlorine breakthrough ≥ 0.1 ppm immediately raises a critical clinical alert and blocks starting sessions on all stations in the affected branch until compliant remediation is recorded
+- [x] Microbiological and endotoxin surveillance (`water_lab_tests`): monthly RO water and dialysate endotoxin (< 0.25 EU/mL) and bacteriological culture (< 100 CFU/mL) results tracking (DOH/AAMI compliance)
+
+### PhilHealth 156-session benefit tracking, claim generation, and billing charge integration
+- [x] ⛔ **Annual 156-session benefit counter**: tracks patient session sequence (1…156) per calendar year under the PhilHealth Hemodialysis Benefit Package; alerts patient and billing when approaching benefit cap (session 150+)
+- [x] Case rate claim generation (`POST /renal/sessions/{id}/claim` 🔒): builds PhilHealth dialysis claim document linked to session, visit, and primary ICD-10 diagnosis (N18.5 ESRD)
+- [x] Out-of-pocket and copay charge capture: non-covered supplies, dialyzers, laboratory tests, and sessions exceeding the 156-session limit are automatically billed to the patient invoice
+
+### Renal background jobs (JOB-51…JOB-54) and reports (RPT-REN-01…06)
+- [x] `JOB-51 renal.water.alert`: daily monitor for missing pre-shift water tests and overdue water cultures
+- [x] `JOB-52 renal.dialyzer.audit`: nightly scan for dialyzers exceeding shelf-life or sitting unreprocessed > 24 h
+- [x] `JOB-53 renal.philhealth.reconcile`: daily reconciliation of PhilHealth session counts and ceiling warnings
+- [x] `JOB-54 renal.ktv.calculate`: event-driven auto-calculation of spKt/V and URR on verified pre/post BUN lab results
+- [x] RPT-REN-01…06 report implementations with CSV/PDF export and tenant isolation
+
+### Exit gate
+- [x] Dialysis session execution passes E2E (AC-29): intake → flowsheet → post-dialysis close → charge capture & PhilHealth counter increment
+- [x] Dialyzer reuse safety gate passes (AC-30): measured volume < 80% baseline or leak fail forces `DISCARDED`; dialyzer of patient A cannot be selected for patient B
+- [x] Water treatment chlorine breakthrough lockout passes (AC-31): chlorine ≥ 0.1 ppm blocks starting dialysis sessions
+- [x] PhilHealth 156-session benefit ceiling enforcement passes (AC-32): session 157 alerts for copay and blocks standard package claim duplicate
+- [x] Module entitlement isolation passes: tenant without `renal` module receives 403 `MODULE_NOT_ENTITLED` on `/renal/*` routes
+
+**Hardening round (gap fixes #1–#8):** migration `0065_renal_hbv_and_dialyzer_days` added `dialysis_prescriptions.hbv_hbsag_positive` and `dialyzers.max_reuse_days`; `createSession` now enforces the HBsAg isolation gate (signed ACTIVE prescription + `renal_stations.is_isolation`), `POST_DIALYSIS` is gated on a negative residual test, and `completePostDialysis` posts each `consumables[]` line to the unified supply ledger via `postConsumption(refType='DIALYSIS_SESSION')` in the same transaction. JOB-51 flags branches overdue for a `BACTERIAL_CULTURE`, JOB-52 discards dialyzers past either reuse ceiling, and JOB-54 prefers verified `lab_results` BUN (falling back to `R=0.35` when absent).
+
+---
+
 ## Phase 8 — Compliance, audit, consent, DSR, retention
 
 **Goal:** the privacy and safety obligations are operable, not just documented. **Size:** L. **Depends on:** Phase 1; enriches through P7. **Discharges:** AC-15.
@@ -590,7 +652,7 @@ This is the gate every later phase builds on: a phase cannot ship a module's scr
 - [ ] Admin and user documentation; in-app onboarding for each persona
 
 ### Exit gate — GA
-- [ ] AC-1 … AC-28 all pass in CI against a production-like stack
+- [ ] AC-1 … AC-32 all pass in CI against a production-like stack
 - [ ] RLS canary green for 14 days; penetration test findings resolved or accepted with a plan
 - [ ] Counsel and DPO sign-off recorded for §20
 - [ ] On-call runbook rehearsed; rollback tested
@@ -641,6 +703,8 @@ Every job in [specification §14](specification.md) is implemented, tested, and 
 | JOB-23 | `appointment.reminder` | 3 | JOB-48 | `billing.daily.close` | 7 |
 | JOB-24 | `appointment.noshow.mark` | 3 | JOB-49 | `billing.overdue.flag` | 7 |
 | JOB-25 | `visit.stale.close` | 3 | JOB-50 | `billing.receipt.generate` | 7 |
+| JOB-51 | `renal.water.alert` | 7A | JOB-53 | `renal.philhealth.reconcile` | 7A |
+| JOB-52 | `renal.dialyzer.audit` | 7A | JOB-54 | `renal.ktv.calculate` | 7A |
 
 **Notes on sequencing.** `JOB-01 outbox.dispatch` is the backbone and lands in Phase 1 before any other job. `JOB-02 notification.send` is split: the in-app path in Phase 1, the email/SMS channels in Phase 9. `JOB-03 tenant.provision` is the only job on the critical path that creates data other tenants depend on, and it is module-aware: it seeds only the entitled modules, records `seed_status` per module, and is re-runnable for a single module when one is enabled later. `JOB-06 subscription.check` also carries module-trial expiry. `JOB-18 rls.canary` must be live from Phase 1 and green continuously — a canary failure freezes releases. `JOB-15 retention.enforce` ships in "list only" mode first; anonymisation stays off until Q-1 is signed off. `JOB-05 tenant.offboard.purge` is last in the sequence because it must respect legal holds. `JOB-09 audit.archive` lands with the Phase 8 retention work that gives it somewhere to archive to. `JOB-25 visit.stale.close` ships with the visit lifecycle in Phase 3.
 
@@ -704,6 +768,10 @@ These are not module features; each is a shared capability that later phases sil
 | 26 | Provisioning seeds only entitled modules | 1 |
 | 27 | Entitlement evaluation fails closed | 1 |
 | 28 | Flags cannot grant; payment is not access | 1 |
+| 29 | Dialysis session execution & clinical safety gate | 7A |
+| 30 | Dialyzer reuse & volume cutoff safety gate | 7A |
+| 31 | Water treatment chlorine breakthrough lockout | 7A |
+| 32 | PhilHealth 156-session limit enforcement | 7A |
 
 ---
 

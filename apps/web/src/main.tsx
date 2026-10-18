@@ -57,6 +57,11 @@ import { CreditNotesPage } from "./features/billing/CreditNotesPage.js";
 import { DailyClosePage } from "./features/billing/DailyClosePage.js";
 import { CompliancePage } from "./features/compliance/CompliancePage.js";
 import { ReportsCatalogPage } from "./features/reports/ReportsCatalogPage.js";
+import { RenalDashboardPage } from "./features/renal/RenalDashboardPage.js";
+import { DialysisWorklistPage } from "./features/renal/DialysisWorklistPage.js";
+import { DialyzerReprocessingPage } from "./features/renal/DialyzerReprocessingPage.js";
+import { WaterTreatmentLogPage } from "./features/renal/WaterTreatmentLogPage.js";
+import { PhilHealthTrackingPage } from "./features/renal/PhilHealthTrackingPage.js";
 import { PingPage } from "./features/ping/PingPage.js";
 import { PlatformShell } from "./shell/PlatformShell.js";
 import { PlatformLoginPage } from "./features/platform/PlatformLoginPage.js";
@@ -99,6 +104,17 @@ const router = createBrowserRouter([
           { path: "queue", element: <QueueBoardPage /> },
           { path: "visits", element: <VisitsPage /> },
           { path: "visits/:visitId", element: <VisitChartPage /> },
+        ],
+      },
+      {
+        path: "renal",
+        children: [
+          { index: true, element: <RenalDashboardPage /> },
+          { path: "dashboard", element: <RenalDashboardPage /> },
+          { path: "worklist", element: <DialysisWorklistPage /> },
+          { path: "reprocessing", element: <DialyzerReprocessingPage /> },
+          { path: "water-safety", element: <WaterTreatmentLogPage /> },
+          { path: "philhealth", element: <PhilHealthTrackingPage /> },
         ],
       },
       {
@@ -193,7 +209,6 @@ const router = createBrowserRouter([
       { path: "tenants", element: <TenantsPage /> },
       { path: "tenants/new", element: <NewTenantWizard /> },
       { path: "tenants/:tenantId", element: <TenantDetailPage /> },
-      { path: "admins", element: <div>Admins</div> },
       { path: "break-glass", element: <div>Break-glass Console</div> },
       { path: "jobs", element: <div>Jobs Monitor</div> },
     ],

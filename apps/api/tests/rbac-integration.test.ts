@@ -90,6 +90,41 @@ describe.skipIf(!dbUp)("rbac service (real DB, todo 1.3)", () => {
     await expect(svc.getRole(TENANT_A, USER_A_ADMIN, clone.id)).rejects.toMatchObject({ status: 404 });
   });
 
+  it("allows assigning renal care permissions to custom roles and lists in permission matrix", async () => {
+    // 1. Permission matrix contains renal module
+    const matrix = svc.permissionMatrix();
+    const renalModule = matrix.find((m) => m.module === "renal");
+    expect(renalModule).toBeDefined();
+    expect(renalModule?.permissions.length).toBeGreaterThanOrEqual(25);
+    expect(renalModule?.permissions.map((p) => p.code)).toContain("renal.session.start");
+    expect(renalModule?.permissions.map((p) => p.code)).toContain("renal.dialyzer.reprocess");
+
+    // 2. Create custom role with renal permissions
+    const renalRole = await svc.createRole(TENANT_A, USER_A_ADMIN, {
+      code: `renal_access_${suffix}`,
+      name: "Renal Access Role",
+      permissions: ["renal.session.read", "renal.session.start", "renal.dialyzer.read"],
+    });
+    createdRoleIds.push(renalRole.id);
+    expect(renalRole.permissions).toEqual(
+      expect.arrayContaining(["renal.session.read", "renal.session.start", "renal.dialyzer.read"]),
+    );
+
+    // 3. Update custom role to grant more renal permissions
+    const updated = await svc.updateRole(TENANT_A, USER_A_ADMIN, renalRole.id, undefined, {
+      name: "Renal Access Role v2",
+      permissions: [
+        "renal.session.read",
+        "renal.session.start",
+        "renal.dialyzer.read",
+        "renal.dialyzer.reprocess",
+        "renal.water.record",
+      ],
+    });
+    expect(updated.permissions).toContain("renal.dialyzer.reprocess");
+    expect(updated.permissions).toContain("renal.water.record");
+  });
+
   it("rejects unknown permission codes with VALIDATION_FAILED", async () => {
     await expect(
       svc.createRole(TENANT_A, USER_A_ADMIN, {

@@ -44,6 +44,18 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    id: "renal",
+    label: "Renal Care (HD)",
+    icon: "🩸",
+    items: [
+      { to: "/renal/dashboard", icon: "📊", label: "Dialysis Unit Board" },
+      { to: "/renal/worklist", icon: "📋", label: "Session Worklist" },
+      { to: "/renal/reprocessing", icon: "🔄", label: "Dialyzer Reprocessing" },
+      { to: "/renal/water-safety", icon: "💧", label: "Water Safety & RO" },
+      { to: "/renal/philhealth", icon: "🏛️", label: "PhilHealth 156 Cap" },
+    ],
+  },
+  {
     id: "pharmacy",
     label: "Pharmacy Dispensing",
     icon: "💊",

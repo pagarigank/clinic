@@ -48,6 +48,8 @@ const TITLES: Partial<Record<ErrorCode, string>> = {
   INSUFFICIENT_PAYMENT: "Insufficient Payment Tendered",
   PAYMENT_EXCEEDS_BALANCE: "Payment Exceeds Outstanding Balance",
   INVOICE_NOT_DRAFT: "Invoice Not In Draft Status",
+  RENAL_ISOLATION_REQUIRED: "Renal Isolation Required",
+  RESIDUAL_TEST_REQUIRED: "Residual Disinfectant Test Required",
 };
 
 export function statusForCode(code: string): number {

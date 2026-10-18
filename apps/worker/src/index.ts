@@ -45,6 +45,12 @@ import {
   runReportMaterializedRefresh,
   runReportScheduledDeliver,
 } from './handlers/platform-jobs.handler.js';
+import {
+  runRenalWaterAlert,
+  runRenalDialyzerAudit,
+  runRenalPhilhealthReconcile,
+  runRenalKtvCalculate,
+} from './handlers/renal-jobs.handler.js';
 
 async function bootstrap() {
   const boss = new PgBoss({
@@ -420,6 +426,46 @@ async function bootstrap() {
     const r = await runReportScheduledDeliver();
     if (r.deliveredCount > 0 || r.suspendedCount > 0) {
       console.log(`JOB-20: delivered ${r.deliveredCount} scheduled reports, suspended ${r.suspendedCount}`);
+    }
+  });
+
+  // JOB-51: renal.water.alert (daily 05:00 UTC)
+  await boss.createQueue('renal.water.alert', { policy: 'singleton' });
+  await boss.schedule('renal.water.alert', '0 5 * * *', null, { tz: 'UTC' });
+  await boss.work('renal.water.alert', async () => {
+    const r = await runRenalWaterAlert();
+    if (r.alertedBranches > 0) {
+      console.log(`JOB-51: alerted ${r.alertedBranches} branches for water safety`);
+    }
+  });
+
+  // JOB-52: renal.dialyzer.audit (nightly 01:00 UTC)
+  await boss.createQueue('renal.dialyzer.audit', { policy: 'singleton' });
+  await boss.schedule('renal.dialyzer.audit', '0 1 * * *', null, { tz: 'UTC' });
+  await boss.work('renal.dialyzer.audit', async () => {
+    const r = await runRenalDialyzerAudit();
+    if (r.staleDialyzers > 0) {
+      console.log(`JOB-52: audited ${r.staleDialyzers} stale dialyzers`);
+    }
+  });
+
+  // JOB-53: renal.philhealth.reconcile (daily 04:00 UTC)
+  await boss.createQueue('renal.philhealth.reconcile', { policy: 'singleton' });
+  await boss.schedule('renal.philhealth.reconcile', '0 4 * * *', null, { tz: 'UTC' });
+  await boss.work('renal.philhealth.reconcile', async () => {
+    const r = await runRenalPhilhealthReconcile();
+    if (r.warnedPatients > 0) {
+      console.log(`JOB-53: issued ceiling warnings for ${r.warnedPatients} patients`);
+    }
+  });
+
+  // JOB-54: renal.ktv.calculate (hourly sweep)
+  await boss.createQueue('renal.ktv.calculate', { policy: 'singleton' });
+  await boss.schedule('renal.ktv.calculate', '0 * * * *', null, { tz: 'UTC' });
+  await boss.work('renal.ktv.calculate', async () => {
+    const r = await runRenalKtvCalculate();
+    if (r.calculated > 0) {
+      console.log(`JOB-54: calculated spKt/V for ${r.calculated} sessions`);
     }
   });
 

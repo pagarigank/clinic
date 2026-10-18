@@ -240,7 +240,6 @@ export function PrescriptionPrintModal({
       cancelled = true;
       touched.current = new Set();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, visit.id]);
 
   useEffect(() => {
@@ -330,8 +329,7 @@ export function PrescriptionPrintModal({
 
   useEffect(() => {
     void fetchPdfPreview();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [
+  }, [
     activeTab,
     visit.id,
     doctorName,

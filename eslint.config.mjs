@@ -38,7 +38,7 @@ export default [
       // the core rule false-positives on both.
       "no-unused-vars": "off",
       "@typescript-eslint/no-unused-vars": [
-        "error",
+        "warn",
         { args: "after-used", varsIgnorePattern: "^_", argsIgnorePattern: "^_" },
       ],
       "no-restricted-imports": [

@@ -151,7 +151,6 @@ export function LabReportPrintModal({
 
   useEffect(() => {
     void fetchPdfPreview();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isOpen,
     report?.id,

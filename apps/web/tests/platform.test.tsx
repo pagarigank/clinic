@@ -6,6 +6,7 @@ import { StepUpProvider } from "../src/shared/auth/StepUpContext.js";
 import { TenantsPage } from "../src/features/platform/TenantsPage.js";
 import { TenantDetailPage } from "../src/features/platform/TenantDetailPage.js";
 import { NewTenantWizard } from "../src/features/platform/NewTenantWizard.js";
+import { setStepUpToken } from "../src/shared/api/client.js";
 import { useStubHandler } from "./setup.js";
 
 /**
@@ -234,6 +235,162 @@ describe("Platform console (todo §1.7)", () => {
     expect(screen.getByText(/doctor@northwind.emr/i)).toBeInTheDocument();
     expect(screen.getByText(/receptionist@northwind.emr/i)).toBeInTheDocument();
     expect(screen.getByText(/DemoPassw0rd!2026/i)).toBeInTheDocument();
+  });
+
+  /**
+   * Admins tab — specification.md §18.1. Platform operators manage tenant
+   * administrators from the Tenant detail surface (metadata only, never PHI);
+   * every mutation is step-up protected (todo.md §1.2).
+   */
+  const ADMIN_ROWS = {
+    admins: [
+      {
+        id: "u1",
+        email: "admin@demo-a.test",
+        name: "Dr Amina Reyes",
+        status: "ACTIVE",
+        mfaEnabled: true,
+        lastLoginAt: "2026-10-01T10:00:00.000Z",
+        roles: ["tenant_admin"],
+      },
+      {
+        id: "u2",
+        email: "locked@demo-a.test",
+        name: "Dr Lito Cruz",
+        status: "LOCKED",
+        mfaEnabled: false,
+        lastLoginAt: null,
+        roles: ["tenant_admin"],
+      },
+    ],
+  };
+
+  function renderTenantDetail() {
+    return render(
+      <MemoryRouter
+        initialEntries={[
+          { pathname: "/platform/tenants/t1", state: { tenant: { name: "Northwind Clinic", slug: "northwind" } } },
+        ]}
+      >
+        <AuthProvider>
+          <StepUpProvider>
+            <Routes>
+              <Route path="/platform/tenants/:tenantId" element={<TenantDetailPage />} />
+            </Routes>
+          </StepUpProvider>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  it("Administrators tab lists tenant admins and resets MFA through the step-up challenge", async () => {
+    setStepUpToken(null);
+    useStubHandler((req, res) => {
+      const url = req.url ?? "";
+      const method = req.method ?? "GET";
+      const send = (status: number, body: unknown) => {
+        res.writeHead(status, { "content-type": "application/json" });
+        res.end(JSON.stringify(body));
+      };
+      if (url.endsWith("/admins") && method === "GET") {
+        return send(200, ADMIN_ROWS);
+      }
+      if (url.includes("/reset-mfa")) {
+        if (!req.headers["x-step-up-token"]) {
+          return send(401, {
+            type: "about:blank",
+            title: "Step-up required",
+            status: 401,
+            code: "STEP_UP_REQUIRED",
+          });
+        }
+        return send(200, { reset: true });
+      }
+      if (url.includes("/auth/step-up")) {
+        return send(200, { stepUpToken: "step-token", expiresIn: 300 });
+      }
+      return send(200, {});
+    });
+
+    renderTenantDetail();
+    fireEvent.click(await screen.findByRole("tab", { name: /Administrators/i }));
+
+    expect(await screen.findByText("Dr Amina Reyes")).toBeInTheDocument();
+    expect(screen.getByText("admin@demo-a.test")).toBeInTheDocument();
+    expect(screen.getByText("Dr Lito Cruz")).toBeInTheDocument();
+    expect(screen.getByText("LOCKED")).toBeInTheDocument();
+
+    // Reset MFA is offered only for MFA-enrolled admins.
+    const mfaButtons = screen.getAllByRole("button", { name: /Reset MFA/i });
+    expect(mfaButtons).toHaveLength(2);
+    expect(mfaButtons[0]).toBeEnabled();
+    expect(mfaButtons[1]).toBeDisabled();
+
+    fireEvent.click(mfaButtons[0]!);
+    expect(await screen.findByText(/Confirm it's you/i)).toBeInTheDocument();
+    expect(screen.getByText(/Reset MFA for admin@demo-a\.test/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/^Passphrase$/i), { target: { value: "DemoPassw0rd!2026" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Confirm$/i }));
+
+    expect(await screen.findByText(/MFA reset for admin@demo-a\.test/)).toBeInTheDocument();
+  });
+
+  it("Unlock and password reset are step-up gated and post the operator's intent", async () => {
+    setStepUpToken(null);
+    const posted: string[] = [];
+    useStubHandler((req, res) => {
+      const url = req.url ?? "";
+      const method = req.method ?? "GET";
+      const send = (status: number, body: unknown) => {
+        res.writeHead(status, { "content-type": "application/json" });
+        res.end(JSON.stringify(body));
+      };
+      if (url.endsWith("/admins") && method === "GET") {
+        return send(200, ADMIN_ROWS);
+      }
+      if ((url.includes("/unlock") || url.includes("/reset-password")) && method === "POST") {
+        posted.push(url);
+        if (!req.headers["x-step-up-token"]) {
+          return send(401, {
+            type: "about:blank",
+            title: "Step-up required",
+            status: 401,
+            code: "STEP_UP_REQUIRED",
+          });
+        }
+        return send(200, { ok: true });
+      }
+      if (url.includes("/auth/step-up")) {
+        return send(200, { stepUpToken: "step-token", expiresIn: 300 });
+      }
+      return send(200, {});
+    });
+
+    renderTenantDetail();
+    fireEvent.click(await screen.findByRole("tab", { name: /Administrators/i }));
+    await screen.findByText("Dr Lito Cruz");
+
+    // Unlock is offered only for LOCKED rows, and challenges for step-up first.
+    fireEvent.click(screen.getByRole("button", { name: /^Unlock$/i }));
+    expect(await screen.findByText(/Unlock locked@demo-a\.test/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/^Passphrase$/i), { target: { value: "DemoPassw0rd!2026" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Confirm$/i }));
+    expect(await screen.findByText(/Account unlocked for locked@demo-a\.test/)).toBeInTheDocument();
+
+    // Reset password opens a modal and posts the new password (step-up already held).
+    await screen.findByText("Dr Lito Cruz");
+    fireEvent.click(screen.getAllByRole("button", { name: /Reset password…/i })[0]!);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/Reset password for admin@demo-a\.test/i)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /^Reset password$/i })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText(/New password/i), {
+      target: { value: "BrandNewPassw0rd!2026" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Reset password$/i }));
+
+    expect(await screen.findByText(/Password reset for admin@demo-a\.test/)).toBeInTheDocument();
+    expect(posted.some((u) => u.includes("/users/u2/unlock"))).toBe(true);
+    expect(posted.some((u) => u.includes("/admins/u1/reset-password"))).toBe(true);
   });
 });
 

@@ -57,6 +57,36 @@ export const PlatformStepUpRequestSchema = z.object({
 });
 export type PlatformStepUpRequest = z.infer<typeof PlatformStepUpRequestSchema>;
 
+// ── Platform console: tenant admin management (specification §18.1) ─────────
+// The platform operator may list, invite, and reset the credentials of a
+// tenant's administrators. These contracts carry staff account metadata only —
+// never clinical data, never a working credential (architecture §10).
+
+export const PlatformAdminSummarySchema = z.object({
+  id: z.string().uuid(),
+  email: z.string(),
+  name: z.string(),
+  status: z.enum(["INVITED", "ACTIVE", "LOCKED", "DEACTIVATED"]),
+  mfaEnabled: z.boolean(),
+  lastLoginAt: z.string().nullable(),
+  roles: z.array(
+    z.object({ id: z.string().uuid(), code: z.string(), name: z.string() }),
+  ),
+});
+export type PlatformAdminSummary = z.infer<typeof PlatformAdminSummarySchema>;
+
+export const PlatformAdminCreateSchema = z.object({
+  email: z.string().email().max(320),
+  name: z.string().min(1).max(160),
+});
+export type PlatformAdminCreate = z.infer<typeof PlatformAdminCreateSchema>;
+export type PlatformAdminCreateRequest = z.input<typeof PlatformAdminCreateSchema>;
+
+export const PlatformAdminListSchema = z.object({
+  admins: z.array(PlatformAdminSummarySchema),
+});
+export type PlatformAdminList = z.infer<typeof PlatformAdminListSchema>;
+
 export const ModuleEntitlementAuditSchema = z.object({
   id: z.string().uuid(),
   tenantId: z.string().uuid(),

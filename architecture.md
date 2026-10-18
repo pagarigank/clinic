@@ -19,9 +19,10 @@ Modules in scope:
 | **Central Supply** | Item master, suppliers, PR/PO, receiving, requisitions, issues, transfers, counts, disposal, recalls |
 | **Laboratory** | Test catalog, orders, specimens, results, verification, critical values, QC, reports |
 | **Pharmacy** | Drug master, prescription verification, FEFO dispensing, OTC sales, controlled-drug register |
+| **Renal Care** | Hemodialysis stations/chairs, machine logs & maintenance, vascular access tracking, dialysis prescriptions, pre/intra/post session flowsheets, dialyzer reprocessing & reuse safety gate (>= 80% volume cutoff), RO water treatment checks & chlorine breakthrough lockout, PhilHealth 156-session benefit tracking |
 | Billing (supporting) | Charges, invoices, payments, discounts, cashier shifts |
 | Compliance & Audit | Audit trail, PHI access log, consents, data-subject requests, breach register |
-| Background Jobs | 50 scheduled/event jobs (catalog in specification §14) |
+| Background Jobs | 54 scheduled/event jobs (catalog in specification §14) |
 
 Out of scope for v1 (tracked in todo.md "Later"): inpatient/ADT, HMO claims engine, BIR-accredited invoicing, imaging/PACS, instrument middleware beyond HL7/ASTM basics.
 
@@ -80,7 +81,7 @@ Findings from the research pass that shaped the design (sources in §22):
 |---|---|---|
 | ADR-1 | Shared DB/schema with RLS | Schema-per-tenant (migration fan-out pain), DB-per-tenant (cost) — kept as *promotion path* for very large/regulated tenants via a tenant routing table |
 | ADR-2 | Tenant → Branch → Stock Location hierarchy | Flat "clinic" = tenant (cannot model multi-branch companies) |
-| ADR-3 | Single inventory ledger shared by Supply, Pharmacy, Lab | Separate stock tables per module (reconciliation drift) |
+| ADR-3 | Single inventory ledger shared by Supply, Pharmacy, Lab, Renal | Separate stock tables per module (reconciliation drift) |
 | ADR-4 | Superadmin enters a clinic via an audited *context switch* (“break-glass”) rather than a blanket cross-tenant PHI read | Policy `OR is_superadmin` on PHI tables (one bug = cross-tenant leak) |
 | ADR-5 | pg-boss over BullMQ | Redis adds an operational dependency with no needed throughput gain |
 | ADR-6 | Modular monolith + separate worker process (same codebase) | Microservices (premature) |
@@ -89,6 +90,7 @@ Findings from the research pass that shaped the design (sources in §22):
 | ADR-9 | **React Router 7** data router over TanStack Router | Ecosystem familiarity, smaller bundle, `zod`-validated search params are achievable either way; revisit if `frontend.md` §4 friction appears |
 | ADR-10 | **Dexie + explicit offline outbox** with `Idempotency-Key` on every write, rather than full offline-first replication | Full sync engines (CRDT/vector clocks) are overkill and risky for clinical/financial integrity; we only offline *queue* writes and keep reads network-first |
 | ADR-11 | Module entitlements live in a `tenant_modules` table and are enforced by an **application-layer module guard**, not by adding a module predicate to every RLS policy | RLS answers "which tenant"; entitlements answer "which module". Mixing them doubles the policy surface, slows every query, and couples the audited isolation mechanism to a commercial/billing concern. Keeping them orthogonal means a bug in entitlements can only *remove* access — the failure mode is a locked screen, not a data leak. Revocation is `DRAINING` → `DISABLED` (never delete) so re-enable is lossless |
+| ADR-12 | Hemodialysis Clinical Safety Gates & Reprocessing Architecture | Client-side validation or paper checklists (severe risk of bacteremia, chlorine hemolysis, or dialyzer misallocation) — server-side fail-closed gates enforce: (1) single-patient dialyzer binding `UNIQUE(tenant_id, id, patient_id)`, (2) dialyzer measured volume >= 80% baseline + leak pass, (3) water treatment carbon-breakthrough chlorine < 0.1 ppm check before session start |
 
 ### 3.1 ADR-8 in detail — the React-Bootstrap / React 19 compatibility note
 
@@ -169,7 +171,7 @@ Tenancy is not all-or-nothing. A tenant is granted a **set of modules** at creat
 
 ```
 tenant_modules (tenant_id, module) → status ∈ { TRIAL, ENABLED, DRAINING, DISABLED }
-modules: admin* · patients* · clinical · supply · laboratory · pharmacy · billing · compliance · notifications · reports
+modules: admin* · patients* · clinical · supply · laboratory · pharmacy · billing · compliance · notifications · renal · reports
         (* always on; the platform console is never a tenant module)
 ```
 
@@ -611,6 +613,40 @@ erDiagram
 
 `phi_access_log` and `audit_log` reference `patient_id`/`entity_id` **without** cascading deletes: erasure anonymizes the patient, it never removes the evidence that access occurred.
 
+### 7.5 Renal Care (Hemodialysis & Nephrology)
+
+```mermaid
+erDiagram
+  PATIENT ||--o{ VASCULAR_ACCESS : "has"
+  PATIENT ||--o{ DIALYSIS_PRESCRIPTION : "prescribed"
+  PATIENT ||--o{ DIALYZER : "owns"
+  PATIENT ||--o{ DIALYSIS_SESSION : "undergoes"
+  VISIT ||--o| DIALYSIS_SESSION : "encounter for"
+  BRANCH ||--o{ RENAL_STATION : "operates"
+  BRANCH ||--o{ DIALYSIS_MACHINE : "maintains"
+  BRANCH ||--o{ WATER_TREATMENT_LOG : "surveys"
+  DIALYSIS_MACHINE ||--o{ DIALYSIS_SESSION : "delivers"
+  RENAL_STATION ||--o{ DIALYSIS_SESSION : "hosts"
+  DIALYSIS_PRESCRIPTION ||--o{ DIALYSIS_SESSION : "governs"
+  VASCULAR_ACCESS ||--o{ DIALYSIS_SESSION : "cannulated in"
+  DIALYZER ||--o{ DIALYSIS_SESSION : "filters blood in"
+  DIALYZER ||--o{ DIALYZER_REPROCESSING : "reprocessed by"
+  DIALYSIS_SESSION ||--o{ SESSION_FLOWSHEET : "monitored in"
+  DIALYSIS_SESSION ||--o| SESSION_PRE_ASSESSMENT : "intake vitals"
+  DIALYSIS_SESSION ||--o| SESSION_POST_ASSESSMENT : "discharge vitals"
+  DIALYSIS_SESSION ||--o{ STOCK_MOVEMENT : "consumes lines/concentrates"
+  DIALYSIS_SESSION ||--o{ MEDICATION_ADMINISTRATION : "administers EPO/iron/heparin"
+  DIALYSIS_SESSION ||--o| PHILHEALTH_DIALYSIS_CLAIM : "generates claim (1..156)"
+  DIALYSIS_SESSION ||--o{ INVOICE : "charges billed to"
+```
+
+**Key domain invariants asserted by tests:**
+- **Single-patient dialyzer invariant:** A `dialyzers` record cannot be associated with any session where `session.patient_id <> dialyzer.patient_id` (enforced by composite FK `(tenant_id, dialyzer_id, patient_id)`).
+- **Dialyzer volume cutoff:** A dialyzer cannot be marked `CLEANED_READY` if its latest `measured_volume_ml < 0.80 * baseline_volume_ml` or if `pressure_leak_test_passed = false`.
+- **Dialyzer reuse ceiling:** A dialyzer is discarded once `reuse_count >= max_allowed_reuses` or once `first_used_date + max_reuse_days` has elapsed; both ceilings are enforced by JOB-52 and the reprocessing gate.
+- **Water safety lockout:** No session on a branch may enter `IN_PROGRESS` if the branch's latest pre-shift water log has `carbon_breakthrough_chlorine_ppm >= 0.1` or if no log exists for the current date/shift.
+- **Hepatitis B isolation:** A patient with confirmed reactive HBsAg status may only be scheduled or treated on stations where `is_isolation = true`.
+- **PhilHealth 156-session ceiling:** Cumulative annual sessions for ESRD are capped at 156 for standard package claims; session 157+ requires explicit private copay or secondary benefit authorization.
 
 ---
 
@@ -623,7 +659,7 @@ Pharmacy stock, lab reagents, and general supplies share one engine so that *cen
 | Concept | Description |
 |---|---|
 | `items` | One master for all stockable things; `item_type ∈ {DRUG, LAB_REAGENT, MEDICAL_SUPPLY, CONSUMABLE, OFFICE, OTHER}`; `drug_products` and `lab_tests` link to items. |
-| `stock_locations` | Per branch: `CENTRAL_STORE`, `PHARMACY`, `LABORATORY`, `CLINIC_ROOM`, `QUARANTINE`, `WASTE`, `IN_TRANSIT`. |
+| `stock_locations` | Per branch: `CENTRAL_STORE`, `PHARMACY`, `LABORATORY`, `DIALYSIS_UNIT`, `CLINIC_ROOM`, `QUARANTINE`, `WASTE`, `IN_TRANSIT`. |
 | `stock_batches` | (item, lot no, expiry, supplier, unit cost, status `AVAILABLE/QUARANTINED/EXPIRED/RECALLED/DEPLETED`). |
 | `stock_movements` | **Append-only** ledger; signed qty in base UOM; typed (`GRN`, `ISSUE_OUT`, `ISSUE_IN`, `DISPENSE`, `SALE`, `PATIENT_RETURN`, `SUPPLIER_RETURN`, `ADJ_GAIN`, `ADJ_LOSS`, `COUNT_VARIANCE`, `DISPOSAL`, `CONSUMPTION`, `TRANSFER_OUT`, `TRANSFER_IN`, `REVERSAL`) with `ref_type/ref_id`, reason, user, cost. |
 | `stock_balances` | (tenant, location, batch) → `qty_on_hand`, `qty_reserved`; `CHECK (qty_on_hand >= 0 AND qty_reserved >= 0 AND qty_reserved <= qty_on_hand)`. Updated in the **same transaction** as the movement. |
@@ -677,7 +713,7 @@ packages/
   ui/                      # shared React components (design system)
 modules/ (inside api)
   platform  tenancy  iam  patients  clinical  lab  pharmacy  supply  billing
-  compliance  notifications  reports  files  integrations
+  compliance  notifications  reports  files  integrations  renal
 ```
 
 Rules: modules talk via **application services or domain events** (outbox), not each other's tables. `lab`/`pharmacy` call `supply.InventoryService` for all stock effects. Cross-module reads go through query services.
@@ -745,6 +781,8 @@ Authorization is enforced in NestJS guards (`@RequirePermission('lab.result.veri
 │                              pr, po, grn, requisitions, issues, transfers, adjustments,
 │                              counts, disposals, recalls, consumption, stock
 ├── /billing/*                 invoices, charges, payments, credit-notes, shifts, discounts
+├── /renal/*                   stations, machines, schedules, accesses, prescriptions, sessions,
+│                              flowsheets, dialyzers, reprocessing, water-logs, philhealth
 ├── /compliance/*              audit, phi-access, consents, dsr, breaches, retention,
 │                              legal-holds, security-events, access-reviews
 ├── /reports/{id}              run a catalog report (RPT-*)
@@ -846,7 +884,7 @@ outage is visible as a dedicated metric + alert rather than as users reaching da
 | Never | Do not pass `priority: false` — it is deprecated and ignored from pg-boss 12.30.0, and disabling the priority sort was measured ~180× slower. Jobs are always fetched in priority order. |
 | Module scoping | Every job declares the module it belongs to. The scheduler refuses to enqueue a job whose module is not entitled, and the worker re-checks entitlement before each attempt, so a module disabled mid-window cannot keep running work. Jobs for a `DRAINING` module are allowed to finish. |
 | Observability | Metrics per job (duration, failures, lag) with `tenant_id` label; alert on dead-letter growth and schedule misses |
-| Catalog | 50 jobs defined in **specification §14** (IDs `JOB-01…JOB-50`) |
+| Catalog | 54 jobs defined in **specification §14** (IDs `JOB-01…JOB-54`) |
 
 **Transactional outbox:** domain events are inserted into `outbox` in the same transaction as the state change; `outbox.dispatch` (JOB-01) publishes to queues/notifications. No dual-write.
 

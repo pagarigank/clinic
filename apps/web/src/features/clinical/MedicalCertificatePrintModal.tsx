@@ -168,7 +168,6 @@ export function MedicalCertificatePrintModal({
 
   useEffect(() => {
     void fetchPdfPreview();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isOpen,
     cert.id,

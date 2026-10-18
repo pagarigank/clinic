@@ -291,7 +291,7 @@ describe('Phase 2 Controllers unit & delegation coverage', () => {
 
     it('supports full ICD-10 CRUD lifecycle and duplicate prevention', async () => {
       const testCode = 'T99.9';
-      try { await ctrl.deleteIcd10(testCode); } catch {}
+      try { await ctrl.deleteIcd10(testCode); } catch { /* ignore */ }
 
       // Create
       const created = await ctrl.createIcd10({ code: testCode, description: 'Test condition for automated check' });

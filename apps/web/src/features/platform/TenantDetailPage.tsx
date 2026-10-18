@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useParams, useLocation } from "react-router";
 import { AlertBanner, StatusPill, Timeline } from "@clinic/ui";
+import type { PlatformAdminSummary } from "@clinic/contracts";
 import { apiGet, apiPatch, apiPost, ApiError } from "../../shared/api/client.js";
 import { isStepUpRequired, useStepUp } from "../../shared/auth/StepUpContext.js";
 import {
@@ -72,7 +73,7 @@ export function TenantDetailPage() {
   const [tenantSlug, setTenantSlug] = useState(navigatePreferredTenant?.slug ?? "");
   const [tenantStatus, setTenantStatus] = useState<string>("ACTIVE");
   const [provisioningBusy, setProvisioningBusy] = useState(false);
-  const [tab, setTab] = useState<"overview" | "modules" | "logins" | "subscription" | "jobs" | "transparency">("modules");
+  const [tab, setTab] = useState<"overview" | "modules" | "logins" | "admins" | "subscription" | "jobs" | "transparency">("modules");
   const [credentials, setCredentials] = useState<StarterCredentialsPayload | undefined>();
   const [modules, setModules] = useState<Record<ModuleKey, TenantModuleRow>>(DEMO_MODULES);
   const [notice, setNotice] = useState<string | null>(null);
@@ -258,6 +259,17 @@ export function TenantDetailPage() {
           <button
             type="button"
             role="tab"
+            aria-selected={tab === "admins"}
+            className={`nav-link ${tab === "admins" ? "active" : ""}`}
+            onClick={() => setTab("admins")}
+          >
+            👤 Administrators
+          </button>
+        </li>
+        <li className="nav-item" role="presentation">
+          <button
+            type="button"
+            role="tab"
             aria-selected={tab === "subscription"}
             className={`nav-link ${tab === "subscription" ? "active" : ""}`}
             onClick={() => setTab("subscription")}
@@ -313,6 +325,13 @@ export function TenantDetailPage() {
             credentials={credentials}
           />
         </div>
+      ) : tab === "admins" ? (
+        <AdminsTab
+          tenantId={tenantId}
+          tenantName={tenantName}
+          onNotice={(msg) => setNotice(`${msg} — ${new Date().toLocaleTimeString()}`)}
+          onError={setError}
+        />
       ) : tab === "subscription" ? (
         <SubscriptionTab
           tenantId={tenantId}
@@ -1285,6 +1304,319 @@ function TransparencyTab({
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+/* ─── Administrators tab (specification §18.1) ───────────────────────────── */
+
+const ADMIN_STATUS_TONE: Record<PlatformAdminSummary["status"], "normal" | "pending" | "high" | "critical"> = {
+  ACTIVE: "normal",
+  INVITED: "pending",
+  LOCKED: "high",
+  DEACTIVATED: "critical",
+};
+
+function AdminsTab({
+  tenantId,
+  tenantName,
+  onNotice,
+  onError,
+}: {
+  tenantId: string;
+  tenantName: string;
+  onNotice: (msg: string) => void;
+  onError: (msg: string | null) => void;
+}) {
+  const { requestStepUp } = useStepUp();
+  const [admins, setAdmins] = useState<PlatformAdminSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviting, setInviting] = useState(false);
+  const [resetFor, setResetFor] = useState<PlatformAdminSummary | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiGet<{ admins?: PlatformAdminSummary[] }>(`/platform/tenants/${tenantId}/admins`);
+      setAdmins(Array.isArray(res?.admins) ? res.admins : []);
+    } catch (err) {
+      onError(problemCopy(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [tenantId, onError]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  /** Run a high-risk action with a single step-up retry (todo §1.2 contract). */
+  const runWithStepUp = useCallback(
+    async (reason: string, action: () => Promise<unknown>): Promise<boolean> => {
+      try {
+        await action();
+        return true;
+      } catch (err) {
+        if (isStepUpRequired(err)) {
+          const granted = await requestStepUp(reason);
+          if (!granted) {
+            onError("Step-up was not completed — nothing was changed.");
+            return false;
+          }
+          try {
+            await action();
+            return true;
+          } catch (retryErr) {
+            onError(problemCopy(retryErr));
+            return false;
+          }
+        }
+        onError(problemCopy(err));
+        return false;
+      }
+    },
+    [requestStepUp, onError],
+  );
+
+  const invite = async (e: FormEvent) => {
+    e.preventDefault();
+    setInviting(true);
+    onError(null);
+    try {
+      await apiPost(`/platform/tenants/${tenantId}/admins`, { email: inviteEmail, name: inviteName });
+      onNotice(`Invitation sent to ${inviteEmail}`);
+      setInviteEmail("");
+      setInviteName("");
+      await load();
+    } catch (err) {
+      onError(problemCopy(err));
+    } finally {
+      setInviting(false);
+    }
+  };
+
+  const resetMfa = (admin: PlatformAdminSummary) => {
+    setBusyId(admin.id);
+    void runWithStepUp(`Reset MFA for ${admin.email}`, () =>
+      apiPost(`/platform/tenants/${tenantId}/admins/${admin.id}/reset-mfa`, {}),
+    )
+      .then((ok) => {
+        if (ok) {
+          onNotice(`MFA reset for ${admin.email}`);
+          void load();
+        }
+      })
+      .finally(() => setBusyId(null));
+  };
+
+  const unlock = (admin: PlatformAdminSummary) => {
+    setBusyId(admin.id);
+    void runWithStepUp(`Unlock ${admin.email}`, () =>
+      apiPost(`/platform/tenants/${tenantId}/users/${admin.id}/unlock`, {}),
+    )
+      .then((ok) => {
+        if (ok) {
+          onNotice(`Account unlocked for ${admin.email}`);
+          void load();
+        }
+      })
+      .finally(() => setBusyId(null));
+  };
+
+  const submitResetPassword = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!resetFor) return;
+    setBusyId(resetFor.id);
+    const ok = await runWithStepUp(`Reset password for ${resetFor.email}`, () =>
+      apiPost(`/platform/tenants/${tenantId}/admins/${resetFor.id}/reset-password`, { newPassword }),
+    );
+    setBusyId(null);
+    if (ok) {
+      onNotice(`Password reset for ${resetFor.email}`);
+      setResetFor(null);
+      setNewPassword("");
+    }
+  };
+
+  return (
+    <div className="d-flex flex-column gap-3">
+      <div className="clinic-card p-4">
+        <h5 className="h6 fw-bold mb-1">Invite a tenant administrator</h5>
+        <p className="small text-muted mb-3">
+          The account is created in the INVITED state with the Tenant Administrator role; the invitee
+          sets their own password through the audited reset flow. No working credential is issued here.
+          Applies to tenant <strong>{tenantName}</strong>.
+        </p>
+        <form className="row g-2 align-items-end" onSubmit={invite}>
+          <div className="col-sm-5">
+            <label className="form-label small fw-semibold" htmlFor="admin-invite-email">Email</label>
+            <input
+              id="admin-invite-email"
+              type="email"
+              required
+              className="form-control form-control-sm"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+            />
+          </div>
+          <div className="col-sm-5">
+            <label className="form-label small fw-semibold" htmlFor="admin-invite-name">Full name</label>
+            <input
+              id="admin-invite-name"
+              type="text"
+              required
+              className="form-control form-control-sm"
+              value={inviteName}
+              onChange={(e) => setInviteName(e.target.value)}
+            />
+          </div>
+          <div className="col-sm-2 d-grid">
+            <button type="submit" className="btn btn-sm btn-cerulean" disabled={inviting}>
+              {inviting ? "Inviting…" : "Invite admin"}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div className="clinic-card">
+        <div className="clinic-card-header">
+          <span className="fw-bold">Administrators</span>
+          <span className="small text-muted">Account metadata only — no clinical or HR data crosses this boundary</span>
+        </div>
+        <div className="table-responsive">
+          <table className="table table-hover align-middle mb-0">
+            <caption className="visually-hidden">Tenant administrators</caption>
+            <thead className="table-light small text-secondary">
+              <tr>
+                <th>NAME</th>
+                <th>EMAIL</th>
+                <th>STATUS</th>
+                <th>MFA</th>
+                <th>LAST LOGIN</th>
+                <th className="text-end">ACTIONS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="text-center py-4 text-muted">Loading administrators…</td>
+                </tr>
+              ) : admins.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="text-center py-4 text-muted">No administrators found for this tenant.</td>
+                </tr>
+              ) : (
+                admins.map((admin) => (
+                  <tr key={admin.id}>
+                    <td className="fw-semibold text-dark">{admin.name}</td>
+                    <td className="small">{admin.email}</td>
+                    <td><StatusPill tone={ADMIN_STATUS_TONE[admin.status]} label={admin.status} /></td>
+                    <td className="small">{admin.mfaEnabled ? "Enrolled" : "—"}</td>
+                    <td className="small">
+                      {admin.lastLoginAt ? new Date(admin.lastLoginAt).toLocaleString() : "Never"}
+                    </td>
+                    <td className="text-end">
+                      <div className="d-flex gap-2 justify-content-end">
+                        {admin.status === "LOCKED" ? (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-success"
+                            disabled={busyId === admin.id}
+                            onClick={() => unlock(admin)}
+                          >
+                            Unlock
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary"
+                          disabled={busyId === admin.id}
+                          onClick={() => {
+                            setResetFor(admin);
+                            setNewPassword("");
+                          }}
+                        >
+                          Reset password…
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-warning"
+                          disabled={busyId === admin.id || !admin.mfaEnabled}
+                          onClick={() => resetMfa(admin)}
+                        >
+                          Reset MFA
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {resetFor ? (
+        <div
+          className="modal show d-block"
+          tabIndex={-1}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="admin-reset-title"
+          style={{ backgroundColor: "rgba(15,23,42,0.45)" }}
+        >
+          <div className="modal-dialog modal-dialog-centered">
+            <form className="modal-content" onSubmit={submitResetPassword}>
+              <div className="modal-header">
+                <h5 className="modal-title" id="admin-reset-title">Reset password for {resetFor.email}</h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => { setResetFor(null); setNewPassword(""); }}
+                  aria-label="Close"
+                />
+              </div>
+              <div className="modal-body">
+                <p className="small text-body-secondary">
+                  The new password must meet the platform policy. Every live session for this account
+                  is revoked; a step-up token is required to confirm. Applies to tenant{" "}
+                  <strong>{tenantName}</strong>.
+                </p>
+                <label className="form-label small fw-semibold" htmlFor="admin-reset-password">New password</label>
+                <input
+                  id="admin-reset-password"
+                  type="password"
+                  className="form-control"
+                  autoComplete="new-password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary"
+                  onClick={() => { setResetFor(null); setNewPassword(""); }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-danger"
+                  disabled={busyId === resetFor.id || newPassword.length === 0}
+                >
+                  {busyId === resetFor.id ? "Resetting…" : "Reset password"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

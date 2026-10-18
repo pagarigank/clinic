@@ -20,7 +20,8 @@ This document defines **what** the system does: roles, data, every CRUD, every t
 11. M8 Billing & Cashiering
 12. M9 Compliance & Audit
 13. M10 Notifications
-14. Background job catalog (JOB-01…JOB-50)
+13A. M11 Renal Care (Hemodialysis & Nephrology)
+14. Background job catalog (JOB-01…JOB-54)
 15. Report catalog (RPT-*)
 16. Non-functional requirements
 17. Acceptance scenarios
@@ -67,6 +68,9 @@ Appendix A — PhilHealth Konsulta EPR field list (Q-16 sign-off draft)
 | `PURCHASER` | Tenant/Branch | PR/PO, suppliers |
 | `AUDITOR` | Tenant | Read-only incl. audit logs (no PHI content unless granted) |
 | `DPO` | Tenant | Privacy: consents, DSRs, breach register, access logs |
+| `NEPHROLOGIST` | Branch(es) | Attending nephrologist: dialysis prescriptions, clinical rounds, vascular access orders |
+| `DIALYSIS_NURSE` | Branch(es) | Pre/intra/post-dialysis monitoring, cannulation, treatment administration |
+| `DIALYSIS_TECH` | Branch(es) | Dialyzer reprocessing, RO water testing, machine disinfection & maintenance |
 
 Tenant admins may clone/modify roles (permission sets) per tenant; system templates are re-seeded only for new tenants.
 
@@ -74,31 +78,34 @@ Tenant admins may clone/modify roles (permission sets) per tenant; system templa
 
 `F` full CRUD+transitions · `R` read · `C/R/U` no delete · `A` approvals · `—` none
 
-| Role | Platform | Tenant Admin | Patients | Clinical | Lab | Pharmacy | Supply | Billing | Compliance | Reports |
-|---|---|---|---|---|---|---|---|---|---|---|
-| SUPERADMIN | F | F (via enter-clinic) | via enter-clinic | via enter-clinic | via enter-clinic | via enter-clinic | via enter-clinic | via enter-clinic | R | Platform + clinic |
-| TENANT_ADMIN | — | F | C/R/U | R | R | R | R | R | R | All (tenant) |
-| BRANCH_MANAGER | — | R (own branch) | C/R/U | R, A | R, A | R, A | R, A | R, A | R | Branch |
-| DOCTOR | — | — | R, U(clinical) | F (own) | order, view | prescribe | — | — | — | Clinical |
-| NURSE | — | — | R | C/R/U | collect | R | requisition, consumption | — | — | Clinical |
-| ENCODER | — | — | C/R/U | appointments, queue | order, encode results (no verify) | — | — | charge capture | — | Basic |
-| CASHIER | — | — | R (demographics) | — | — | — | — | F | — | Billing |
-| PHARMACIST | — | — | R | R | — | F (+controlled) | requisition, receive | sales | — | Pharmacy |
-| PHARMACY_ASSISTANT | — | — | R | R (Rx) | — | prepare, OTC | counts | — | — | — |
-| PHLEBOTOMIST | — | — | R | R | collect | — | — | — | — | — |
-| MEDTECH | — | — | R | R | C/R/U results | — | reagent requisition | — | — | Lab |
-| LAB_MANAGER | — | — | R | R | F (+verify, QC) | — | R, requisition | — | — | Lab |
-| PATHOLOGIST | — | — | R | R | verify, amend | — | — | — | — | Lab |
-| SUPPLY_OFFICER | — | — | — | — | — | — | F | — | — | Supply |
-| PURCHASER | — | — | — | — | — | — | PR/PO/suppliers | — | — | Supply |
-| AUDITOR | — | R | — | — | — | — | — | — | R (audit) | All (no PHI) |
-| DPO | — | R | R (access log) | — | — | — | — | — | F | Compliance |
+| Role | Platform | Tenant Admin | Patients | Clinical | Lab | Pharmacy | Supply | Billing | Compliance | Renal Care | Reports |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| SUPERADMIN | F | F (via enter-clinic) | via enter-clinic | via enter-clinic | via enter-clinic | via enter-clinic | via enter-clinic | via enter-clinic | via enter-clinic | via enter-clinic | Platform + clinic |
+| TENANT_ADMIN | — | F | C/R/U | R | R | R | R | R | R | R | All (tenant) |
+| BRANCH_MANAGER | — | R (own branch) | C/R/U | R, A | R, A | R, A | R, A | R, A | R | R, A | Branch |
+| DOCTOR | — | — | R, U(clinical) | F (own) | order, view | prescribe | — | — | — | order, view | Clinical |
+| NURSE | — | — | R | C/R/U | collect | R | requisition, consumption | — | — | R | Clinical |
+| ENCODER | — | — | C/R/U | appointments, queue | order, encode results (no verify) | — | — | charge capture | — | schedule, check-in | Basic |
+| CASHIER | — | — | R (demographics) | — | — | — | — | F | — | charge capture | Billing |
+| PHARMACIST | — | — | R | R | — | F (+controlled) | requisition, receive | sales | — | dispense | Pharmacy |
+| PHARMACY_ASSISTANT | — | — | R | R (Rx) | — | prepare, OTC | counts | — | — | prepare | — |
+| PHLEBOTOMIST | — | — | R | R | collect | — | — | — | — | collect | — |
+| MEDTECH | — | — | R | R | C/R/U results | — | reagent requisition | — | — | — | Lab |
+| LAB_MANAGER | — | — | R | R | F (+verify, QC) | — | R, requisition | — | — | — | Lab |
+| PATHOLOGIST | — | — | R | R | verify, amend | — | — | — | — | — | Lab |
+| SUPPLY_OFFICER | — | — | — | — | — | — | F | — | — | supply | Supply |
+| PURCHASER | — | — | — | — | — | — | PR/PO/suppliers | — | — | — | Supply |
+| AUDITOR | — | R | — | — | — | — | — | — | R (audit) | R (audit) | All (no PHI) |
+| DPO | — | R | R (access log) | — | — | — | — | — | F | R (access log) | Compliance |
+| NEPHROLOGIST | — | — | R, U(clinical) | F (own) | order, view | prescribe | — | — | — | F (+prescribe, rounds) | Clinical |
+| DIALYSIS_NURSE | — | — | R | C/R/U | collect | R | requisition, consumption | — | — | F (+session, flowsheet) | Clinical |
+| DIALYSIS_TECH | — | — | — | — | — | — | requisition | — | — | F (machine, reuse, water) | Basic |
 
 Permission names follow `<module>.<resource>.<action>` in lower_snake_case. The authoritative catalogue is §2.3; the endpoint map in §18 uses only these names, plus the session-scoped `self` / `owner` / `any` markers.
 
 ### 2.3 Permission catalogue (canonical, seeded per tenant)
 
-Seeded with the system role templates in §2.1 and re-seeded only for new tenants (§2.2). Wildcards in the table are notation for a family; the actual grants are explicit rows, so a role diff is always readable. `reports.<module>.view` covers RPT-PLT/RPT-PAT/RPT-CLN/RPT-LAB/RPT-PHM/RPT-SUP/RPT-BIL/RPT-CMP.
+Seeded with the system role templates in §2.1 and re-seeded only for new tenants (§2.2). Wildcards in the table are notation for a family; the actual grants are explicit rows, so a role diff is always readable. `reports.<module>.view` covers RPT-PLT/RPT-PAT/RPT-CLN/RPT-LAB/RPT-PHM/RPT-SUP/RPT-BIL/RPT-CMP/RPT-REN.
 
 | Group | Permissions |
 |---|---|
@@ -111,6 +118,7 @@ Seeded with the system role templates in §2.1 and re-seeded only for new tenant
 | `supply.*` | `supply.item.{read,create,update,delete}` · `supply.supplier.{read,create,update,delete}` · `supply.location.{read,create,update,delete}` · `supply.pr.{read,create,update,submit,approve,reject,cancel,convert}` · `supply.po.{read,create,update,submit,approve,reject,send,close,cancel}` · `supply.grn.{read,create,update,post,void}` · `supply.invoice.{read,create,update,match}` · `supply.return.{read,create,post,close}` · `supply.req.{read,create,update,submit,approve,reject,cancel,receive}` · `supply.issue.{read,create,update,post}` · `supply.transfer.{read,create,post,receive}` · `supply.adjust.{read,create,submit,approve,reject,post,void}` · `supply.count.{read,create,update,recount,submit,approve,post}` · `supply.dispose.{read,create,post,witness,certificate}` · `supply.recall.{read,create,quarantine,close}` · `supply.batch.{quarantine,release}` · `supply.stock.read` · `supply.consumption.create` · `supply.period.{lock,unlock}` · `supply.report.view` |
 | `billing.*` | `billing.invoice.{read,create,update,void}` · `billing.charge.create` · `billing.payment.{read,create,void}` · `billing.credit.{read,create,approve}` · `billing.shift.{read,open,close}` · `billing.discount.{read,create,revoke}` |
 | `compliance.*` | `compliance.audit.read` · `compliance.access.read` · `compliance.consent.{read,create,update,write}` · `compliance.dsr.{read,create,verify,start,complete,reject,extend}` · `compliance.breach.{read,create,update,assess,notify,close}` · `compliance.retention.{read,create,update,enforce}` · `compliance.hold.{read,create,release}` · `compliance.access_review.{read,create,decide}` |
+| `renal.*` | `renal.station.{read,create,update,delete}` · `renal.machine.{read,create,update,service}` · `renal.schedule.{read,create,update,cancel}` · `renal.access.{read,create,update,intervene}` · `renal.prescription.{read,create,update,sign,amend}` · `renal.session.{read,create,start,record,complete,sign,cancel}` · `renal.dialyzer.{read,reprocess,inspect,discard}` · `renal.water.{read,record,verify}` · `renal.claim.{read,create,submit}` |
 | Cross-cutting | `reference.read` · `reports.<module>.{view,export}` · `files.{read,write}` · `jobs.{read,cancel}` · `notifications.{read,send}` |
 
 **Conventions.** `*` in a request column means "any action in this family". `self` marks session-scoped endpoints that authorise against the caller's own records rather than a grant. `owner` marks jobs/files the caller launched. `any` marks authenticated access. None of these three are catalogue entries. **Coarse aliases** kept for readability in §2.2 (`pharmacy.rx.dispense`, `billing.void`, `compliance.*`) resolve to the grants above; they are not separately seeded.
@@ -207,7 +215,8 @@ A tenant does not get the whole platform. At creation the superadmin ticks the m
 | `billing` | Billing & cashiering (M8) | `clinical` | soft-depends on `pharmacy` and `laboratory` (dispense/lab charges) |
 | `compliance` | Compliance, audit, consent, DSR (M9) | — | strongly recommended for every tenant; not forced |
 | `notifications` | Notifications (M10) | — | |
-| `reports` | Reports & scheduled exports | at least one of `clinical`, `laboratory`, `pharmacy`, `supply`, `billing` | the report catalog is filtered to entitled modules |
+| `renal` | Renal Care (M11) | `clinical`, `patients` | Hemodialysis stations, machines, access tracking, prescriptions, flowsheets, dialyzer reprocessing, water safety, PhilHealth dialysis claims; soft-depends on `supply`, `pharmacy`, `laboratory`, `billing` |
+| `reports` | Reports & scheduled exports | at least one of `clinical`, `laboratory`, `pharmacy`, `supply`, `billing`, `renal` | the report catalog is filtered to entitled modules |
 
 *Rules*
 - `admin` and `patients` are always on; `M1`/platform is never a tenant module.
@@ -700,6 +709,70 @@ Event catalog (examples): appointment reminder, result ready, **critical value**
 
 ---
 
+## 13A. M11 — Renal Care (Hemodialysis & Nephrology)
+
+### Entities
+
+| Table | Key columns |
+|---|---|
+| `renal_stations` | branch_id, station_no, name, room, is_isolation (HBsAg+ dedicated station), is_active |
+| `dialysis_machines` | branch_id, station_id (nullable), serial_no, brand, model, total_operating_hours, last_disinfected_at, last_serviced_at, status (`ACTIVE`, `MAINTENANCE`, `QUARANTINE`, `DECOMMISSIONED`) |
+| `vascular_accesses` | patient_id, access_type (`AV_FISTULA`, `AV_GRAFT`, `TUNNELED_CATHETER`, `TEMPORARY_CATHETER`), anatomical_site, side (`LEFT`, `RIGHT`), created_date, surgeon_name, status (`MATURING`, `ACTIVE`, `FAILED`, `ABANDONED`), notes |
+| `access_assessments` | access_id, assessed_at, assessed_by, thrill_present, bruit_present, signs_of_infection, cannulation_complication, intervention_notes |
+| `dialysis_prescriptions` | patient_id, nephrologist_id, effective_from, effective_to, modality (`HD`, `HDF`), frequency_per_week, duration_minutes, target_dry_weight_kg, dialyzer_model, dialysate_formula, potassium_meq, calcium_meq, sodium_meq, bicarbonate_meq, blood_flow_rate_target, dialysate_flow_rate_target, heparin_bolus_units, heparin_hourly_units, is_heparin_free, hbv_hbsag_positive (HBsAg+ routes the patient to an isolation station/machine), status (`DRAFT`, `ACTIVE`, `SUPERSEDED`, `CANCELLED`), signed_at, signed_by |
+| `dialysis_shifts` | branch_id, shift_name (Morning, Midday, Afternoon, Evening), start_time, end_time, days_of_week |
+| `dialysis_schedules` | patient_id, branch_id, station_id, shift_id, day_of_week, effective_from, effective_to, status (`ACTIVE`, `SUSPENDED`, `CANCELLED`) |
+| `dialysis_sessions` | session_no, patient_id, visit_id, branch_id, station_id, machine_id, prescription_id, access_id, dialyzer_id, scheduled_date, shift_id, status (`SCHEDULED`, `PRE_DIALYSIS`, `IN_PROGRESS`, `POST_DIALYSIS`, `COMPLETED`, `CANCELLED`, `INTERRUPTED`), started_at, completed_at, primary_nurse_id, attending_nephrologist_id, cancellation_reason |
+| `session_pre_assessments` | session_id, pre_weight_kg, standing_bp_systolic, standing_bp_diastolic, sitting_bp_systolic, sitting_bp_diastolic, pulse, temp, resp_rate, dry_weight_kg, fluid_gain_kg, target_uf_liters, edema_grade, access_checked, nurse_sign_id |
+| `session_flowsheets` | session_id, recorded_at, elapsed_minutes, bp_systolic, bp_diastolic, pulse, blood_flow_rate, dialysate_flow_rate, arterial_pressure, venous_pressure, tmp, uf_rate, cum_uf_volume_liters, heparin_administered, symptoms, interventions, recorded_by |
+| `session_post_assessments` | session_id, post_weight_kg, standing_bp_systolic, standing_bp_diastolic, sitting_bp_systolic, sitting_bp_diastolic, pulse, temp, actual_uf_removed_liters, total_heparin_given, access_bruit_thrill, hemostasis_minutes, condition_at_discharge, post_nurse_notes, signed_by |
+| `dialyzers` | serial_barcode, dialyzer_model, patient_id (strict single-patient ownership), first_used_date, baseline_volume_ml, current_volume_ml, reuse_count, max_allowed_reuses, max_reuse_days (calendar shelf-life cap from first use, default 10), status (`IN_USE`, `PENDING_REPROCESS`, `CLEANED_READY`, `DISCARDED`), discard_reason, discarded_at |
+| `dialyzer_reprocessings` | dialyzer_id, reprocessed_at, technician_id, pre_clean_ok, measured_volume_ml, bundle_volume_pct, pressure_leak_test_passed, disinfectant_agent, disinfectant_concentration_ok, residual_test_prior_use, witness_id |
+| `water_treatment_logs` | branch_id, log_date, shift_id, tested_by, pre_filter_pressure_in, pre_filter_pressure_out, softener_hardness_ppm, carbon_breakthrough_chlorine_ppm (critical < 0.1 ppm), ro_conductivity_us, ro_rejection_rate_pct, product_flow_lpm, reject_flow_lpm, chemical_disinfection_done, status (`NORMAL`, `ALERT`, `ACTION_REQUIRED`) |
+| `water_lab_tests` | branch_id, sample_date, sample_point (`RO_WATER`, `LOOP_RETURN`, `DIALYSIS_STATION`), test_type (`ENDOTOXIN`, `BACTERIAL_CULTURE`), result_value, uom (`EU/mL`, `CFU/mL`), is_compliant, lab_order_id, verified_by |
+| `philhealth_dialysis_claims` | session_id, patient_id, claim_no, calendar_year, session_sequence_no (1…156), benefit_package_code, claim_amount, copay_amount, eclaims_status (`DRAFT`, `READY`, `TRANSMITTED`, `PAID`, `DENIED`) |
+
+### CRUD
+
+| Entity | C | R | U | D | Notes |
+|---|---|---|---|---|---|
+| Renal stations | ✔ | ✔ | ✔ | Archive | Deactivate preserves historical session links |
+| Dialysis machines | ✔ | ✔ | ✔ | Archive | Machine service and disinfection logs append-only |
+| Vascular accesses | ✔ | ✔ | ✔ | Archive | Status changes to FAILED/ABANDONED keep full surgical and cannulation history |
+| Access assessments | ✔ | ✔ | — | — | Append-only clinical assessment before session cannulation |
+| Dialysis prescriptions | ✔ | ✔ | ✔ draft | Cancel | Signed prescription immutable; modifications require new prescription version |
+| Dialysis shifts & schedules | ✔ | ✔ | ✔ | Cancel | Chair/shift roster recurring weekly scheduling |
+| Dialysis sessions | ✔ | ✔ | ✔ status | Void | Single encounter transaction; posts charges to billing and ledger on completion |
+| Pre/flowsheet/post sheets | ✔ | ✔ | ✔ in-progress | — | Flowsheet entries immutable once recorded; amendments require reason and re-sign |
+| Dialyzers | ✔ | ✔ | ✔ status | Archive | Strictly bound to one patient; single-patient constraint `(tenant_id, id, patient_id)` |
+| Dialyzer reprocessings | ✔ | ✔ | — | — | Append-only reprocessing log with volume check and leak test certification |
+| Water treatment logs | ✔ | ✔ | — | — | Append-only pre-shift water quality check; chlorine breakthrough locks unit |
+| Water lab tests | ✔ | ✔ | — | — | Endotoxin and bacterial culture surveillance records |
+| PhilHealth dialysis claims | auto | ✔ | ✔ draft | Void | Generated on session completion; tracks annual sequence 1…156 |
+
+### Transactional workflows
+
+- **REN-T1 Station, machine & recurring shift roster allocation (P0):** patient assigned to weekly recurring shift (e.g. MWF Shift 1) → station and machine reserved → check Hepatitis B status (HBsAg+ strictly directed to dedicated isolation station and machine) → roster conflict detection prevents chair double-booking.
+- **REN-T2 Dialysis prescription & nephrology sign-off (P0):** attending nephrologist drafts prescription (modality, dry weight, duration, dialyzer model, dialysate bath, target UF, blood/dialysate flow, anticoagulation protocol) → step-up re-authentication → **Sign & Activate** → locks active prescription. Any mid-cycle change supersedes the old prescription with audit trail.
+- **REN-T3 Pre-dialysis intake & clinical safety gate (P0):** patient check-in → pre-dialysis weight and sitting/standing BP → auto-calculation of interdialytic weight gain (IDWG = pre-weight − dry weight) → target UF calculation → check vascular access thrill/bruit and skin integrity → **Safety gate:** pre-shift water chlorine breakthrough test must be logged and compliant (< 0.1 ppm); dialyzer barcode scanned and verified against patient ID and minimum 80% baseline bundle volume.
+- **REN-T4 Intra-dialytic treatment monitoring & flowsheet charting (P0):** cannulation logged → treatment started → periodic flowsheet recordings (every 15–30 min: BP, PR, arterial/venous pressures, TMP, blood flow $Q_b$, dialysate flow $Q_d$, cumulative UF removed) → symptom/intervention capture (hypotension, cramps, saline flush) → intra-dialytic medication administration (EPO, IV iron, heparin) captured and linked to Pharmacy/Supply ledger.
+- **REN-T5 Post-dialysis evaluation, hemostasis, charge capture & PhilHealth 156-session counter update (P0):** rinseback and needle removal → post-weight and discharge vitals → total fluid removed vs target UF reconciliation → hemostasis time and access dressing status → discharge nurse sign-off → **Post:** session charges posted to billing (dialysis bundle, supplies consumed, medication administered, nephrologist fee); PhilHealth 156-session counter for current calendar year incremented (1…156); claim generated.
+- **REN-T6 Dialyzer reprocessing, reuse tracking & volume test safety gate (P0):** post-dialysis dialyzer flushed and delivered to reprocessing room → technician scans dialyzer barcode (verifies patient assignment) → automated/manual reprocessing (cleaning, reverse ultrafiltration) → total cell volume (TCV) / bundle volume measured → **Safety gate:** if measured volume < 80% baseline volume or pressure leak test fails, dialyzer is rejected and permanently marked `DISCARDED`; if ≥ 80% and leak test passes, disinfectant agent instilled, capped, reuse count incremented (up to tenant max reuse limit, default 10), and stored in dedicated patient cubicle. Prior to next use, residual chemical disinfectant test must be certified negative.
+- **REN-T7 Daily water treatment check, chlorine breakthrough alarm & water/dialysate culture logs (P0):** technician inspects reverse osmosis (RO) system before each clinical shift → tests total chlorine/chloramine downstream of carbon beds → **Hard Lockout:** if chlorine ≥ 0.1 ppm, system raises critical alert and blocks session initialization on all branch stations until backwash/carbon replacement and compliant re-test are logged; monthly endotoxin (LAL < 0.25 EU/mL) and bacteriological culture (< 100 CFU/mL) results recorded and monitored.
+
+### Rules
+
+| ID | Rule |
+|---|---|
+| R-REN-01 | **Single-patient dialyzer rule:** A dialyzer is strictly bound to one patient for its entire operational lifetime. Reassignment to another patient is physically and logically prohibited via composite constraint `UNIQUE (tenant_id, id, patient_id)`. |
+| R-REN-02 | **Water safety fail-closed lockout:** Dialysis treatment cannot be initiated unless a compliant pre-shift water treatment log exists for the current calendar date and shift with carbon filter total chlorine breakthrough < 0.1 ppm. Detection of chlorine ≥ 0.1 ppm immediately locks station session creation. |
+| R-REN-03 | **Dialyzer volume & leak cutoff:** A dialyzer whose measured bundle volume is < 80% of its initial baseline volume, or which fails the automated pressure leak test, or which reaches the tenant max reuse limit (default 10), must be immediately transitioned to `DISCARDED` and cannot be selected for treatment. |
+| R-REN-04 | **Hepatitis B isolation protocol:** Patients with positive HBsAg serology must be scheduled exclusively on designated isolation stations (`renal_stations.is_isolation = true`) and dedicated machines. The system blocks scheduling an HBsAg+ patient on a general station. |
+| R-REN-05 | **PhilHealth 156-session ceiling:** The platform tracks the cumulative count of hemodialysis sessions per patient per calendar year (1…156 under the PhilHealth Hemodialysis Benefit Package). When session count reaches 150, alert notifications flag nearing benefit exhaustion; sessions past 156 are flagged for private/co-pay billing unless extended by formal regulatory exception. |
+| R-REN-06 | **Prescription sign-off gate:** A dialysis session cannot transition to `IN_PROGRESS` without an active, nephrologist-signed `dialysis_prescriptions` record. Changes to blood flow, dialysate formula, dry weight, or anticoagulation during treatment require provider re-authorization. |
+
+---
+
 ## 14. Background Job Catalog
 
 Legend — **Type:** S = scheduled cron (per tenant timezone unless noted), E = event-driven, D = delayed. **Scope:** T = per tenant (fan-out), P = platform. All handlers are idempotent with retries (exponential backoff, max shown) and a dead-letter queue.
@@ -756,6 +829,10 @@ Legend — **Type:** S = scheduled cron (per tenant timezone unless noted), E = 
 | JOB-48 | `billing.daily.close` | Billing | S | nightly 23:59 | T | Summarizes collections, flags open shifts, locks day | 3 |
 | JOB-49 | `billing.overdue.flag` | Billing | S | daily | T | Flags unpaid balances; reminders | 3 |
 | JOB-50 | `billing.receipt.generate` | Billing | E | payment posted | T | Renders receipt PDF/thermal payload | 5 |
+| JOB-51 | `renal.water.alert` | Renal | S | daily 06:00 | T | Checks daily chlorine test and scheduled water/dialysate culture logs; alerts on missing check or out-of-spec water quality | 3 |
+| JOB-52 | `renal.dialyzer.audit` | Renal | S | nightly 02:00 | T | Scans dialyzers exceeding max reuses, shelf life, or sitting unreprocessed beyond 24 h window; marks expired/quarantined | 3 |
+| JOB-53 | `renal.philhealth.reconcile` | Renal | S | daily 23:00 | T | Reconciles calendar-year dialysis session counts (1…156) against PhilHealth claims and alerts patients approaching ceiling | 3 |
+| JOB-54 | `renal.ktv.calculate` | Renal | E | post-dialysis lab verified | T | Auto-calculates spKt/V and URR when matching pre- and post-BUN results are verified in laboratory module | 3 |
 
 **Job rules:** payload always `{tenantId, branchId?, idempotencyKey, params}`; handlers run in `withTenant`; fan-out coordinators enumerate only active tenant IDs; per-tenant concurrency cap; all executions recorded in `job_runs` (visible in Platform Console); failures beyond retries land in DLQ with alerts.
 
@@ -895,7 +972,18 @@ Legend — **Type:** S = scheduled cron (per tenant timezone unless noted), E = 
 | RPT-CMP-07 | Restricted-record & confidential-result access | reasons |
 | RPT-CMP-08 | Retention candidates & legal holds | pending actions |
 
-**Dashboards** (role-based widgets; not reports): Admin (users, usage, alerts), Doctor (today's queue, pending results), Lab (pending by TAT, critical alerts), Pharmacy (Rx queue, near-expiry), Supply (low stock, open POs/requisitions), Cashier (shift totals), Superadmin (tenant health, jobs, security).
+### 15.9 Renal care
+
+| ID | Report | Content |
+|---|---|---|
+| RPT-REN-01 | Dialysis treatment census & station utilization | treatment counts by branch/shift/station, modality, machine operating hours |
+| RPT-REN-02 | Water treatment & quality surveillance log | daily pre-shift chlorine checks, RO conductivity, endotoxin & bacterial culture logs (DOH/AAMI compliance) |
+| RPT-REN-03 | Dialyzer reuse & reprocessing register | serial barcode, patient, reuse counts, bundle volumes, leak test outcomes, discard reasons |
+| RPT-REN-04 | Vascular access surveillance & complications | access types, anatomical sites, infection/stenosis incidents, intervention history |
+| RPT-REN-05 | PhilHealth 156-session benefit utilization tracker | patient session sequence (1…156), claim numbers, remaining benefit balance, copay tallies |
+| RPT-REN-06 | Clinical adequacy & anemia management trend | monthly Kt/V, URR, pre/post BUN, Hemoglobin, Ferritin, TSAT, and ESA dosage trends |
+
+**Dashboards** (role-based widgets; not reports): Admin (users, usage, alerts), Doctor (today's queue, pending results), Lab (pending by TAT, critical alerts), Pharmacy (Rx queue, near-expiry), Supply (low stock, open POs/requisitions), Cashier (shift totals), Renal (station chair occupancy, pre-shift water test badge, daily shift roster), Superadmin (tenant health, jobs, security).
 
 ---
 
@@ -948,6 +1036,10 @@ Legend — **Type:** S = scheduled cron (per tenant timezone unless noted), E = 
 26. **Provisioning seeds only what is entitled (P0):** *When* a tenant is created with `supply` but not `laboratory`, *then* no laboratory locations, tests, or ranges exist, the lab route is absent from the tenant's session, and the tenant activates with no empty pickers in the modules it does have (extends AC-18).
 27. **Entitlement evaluation fails closed (P0):** *Given* the entitlement store or its cache is unavailable, *when* any module route is called, *then* the response is `503 UPSTREAM_UNAVAILABLE` — never a grant — a stale `ENABLED` is not honoured past `modules_cache_ttl`, and an `entitlement_evaluation_failure` metric increments. *And* a malformed request body sent to a **non-entitled** module returns `403 MODULE_NOT_ENTITLED` rather than `422`, because the module guard runs before body validation and must not act as a validation oracle.
 28. **Flags cannot grant, and payment is not access (P0):** *Given* a module disabled for a tenant, *when* a `tenant_feature_flags` entry is set to enable the corresponding UI, *then* the module route still returns `403 MODULE_NOT_ENTITLED` and the flag has no effect on access. *And* *when* a payment webhook is replayed or forged, *then* no `tenant_modules` row is written inline — a module becomes `ENABLED` only via plan change, provisioning, or an explicit superadmin action.
+29. **Dialysis session execution & clinical safety gate (P0):** *Given* a patient with an active nephrologist-signed prescription, *when* nurse records pre-dialysis weight/vitals, logs intra-dialytic flowsheet readings, and completes post-dialysis evaluation, *then* the session completes atomically, charges are posted to billing, consumables are recorded in inventory movements, and the patient's PhilHealth 156-session counter increments.
+30. **Dialyzer reuse & volume cutoff safety gate (P0):** *Given* a dialyzer undergoing reprocessing, *when* the measured bundle volume drops below 80% baseline or pressure leak test fails, *then* the dialyzer is rejected, marked `DISCARDED`, and cannot be selected for any future session; *and* a dialyzer belonging to patient A cannot be assigned to or scanned for patient B (enforced by single-patient composite key).
+31. **Water treatment chlorine breakthrough lockout (P0):** *Given* a branch dialysis unit, *when* the daily pre-shift water log records total chlorine ≥ 0.1 ppm, *then* the system enters critical alert and blocks session start across all stations on that branch until a compliant remediation log (< 0.1 ppm) is committed.
+32. **PhilHealth 156-session limit enforcement (P0):** *Given* an ESRD patient who has completed 156 hemodialysis sessions in the current calendar year, *when* session 157 is scheduled/completed, *then* the system flags the session as benefit-exhausted, prompts for private/copay billing or formal PhilHealth extension, and prevents duplicate claim generation for the standard package.
 
 ---
 
@@ -1279,6 +1371,32 @@ Base path `/api/v1`. Conventions:
 | `POST` | `/jobs/{id}/cancel` | owner | only if not started |
 | `GET` | `/reference/icd10` · `/reference/psgc` · `/reference/loinc` · `/reference/drug-schedules` | `reference.read` | read-only, cached client-side |
 
+### 18.11 Renal Care
+
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| `GET`/`POST` | `/renal/stations[/{id}]` | `renal.station.*` | list, create, update, archive chair/station |
+| `GET`/`POST` | `/renal/machines[/{id}]` | `renal.machine.*` | list, register, update machines |
+| `POST` | `/renal/machines/{id}/service` | `renal.machine.service` | 🔒 log maintenance, chemical disinfection, filter change |
+| `GET`/`POST` | `/renal/schedules[/{id}]` | `renal.schedule.*` | recurring chair/shift roster assignments |
+| `GET`/`POST` | `/renal/accesses[/{id}]` | `renal.access.*` | vascular access registry, history, surgical details |
+| `POST` | `/renal/accesses/{id}/assessments` | `renal.access.create` | 🔒 pre-cannulation physical exam (bruit/thrill) |
+| `GET`/`POST` | `/renal/prescriptions[/{id}]` | `renal.prescription.*` | draft dialysis treatment protocol |
+| `POST` | `/renal/prescriptions/{id}/sign` | `renal.prescription.sign` | 🔒 step-up required; locks prescription for session execution |
+| `POST` | `/renal/prescriptions/{id}/amend` | `renal.prescription.amend` | 🔒 step-up required; supersedes current prescription |
+| `GET`/`POST` | `/renal/sessions[/{id}]` | `renal.session.*` | list worklist, create scheduled session |
+| `POST` | `/renal/sessions/{id}/pre-dialysis` | `renal.session.start` | 🔒 checks chlorine water safety & dialyzer volume gate; begins treatment |
+| `POST` | `/renal/sessions/{id}/flowsheet` | `renal.session.record` | append intra-dialysis vitals/pressures/TMP/UF rate entry |
+| `POST` | `/renal/sessions/{id}/post-dialysis` | `renal.session.complete` | 🔒 records discharge vitals, hemostasis, posts billing charges & PhilHealth claim |
+| `POST` | `/renal/sessions/{id}/cancel` | `renal.session.cancel` | 🔒 cancellation reason required |
+| `GET`/`POST` | `/renal/dialyzers[/{id}]` | `renal.dialyzer.*` | list, register new dialyzer with baseline volume |
+| `POST` | `/renal/dialyzers/{id}/reprocess` | `renal.dialyzer.reprocess` | 🔒 logs measured TCV volume & leak test; enforces >=80% volume cutoff |
+| `POST` | `/renal/dialyzers/{id}/discard` | `renal.dialyzer.discard` | 🔒 reason required; marks permanently discarded |
+| `GET`/`POST` | `/renal/water-logs[/{id}]` | `renal.water.*` | list, record pre-shift RO water check; chlorine >=0.1 locks station sessions |
+| `GET`/`POST` | `/renal/water-tests[/{id}]` | `renal.water.*` | monthly endotoxin (<0.25 EU/mL) & bacterial culture (<100 CFU/mL) logs |
+| `GET` | `/renal/patients/{id}/philhealth-usage` | `renal.claim.read` | returns current calendar year session count (1…156) & claim history |
+| `POST` | `/renal/sessions/{id}/claim` | `renal.claim.create` | 🔒 generates PhilHealth hemodialysis case rate claim document |
+
 ---
 
 ## 19. Data Dictionary — High-Risk Tables
@@ -1452,6 +1570,77 @@ A patient/visit-linked request for supplies to be issued from central supply. Ad
 | `patient_supply_request_items.qty_requested` | `numeric(14,3)` | no | `> 0` |
 | `patient_supply_request_items.qty_issued` | `numeric(14,3)` | no | `>= 0`; line is issuable while `qty_issued < qty_requested` |
 
+### 19.10 `dialysis_sessions`
+
+The operational and financial core of renal care. `tenant_id` is **not null**, RLS is enabled **and forced**, and composite foreign keys bind the session strictly to the tenant's patient, branch, prescription, and dialyzer.
+
+| Column | Type | Null | Notes |
+|---|---|---|---|
+| `id` | `uuid` | no | `uuidv7()` |
+| `tenant_id` | `uuid` | no | RLS key |
+| `session_no` | `text` | no | gapless sequence per tenant/branch/year |
+| `patient_id` | `uuid` | no | composite FK to `patients (tenant_id, id)` |
+| `visit_id` | `uuid` | yes | linked clinical encounter for charge rollup |
+| `branch_id` | `uuid` | no | FK to `branches` |
+| `station_id` | `uuid` | no | FK to `renal_stations` |
+| `machine_id` | `uuid` | no | FK to `dialysis_machines` |
+| `prescription_id` | `uuid` | no | FK to `dialysis_prescriptions`; must be in `ACTIVE` signed state |
+| `dialyzer_id` | `uuid` | no | composite FK to `dialyzers (tenant_id, id, patient_id)` |
+| `scheduled_date` | `date` | no | scheduled treatment date |
+| `shift_id` | `uuid` | no | FK to `dialysis_shifts` |
+| `status` | `text` | no | `SCHEDULED` / `PRE_DIALYSIS` / `IN_PROGRESS` / `POST_DIALYSIS` / `COMPLETED` / `CANCELLED` / `INTERRUPTED` |
+| `started_at` | `timestamptz` | yes | cannulation and blood pump start |
+| `completed_at` | `timestamptz` | yes | rinseback and needle removal |
+| `primary_nurse_id` | `uuid` | no | user with `renal.session.*` |
+| `attending_nephrologist_id` | `uuid` | yes | practitioner with nephrology specialty |
+| `actual_duration_minutes` | `int` | yes | total run duration |
+| `total_uf_removed_liters` | `numeric(5,2)` | yes | total ultrafiltration achieved |
+
+### 19.11 `dialyzers` and `dialyzer_reprocessings`
+
+Strict single-patient dialyzer reuse tracking. Composite unique constraint `UNIQUE (tenant_id, id, patient_id)` guarantees a dialyzer can never be re-assigned or scanned for another patient. Reprocessing requires measured volume ≥ 80% and leak test pass.
+
+| Column | Type | Null | Notes |
+|---|---|---|---|
+| `dialyzers.id` | `uuid` | no | `uuidv7()` |
+| `dialyzers.tenant_id` | `uuid` | no | RLS key |
+| `dialyzers.patient_id` | `uuid` | no | composite FK to `patients`; strict single-patient binding |
+| `dialyzers.serial_barcode` | `text` | no | manufacturer serial / scan code |
+| `dialyzers.dialyzer_model` | `text` | no | membrane type / model reference |
+| `dialyzers.baseline_volume_ml` | `numeric(6,1)` | no | reference bundle volume measured before first use |
+| `dialyzers.current_volume_ml` | `numeric(6,1)` | no | latest measured volume |
+| `dialyzers.reuse_count` | `int` | no | default 0; incremented on successful reprocessing |
+| `dialyzers.max_allowed_reuses` | `int` | no | tenant-configured ceiling (default 10) |
+| `dialyzers.max_reuse_days` | `int` | no | calendar shelf-life cap measured from `first_used_date` (default 10); a dialyzer past `first_used_date + max_reuse_days` is discarded by JOB-52 |
+| `dialyzers.status` | `text` | no | `IN_USE` / `PENDING_REPROCESS` / `CLEANED_READY` / `DISCARDED` |
+| `dialyzers.discard_reason` | `text` | yes | required when `status='DISCARDED'` (volume < 80%, leak fail, max reuse) |
+| — | — | — | `UNIQUE (tenant_id, id, patient_id)` enables single-patient join constraint |
+| `dialyzer_reprocessings.dialyzer_id` | `uuid` | no | FK to `dialyzers` |
+| `dialyzer_reprocessings.measured_volume_ml` | `numeric(6,1)` | no | measured fiber bundle volume |
+| `dialyzer_reprocessings.bundle_volume_pct` | `numeric(5,2)` | no | `(measured_volume / baseline_volume) * 100`; must be `>= 80.00` to pass |
+| `dialyzer_reprocessings.pressure_leak_test_passed` | `boolean` | no | must be `true` to pass |
+| `dialyzer_reprocessings.disinfectant_agent` | `text` | no | peracetic acid / formaldehyde agent code |
+| `dialyzer_reprocessings.residual_test_prior_use` | `boolean` | yes | certified negative before next cannulation |
+
+### 19.12 `water_treatment_logs`
+
+Water treatment system surveillance log. A compliant test for the current date and shift is a mandatory clinical safety gate before starting any hemodialysis session.
+
+| Column | Type | Null | Notes |
+|---|---|---|---|
+| `id` | `uuid` | no | `uuidv7()` |
+| `tenant_id` | `uuid` | no | RLS key |
+| `branch_id` | `uuid` | no | FK to `branches` |
+| `log_date` | `date` | no | test date |
+| `shift_id` | `uuid` | no | FK to `dialysis_shifts` |
+| `tested_by` | `uuid` | no | user with `renal.water.*` |
+| `carbon_breakthrough_chlorine_ppm` | `numeric(5,3)` | no | total chlorine downstream of carbon bed; critical safety metric |
+| `softener_hardness_ppm` | `numeric(6,2)` | yes | water hardness check |
+| `ro_conductivity_us` | `numeric(6,2)` | no | product water conductivity in µS/cm |
+| `ro_rejection_rate_pct` | `numeric(5,2)` | no | RO membrane rejection rate |
+| `status` | `text` | no | `NORMAL` / `ALERT` / `ACTION_REQUIRED` |
+| — | — | — | `CHECK (carbon_breakthrough_chlorine_ppm >= 0)`; chlorine `>= 0.1` locks session creation |
+
 ---
 
 ## 19A. Data Dictionary — `tenant_modules`
@@ -1462,7 +1651,7 @@ A patient/visit-linked request for supplies to be issued from central supply. Ad
 |---|---|---|---|
 | `id` | `uuid` | no | |
 | `tenant_id` | `uuid` | no | RLS key; composite FK to `tenants` |
-| `module` | `text` | no | one of the 10 keys in §4.3 PLT-T7; `CHECK (module IN ('admin','patients','clinical','supply','laboratory','pharmacy','billing','compliance','notifications','reports'))` |
+| `module` | `text` | no | one of the 11 keys in §4.3 PLT-T7; `CHECK (module IN ('admin','patients','clinical','supply','laboratory','pharmacy','billing','compliance','notifications','reports','renal'))` |
 | `status` | `text` | no | `TRIAL` / `ENABLED` / `DRAINING` / `DISABLED`; `CHECK` list |
 | `seed_status` | `text` | no | `PENDING` / `SEEDED` / `FAILED` / `SKIPPED`; `SKIPPED` is the normal value for a module the plan or wizard never enabled |
 | `seed_error` | `text` | yes | set when `seed_status='FAILED'`; the module stays locked until JOB-03 is retried for that module |
@@ -1505,6 +1694,7 @@ These are deliberately not hard-coded. Each has a default, an owner, and a decis
 | Q-16 | PhilHealth Konsulta/YAKAP data set and submission mechanics (post-eKonsulta certified-EMR path; exact EPR fields, tally format, submission channel) | v1 captures the EPR data elements in the draft field list (**Appendix A**) and produces manual daily tallies; no electronic transmit | Platform + accredited Konsulta provider | Before first tenant bills PhilHealth |
 | Q-17 | Private-practice commercial model: per-doctor consult fees, follow-up windows, payer-type defaults, and whether PF/revenue-share data is tenant-visible | Per-practitioner fee config on; PF share recorded but internal-only (never printed/exported to patients) | Product + tenant admin pilot group | Before first paid consultation goes live |
 | Q-18 | Branch service-profile rules: which profiles require which licence records, and whether profile changes need platform review for licensed facility categories | Profiles are tenant-editable; licences optional with compliance badges; no platform review in v1 | Compliance officer + counsel | Before first multi-branch tenant |
+| Q-19 | PhilHealth Hemodialysis benefit package (156 sessions/year) electronic claims format, PDD (PhilHealth Dialysis Database) integration, and dialyzer maximum reuse ceiling | 156-session counter per calendar year tracked; max reuse default 10 with bundle volume cutoff >= 80% (configurable); manual eClaims tally | Nephrology advisor + PhilHealth liaison + DPO | Before renal care module billing goes live |
 
 > This document is an engineering specification, not legal or clinical advice. Every row in §20 must be signed off by qualified counsel and the tenant's Data Protection Officer / pharmacist-in-charge / lab manager before the corresponding capability is enabled for real patients.
 

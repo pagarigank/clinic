@@ -11,9 +11,9 @@ export const MODULE_KEY = "module";
 export const MODULE_ALLOWLIST_KEY = "module:allowlist";
 
 /**
- * The ten module keys (architecture §5.3, specification §4.3 PLT-T7). Kept in
+ * The eleven module keys (architecture §5.3, specification §4.3 PLT-T7). Kept in
  * code as a closed union so a typo is a compile error, and mirrored by the
- * CHECK constraint on `tenant_modules.module` (migration 0004).
+ * CHECK constraint on `tenant_modules.module` (migration 0064).
  */
 export const MODULES = [
   "admin",
@@ -25,6 +25,7 @@ export const MODULES = [
   "billing",
   "compliance",
   "notifications",
+  "renal",
   "reports",
 ] as const;
 

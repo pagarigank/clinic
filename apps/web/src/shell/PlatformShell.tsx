@@ -26,11 +26,6 @@ export function PlatformShell() {
               </Nav.Link>
             </Nav.Item>
             <Nav.Item>
-              <Nav.Link as={NavLink} to="/platform/admins" className="text-white" end>
-                Admins
-              </Nav.Link>
-            </Nav.Item>
-            <Nav.Item>
               <Nav.Link as={NavLink} to="/platform/break-glass" className="text-white" end>
                 Break-glass
               </Nav.Link>

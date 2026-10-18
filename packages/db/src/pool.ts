@@ -21,7 +21,7 @@ const urlEnvKeys: Record<DbRole, string> = {
 
 export function resolveUrl(role: DbRole): string {
   let url = process.env[urlEnvKeys[role]];
-  if (!url && process.env.CLINIC_DATABASE_URL) {
+  if (!url && role === "owner" && process.env.CLINIC_DATABASE_URL) {
     url = process.env.CLINIC_DATABASE_URL;
   }
   if (!url) {

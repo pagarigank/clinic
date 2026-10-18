@@ -14,6 +14,7 @@ export const MODULE_DEPENDENCIES: Record<ModuleName, ModuleName[]> = {
   compliance: ['admin'],
   notifications: ['admin'],
   reports: ['admin'],
+  renal: ['patients', 'clinical'],
 };
 
 @Injectable()
