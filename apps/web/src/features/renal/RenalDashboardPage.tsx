@@ -4,6 +4,7 @@ import { Alert, Button } from "@clinic/ui";
 import { renalApi, type RenalStation, type DialysisMachine, type DialysisSession, type WaterTreatmentLog } from "./api.js";
 import { ReportPdfModal } from "../../shared/reports/ReportPdfModal.js";
 import { AdmitPatientModal } from "./AdmitPatientModal.js";
+import { ManageRenalUnitsModal } from "./ManageRenalUnitsModal.js";
 
 export function RenalDashboardPage() {
   const navigate = useNavigate();
@@ -18,6 +19,7 @@ export function RenalDashboardPage() {
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [isAdmitModalOpen, setIsAdmitModalOpen] = useState(false);
   const [admitStationId, setAdmitStationId] = useState<string | null>(null);
+  const [isManageModalOpen, setIsManageModalOpen] = useState(false);
 
   const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -78,6 +80,13 @@ export function RenalDashboardPage() {
           </p>
         </div>
         <div className="d-flex gap-2">
+          <Button
+            variant="outline-secondary"
+            className="d-flex align-items-center gap-1 shadow-sm fw-semibold"
+            onClick={() => setIsManageModalOpen(true)}
+          >
+            <span>⚙️</span> Configure Units ({machines.length}M / {stations.length}C)
+          </Button>
           <Button
             variant="primary"
             className="d-flex align-items-center gap-1 shadow-sm fw-bold px-3"
@@ -240,10 +249,20 @@ export function RenalDashboardPage() {
       {/* Station Occupancy Grid */}
       <div className="card shadow-sm border-0 rounded-3 mb-4">
         <div className="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
-          <h5 className="mb-0 fw-bold">Dialysis Station & Chair Status</h5>
-          <span className="badge bg-light text-dark border">
-            {stations.length} Total Units
-          </span>
+          <div className="d-flex align-items-center gap-2">
+            <h5 className="mb-0 fw-bold">Dialysis Station &amp; Chair Status</h5>
+            <span className="badge bg-light text-dark border">
+              {stations.length} Total Units
+            </span>
+          </div>
+          <Button
+            variant="outline-primary"
+            size="sm"
+            className="d-flex align-items-center gap-1 shadow-sm"
+            onClick={() => setIsManageModalOpen(true)}
+          >
+            <span>⚙️</span> Manage Machines &amp; Chairs
+          </Button>
         </div>
         <div className="card-body p-4">
           {loading ? (
@@ -251,9 +270,13 @@ export function RenalDashboardPage() {
           ) : stations.length === 0 ? (
             <div className="text-center py-5 text-muted">
               <p className="mb-2">No dialysis stations registered yet.</p>
-              <Link to="/renal/worklist" className="btn btn-outline-primary btn-sm">
-                Configure Stations
-              </Link>
+              <Button
+                variant="outline-primary"
+                size="sm"
+                onClick={() => setIsManageModalOpen(true)}
+              >
+                ⚙️ Configure Machines &amp; Chairs
+              </Button>
             </div>
           ) : (
             <div className="row g-3">
@@ -484,6 +507,15 @@ export function RenalDashboardPage() {
             loadDashboardData();
           }
         }}
+      />
+
+      {/* ── 7. MANAGE RENAL EQUIPMENT & STATIONS MODAL ───────────────────────── */}
+      <ManageRenalUnitsModal
+        show={isManageModalOpen}
+        onHide={() => setIsManageModalOpen(false)}
+        stations={stations}
+        machines={machines}
+        onRefresh={loadDashboardData}
       />
     </div>
   );

@@ -1,7 +1,9 @@
-import { apiGet, apiPost, apiGetBlob } from "../../shared/api/client.js";
+import { apiGet, apiPost, apiPatch, apiDelete, apiGetBlob } from "../../shared/api/client.js";
 import type {
   CreateRenalStationRequest,
+  UpdateRenalStationRequest,
   CreateDialysisMachineRequest,
+  UpdateDialysisMachineRequest,
   ServiceDialysisMachineRequest,
   CreateVascularAccessRequest,
   CreateAccessAssessmentRequest,
@@ -167,10 +169,16 @@ export const renalApi = {
     apiGet<RenalStation[]>(`/renal/stations${branchId ? `?branchId=${branchId}` : ""}`),
   createStation: (dto: CreateRenalStationRequest) =>
     apiPost<RenalStation>("/renal/stations", dto),
+  updateStation: (id: string, dto: UpdateRenalStationRequest) =>
+    apiPatch<RenalStation>(`/renal/stations/${id}`, dto),
+  archiveStation: (id: string) =>
+    apiDelete<RenalStation>(`/renal/stations/${id}`),
   getMachines: (branchId?: string) =>
     apiGet<DialysisMachine[]>(`/renal/machines${branchId ? `?branchId=${branchId}` : ""}`),
   createMachine: (dto: CreateDialysisMachineRequest) =>
     apiPost<DialysisMachine>("/renal/machines", dto),
+  updateMachine: (id: string, dto: UpdateDialysisMachineRequest) =>
+    apiPatch<DialysisMachine>(`/renal/machines/${id}`, dto),
   serviceMachine: (id: string, dto: ServiceDialysisMachineRequest) =>
     apiPost<DialysisMachine>(`/renal/machines/${id}/service`, dto),
 
