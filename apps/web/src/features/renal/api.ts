@@ -74,6 +74,18 @@ export interface DialysisPrescription {
   dialysate_flow_rate_target: number;
   status: "DRAFT" | "ACTIVE" | "AMENDED" | "DISCONTINUED";
   signed_at?: string | null;
+  hbv_hbsag_positive?: boolean;
+}
+
+export interface DialysisShift {
+  id: string;
+  tenant_id: string;
+  branch_id: string;
+  shift_name: string;
+  start_time: string;
+  end_time: string;
+  days_of_week?: number[];
+  is_active: boolean;
 }
 
 export interface Dialyzer {
@@ -231,6 +243,14 @@ export const renalApi = {
     apiPost<DialysisSession>(`/renal/sessions/${id}/cancel`, dto),
   getTreatmentSheetPdfBlob: (id: string) =>
     apiGetBlob(`/renal/sessions/${id}/treatment-sheet-pdf`),
+
+  // Shifts
+  getShifts: (branchId?: string) =>
+    apiGet<DialysisShift[]>(`/renal/shifts${branchId ? `?branchId=${branchId}` : ""}`),
+
+  // Patients Lookup
+  getPatients: (q?: string) =>
+    apiGet<{ data?: any[]; patients?: any[] }>(`/patients${q ? `?q=${encodeURIComponent(q)}` : ""}`),
 
   // PhilHealth Tracking
   getPhilHealthUsage: (patientId: string, calendarYear?: number) =>

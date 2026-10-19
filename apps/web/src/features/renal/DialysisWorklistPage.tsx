@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from "react";
-import { Link } from "react-router";
-import { Alert, Modal } from "@clinic/ui";
+import { Link, useSearchParams } from "react-router";
+import { Alert, Modal, Button } from "@clinic/ui";
 import { renalApi, type DialysisSession } from "./api.js";
 import { useAuth } from "../../shared/auth/AuthContext.js";
 import { ReportPdfModal } from "../../shared/reports/ReportPdfModal.js";
+import { AdmitPatientModal } from "./AdmitPatientModal.js";
 
 type StageFilter = "ALL" | "SCHEDULED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
 
 export function DialysisWorklistPage() {
   const { session } = useAuth();
-  const currentUserId = session?.userId || "demo-nurse";
+  const currentUserId =
+    session?.userId && session.userId.length === 36 ? session.userId : crypto.randomUUID();
+  const [searchParams] = useSearchParams();
 
   const [sessions, setSessions] = useState<DialysisSession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -21,6 +24,7 @@ export function DialysisWorklistPage() {
   const [searchFilter, setSearchFilter] = useState("");
 
   // Modals state
+  const [isAdmitModalOpen, setIsAdmitModalOpen] = useState(false);
   const [selectedSession, setSelectedSession] = useState<DialysisSession | null>(null);
   const [isPreModalOpen, setIsPreModalOpen] = useState(false);
   const [isFlowsheetModalOpen, setIsFlowsheetModalOpen] = useState(false);
@@ -81,6 +85,21 @@ export function DialysisWorklistPage() {
     loadSessions();
   }, [selectedDate]);
 
+  // Handle URL param to auto-launch intake modal for newly admitted session
+  useEffect(() => {
+    const admitSessionId = searchParams.get("admitSessionId");
+    if (admitSessionId) {
+      renalApi
+        .getSession(admitSessionId)
+        .then((sess) => {
+          if (sess && sess.status === "SCHEDULED") {
+            handleOpenPre(sess);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [searchParams]);
+
   async function loadSessions() {
     setLoading(true);
     setError(null);
@@ -98,13 +117,15 @@ export function DialysisWorklistPage() {
   function handleOpenPre(sessionItem: DialysisSession) {
     setSelectedSession(sessionItem);
     setPreError(null);
-    setPreWeight(68.0);
-    setDryWeight(65.0);
+    const pWeight = 68.0;
+    const dWeight = Number(sessionItem.preAssessment?.dry_weight_kg) || 65.0;
+    setPreWeight(pWeight);
+    setDryWeight(dWeight);
     setSittingSys(140);
     setSittingDia(85);
     setPulse(76);
     setTemp(36.6);
-    setTargetUf(3.0);
+    setTargetUf(Math.max(0.5, Number((pWeight - dWeight + 0.2).toFixed(2))));
     setIsPreModalOpen(true);
   }
 
@@ -146,7 +167,6 @@ export function DialysisWorklistPage() {
     try {
       const full = await renalApi.getSession(sessionItem.id);
       setSelectedSession(full);
-      // Auto-increment elapsed minutes if prior flows exist
       const count = full.flowsheet?.length || 0;
       setElapsedMinutes((count + 1) * 60);
       setCumUf(Number(((count + 1) * 0.75).toFixed(2)));
@@ -178,7 +198,6 @@ export function DialysisWorklistPage() {
         interventions: flowInterventions || undefined,
         recordedBy: currentUserId,
       });
-      // Refresh session
       const updated = await renalApi.getSession(selectedSession.id);
       setSelectedSession(updated);
       setFlowSymptoms("");
@@ -264,10 +283,17 @@ export function DialysisWorklistPage() {
             <span>📋</span> Dialysis Session Worklist
           </h2>
           <p className="text-muted mb-0">
-            Intra-dialytic charting, pre/post intake gates, and automated PhilHealth claim logging.
+            Admit patients to machines, track intra-dialytic telemetry, and finalize post-dialysis discharge.
           </p>
         </div>
         <div className="d-flex gap-2">
+          <Button
+            variant="primary"
+            className="shadow-sm fw-bold d-flex align-items-center gap-1 px-3"
+            onClick={() => setIsAdmitModalOpen(true)}
+          >
+            <span>➕</span> Admit Patient to Machine
+          </Button>
           <Link to="/renal/dashboard" className="btn btn-outline-secondary">
             &larr; Unit Dashboard
           </Link>
@@ -315,7 +341,7 @@ export function DialysisWorklistPage() {
                     >
                       {stage.replace("_", " ")}
                     </button>
-                  )
+                  ),
                 )}
               </div>
             </div>
@@ -360,11 +386,23 @@ export function DialysisWorklistPage() {
               ) : filteredSessions.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="text-center py-5 text-muted">
-                    No dialysis sessions found matching criteria.
+                    <p className="mb-2">No dialysis sessions found matching criteria.</p>
+                    <Button
+                      variant="outline-primary"
+                      size="sm"
+                      onClick={() => setIsAdmitModalOpen(true)}
+                    >
+                      ➕ Admit Patient Now
+                    </Button>
                   </td>
                 </tr>
               ) : (
                 filteredSessions.map((s) => {
+                  const isRunning = s.status === "IN_PROGRESS";
+                  const elapsedMin = s.started_at
+                    ? Math.max(1, Math.round((Date.now() - new Date(s.started_at).getTime()) / 60000))
+                    : 0;
+
                   return (
                     <tr key={s.id}>
                       <td>
@@ -372,7 +410,7 @@ export function DialysisWorklistPage() {
                         <div className="small text-muted">{s.scheduled_date}</div>
                       </td>
                       <td>
-                        <div className="fw-semibold">
+                        <div className="fw-semibold text-dark">
                           {s.first_name} {s.last_name}
                         </div>
                       </td>
@@ -388,9 +426,7 @@ export function DialysisWorklistPage() {
                       </td>
                       <td>
                         <div>{s.dialyzer_model || "High-Flux"}</div>
-                        <div className="small text-muted font-monospace">
-                          {s.dialyzer_barcode}
-                        </div>
+                        <div className="small text-muted font-monospace">{s.dialyzer_barcode}</div>
                       </td>
                       <td>
                         <span
@@ -398,7 +434,7 @@ export function DialysisWorklistPage() {
                             s.status === "COMPLETED"
                               ? "bg-success"
                               : s.status === "IN_PROGRESS"
-                              ? "bg-primary animate-pulse"
+                              ? "bg-primary"
                               : s.status === "SCHEDULED"
                               ? "bg-secondary"
                               : "bg-danger"
@@ -410,14 +446,18 @@ export function DialysisWorklistPage() {
                       <td>
                         {s.started_at ? (
                           <>
-                            <div className="small text-dark">
+                            <div className="small text-dark fw-medium">
                               {new Date(s.started_at).toLocaleTimeString([], {
                                 hour: "2-digit",
                                 minute: "2-digit",
                               })}
                             </div>
                             <div className="small text-muted">
-                              {s.actual_duration_minutes ? `${s.actual_duration_minutes} min` : "Running"}
+                              {isRunning
+                                ? `Running (~${elapsedMin} min)`
+                                : s.actual_duration_minutes
+                                ? `${s.actual_duration_minutes} min run`
+                                : "Finished"}
                             </div>
                           </>
                         ) : (
@@ -437,26 +477,26 @@ export function DialysisWorklistPage() {
                         <div className="d-flex justify-content-end gap-1">
                           {s.status === "SCHEDULED" && (
                             <button
-                              className="btn btn-sm btn-primary shadow-sm"
+                              className="btn btn-sm btn-primary shadow-sm fw-bold d-flex align-items-center gap-1"
                               onClick={() => handleOpenPre(s)}
                             >
-                              Intake &amp; Start
+                              <span>🩺</span> Intake &amp; Start
                             </button>
                           )}
 
                           {s.status === "IN_PROGRESS" && (
                             <>
                               <button
-                                className="btn btn-sm btn-outline-primary"
+                                className="btn btn-sm btn-outline-primary shadow-sm"
                                 onClick={() => handleOpenFlowsheet(s)}
                               >
                                 Flowsheet
                               </button>
                               <button
-                                className="btn btn-sm btn-success"
+                                className="btn btn-sm btn-success shadow-sm fw-bold d-flex align-items-center gap-1"
                                 onClick={() => handleOpenPost(s)}
                               >
-                                Close Session
+                                <span>🏁</span> Finish Session
                               </button>
                             </>
                           )}
@@ -476,7 +516,7 @@ export function DialysisWorklistPage() {
                             }}
                             title="Formal DOH/PhilHealth Treatment Flowsheet (True Vector PDF)"
                           >
-                            <span>📄</span> Treatment Sheet
+                            <span>📄</span> PDF
                           </button>
                         </div>
                       </td>
@@ -489,483 +529,554 @@ export function DialysisWorklistPage() {
         </div>
       </div>
 
-      {/* ── 1. PRE-DIALYSIS INTAKE MODAL (AC-29, AC-30, AC-31) ───────────────── */}
-      <Modal
-        isOpen={isPreModalOpen}
-        onClose={() => setIsPreModalOpen(false)}
-        title={`Pre-Dialysis Intake & Safety Gates: ${selectedSession?.session_no}`}
-      >
-        <form onSubmit={handleSubmitPre}>
-          {preError && (
-            <div className="alert alert-danger small p-2 mb-3">
-              <strong>Clinical Safety Gate Lockout:</strong> {preError}
-            </div>
-          )}
-
-          <div className="alert alert-info small p-2 mb-3">
-            <strong>Automated Safety Verification:</strong> Evaluates pre-shift water carbon breakthrough (&lt; 0.1 ppm)
-            and patient dialyzer bundle volume (&ge; 80% baseline).
-          </div>
-
-          <div className="row g-2 mb-3">
-            <div className="col-md-6">
-              <label className="form-label small fw-bold">Pre-Treatment Weight (kg) *</label>
-              <input
-                type="number"
-                step="0.1"
-                className="form-control"
-                value={preWeight}
-                onChange={(e) => setPreWeight(Number(e.target.value))}
-                required
-              />
-            </div>
-            <div className="col-md-6">
-              <label className="form-label small fw-bold">Target Dry Weight (kg) *</label>
-              <input
-                type="number"
-                step="0.1"
-                className="form-control"
-                value={dryWeight}
-                onChange={(e) => setDryWeight(Number(e.target.value))}
-                required
-              />
-            </div>
-          </div>
-
-          <div className="row g-2 mb-3">
-            <div className="col-md-6">
-              <label className="form-label small fw-bold">Target UF Removal (Liters) *</label>
-              <input
-                type="number"
-                step="0.1"
-                className="form-control"
-                value={targetUf}
-                onChange={(e) => setTargetUf(Number(e.target.value))}
-                required
-              />
-            </div>
-            <div className="col-md-6">
-              <label className="form-label small fw-bold">Calculated Fluid Gain</label>
-              <input
-                type="text"
-                className="form-control bg-light"
-                value={`${(preWeight - dryWeight).toFixed(2)} kg`}
-                disabled
-              />
-            </div>
-          </div>
-
-          <div className="row g-2 mb-3">
-            <div className="col-md-3">
-              <label className="form-label small fw-bold">Sitting Sys BP *</label>
-              <input
-                type="number"
-                className="form-control"
-                value={sittingSys}
-                onChange={(e) => setSittingSys(Number(e.target.value))}
-                required
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label small fw-bold">Sitting Dia BP *</label>
-              <input
-                type="number"
-                className="form-control"
-                value={sittingDia}
-                onChange={(e) => setSittingDia(Number(e.target.value))}
-                required
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label small fw-bold">Pulse (bpm) *</label>
-              <input
-                type="number"
-                className="form-control"
-                value={pulse}
-                onChange={(e) => setPulse(Number(e.target.value))}
-                required
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label small fw-bold">Temp (°C) *</label>
-              <input
-                type="number"
-                step="0.1"
-                className="form-control"
-                value={temp}
-                onChange={(e) => setTemp(Number(e.target.value))}
-                required
-              />
-            </div>
-          </div>
-
-          <div className="mb-3 form-check">
-            <input
-              type="checkbox"
-              className="form-check-input"
-              id="chkAccess"
-              checked={accessChecked}
-              onChange={(e) => setAccessChecked(e.target.checked)}
-            />
-            <label className="form-check-label small" htmlFor="chkAccess">
-              Vascular access evaluated (thrill / bruit confirmed; no signs of aneurysm or infection)
-            </label>
-          </div>
-
-          <div className="d-flex justify-content-end gap-2 mt-4">
-            <button
-              type="button"
-              className="btn btn-outline-secondary"
-              onClick={() => setIsPreModalOpen(false)}
-            >
-              Cancel
-            </button>
-            <button type="submit" className="btn btn-primary" disabled={submittingPre}>
-              {submittingPre ? "Verifying Gates..." : "Pass Gates & Start Session"}
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* ── 2. INTRA-DIALYTIC FLOWSHEET MODAL ─────────────────────────────────── */}
-      <Modal
-        isOpen={isFlowsheetModalOpen}
-        onClose={() => setIsFlowsheetModalOpen(false)}
-        title={`Intra-dialytic Flowsheet: ${selectedSession?.session_no}`}
-      >
-        <div className="mb-4">
-          <h6 className="fw-bold mb-2">Recorded Hourly Intervals</h6>
-          <div className="table-responsive border rounded">
-            <table className="table table-sm table-striped mb-0 small">
-              <thead className="table-light">
-                <tr>
-                  <th>Min</th>
-                  <th>BP</th>
-                  <th>Pulse</th>
-                  <th>BFR</th>
-                  <th>DFR</th>
-                  <th>TMP</th>
-                  <th>Cum UF</th>
-                  <th>Heparin</th>
-                </tr>
-              </thead>
-              <tbody>
-                {selectedSession?.flowsheet && selectedSession.flowsheet.length > 0 ? (
-                  selectedSession.flowsheet.map((f: any, idx: number) => (
-                    <tr key={idx}>
-                      <td>{f.elapsed_minutes}m</td>
-                      <td>
-                        {f.bp_systolic}/{f.bp_diastolic}
-                      </td>
-                      <td>{f.pulse}</td>
-                      <td>{f.blood_flow_rate}</td>
-                      <td>{f.dialysate_flow_rate}</td>
-                      <td>{f.tmp || "--"}</td>
-                      <td>{f.cum_uf_volume_liters} L</td>
-                      <td>{f.heparin_administered || "--"} U</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={8} className="text-center py-2 text-muted">
-                      No intervals charted yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <form onSubmit={handleSubmitFlowsheet}>
-          <h6 className="fw-bold mb-2">Chart New Interval</h6>
-          {flowError && <div className="alert alert-danger small p-2">{flowError}</div>}
-
-          <div className="row g-2 mb-2">
-            <div className="col-md-3">
-              <label className="form-label small fw-bold">Elapsed (min) *</label>
-              <input
-                type="number"
-                className="form-control form-control-sm"
-                value={elapsedMinutes}
-                onChange={(e) => setElapsedMinutes(Number(e.target.value))}
-                required
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label small fw-bold">BP Sys / Dia *</label>
-              <div className="input-group input-group-sm">
-                <input
-                  type="number"
-                  className="form-control"
-                  value={flowBpSys}
-                  onChange={(e) => setFlowBpSys(Number(e.target.value))}
-                  required
-                />
-                <input
-                  type="number"
-                  className="form-control"
-                  value={flowBpDia}
-                  onChange={(e) => setFlowBpDia(Number(e.target.value))}
-                  required
-                />
-              </div>
-            </div>
-            <div className="col-md-3">
-              <label className="form-label small fw-bold">Pulse (bpm) *</label>
-              <input
-                type="number"
-                className="form-control form-control-sm"
-                value={flowPulse}
-                onChange={(e) => setFlowPulse(Number(e.target.value))}
-                required
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label small fw-bold">Cum UF (L) *</label>
-              <input
-                type="number"
-                step="0.05"
-                className="form-control form-control-sm"
-                value={cumUf}
-                onChange={(e) => setCumUf(Number(e.target.value))}
-                required
-              />
-            </div>
-          </div>
-
-          <div className="row g-2 mb-2">
-            <div className="col-md-3">
-              <label className="form-label small fw-bold">BFR (mL/min) *</label>
-              <input
-                type="number"
-                className="form-control form-control-sm"
-                value={bfr}
-                onChange={(e) => setBfr(Number(e.target.value))}
-                required
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label small fw-bold">DFR (mL/min) *</label>
-              <input
-                type="number"
-                className="form-control form-control-sm"
-                value={dfr}
-                onChange={(e) => setDfr(Number(e.target.value))}
-                required
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label small fw-bold">TMP (mmHg)</label>
-              <input
-                type="number"
-                className="form-control form-control-sm"
-                value={tmp}
-                onChange={(e) => setTmp(Number(e.target.value))}
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label small fw-bold">Heparin (U)</label>
-              <input
-                type="number"
-                className="form-control form-control-sm"
-                value={heparinGiven}
-                onChange={(e) => setHeparinGiven(Number(e.target.value))}
-              />
-            </div>
-          </div>
-
-          <div className="d-flex justify-content-end gap-2 mt-3">
-            <button
-              type="button"
-              className="btn btn-outline-secondary btn-sm"
-              onClick={() => setIsFlowsheetModalOpen(false)}
-            >
-              Done
-            </button>
-            <button type="submit" className="btn btn-primary btn-sm" disabled={submittingFlow}>
-              {submittingFlow ? "Saving..." : "Save Interval"}
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* ── 3. POST-DIALYSIS CLOSE MODAL (AC-29, AC-32) ──────────────────────── */}
-      <Modal
-        isOpen={isPostModalOpen}
-        onClose={() => {
-          setIsPostModalOpen(false);
-          setPostSuccessData(null);
-        }}
-        title={`Post-Dialysis Close & Charge Capture: ${selectedSession?.session_no}`}
-      >
-        {postSuccessData ? (
+      {/* ── 1. PRE-DIALYSIS INTAKE & SAFETY GATE MODAL (AC-29, AC-30, AC-31) ── */}
+      <Modal show={isPreModalOpen} onHide={() => setIsPreModalOpen(false)} size="lg" centered>
+        <Modal.Header closeButton className="border-bottom pb-3">
           <div>
-            <div className="alert alert-success p-3 rounded-3 mb-3">
-              <h5 className="alert-heading fw-bold">Session Successfully Completed!</h5>
-              <p className="mb-0 small">
-                Hemodialysis session finalized. Financial charges and PhilHealth package counter updated.
-              </p>
-            </div>
-
-            <div className="card bg-light border-0 p-3 mb-3 small">
-              <div className="d-flex justify-content-between mb-1">
-                <span>PhilHealth Annual Session:</span>
-                <strong className="text-primary fs-6">
-                  Session #{postSuccessData.philHealthSequenceNo} of 156
-                </strong>
-              </div>
-              <div className="d-flex justify-content-between mb-1">
-                <span>PhilHealth Benefit Claim:</span>
-                <strong>₱{Number(postSuccessData.claimAmount).toFixed(2)}</strong>
-              </div>
-              <div className="d-flex justify-content-between mb-1">
-                <span>Patient Copay:</span>
-                <strong>₱{Number(postSuccessData.copayAmount).toFixed(2)}</strong>
-              </div>
-              <div className="d-flex justify-content-between border-top pt-2 mt-2">
-                <span>Dialysis Charge Captured:</span>
-                <span className="badge bg-success">₱2,600.00 POSTED TO BILLING</span>
-              </div>
-            </div>
-
-            <div className="d-flex justify-content-end">
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => {
-                  setIsPostModalOpen(false);
-                  setPostSuccessData(null);
-                }}
-              >
-                Done
-              </button>
-            </div>
+            <Modal.Title className="h5 fw-bold text-primary d-flex align-items-center gap-2">
+              <span>🩺</span> Pre-Dialysis Intake &amp; Clinical Safety Gate
+            </Modal.Title>
+            <p className="text-muted small mb-0 font-monospace">
+              Session: {selectedSession?.session_no} &bull; Patient: {selectedSession?.first_name}{" "}
+              {selectedSession?.last_name} &bull; Chair: {selectedSession?.station_no}
+            </p>
           </div>
-        ) : (
-          <form onSubmit={handleSubmitPost}>
-            {postError && <div className="alert alert-danger small p-2 mb-3">{postError}</div>}
+        </Modal.Header>
+
+        <Modal.Body className="p-4">
+          <form onSubmit={handleSubmitPre}>
+            {preError && (
+              <div className="alert alert-danger small p-2 mb-3 shadow-sm">
+                <strong>Clinical Safety Gate Lockout:</strong> {preError}
+              </div>
+            )}
+
+            <div className="alert alert-info small p-2 mb-3">
+              <strong>Automated Safety Verification:</strong> Evaluates pre-shift water total
+              chlorine breakthrough (&lt; 0.1 ppm) and single-patient dialyzer QA (&ge; 80% baseline
+              volume).
+            </div>
 
             <div className="row g-2 mb-3">
-              <div className="col-md-6">
-                <label className="form-label small fw-bold">Post-Treatment Weight (kg) *</label>
+              <div className="col-md-4">
+                <label className="form-label small fw-bold">Pre-Treatment Weight (kg) *</label>
                 <input
                   type="number"
                   step="0.1"
                   className="form-control"
-                  value={postWeight}
-                  onChange={(e) => setPostWeight(Number(e.target.value))}
+                  value={preWeight}
+                  onChange={(e) => {
+                    const pw = Number(e.target.value);
+                    setPreWeight(pw);
+                    setTargetUf(Math.max(0.5, Number((pw - dryWeight + 0.2).toFixed(2))));
+                  }}
                   required
                 />
               </div>
-              <div className="col-md-6">
-                <label className="form-label small fw-bold">Actual UF Removed (Liters) *</label>
+              <div className="col-md-4">
+                <label className="form-label small fw-bold">Target Dry Weight (kg) *</label>
                 <input
                   type="number"
                   step="0.1"
                   className="form-control"
-                  value={actualUfRemoved}
-                  onChange={(e) => setActualUfRemoved(Number(e.target.value))}
+                  value={dryWeight}
+                  onChange={(e) => {
+                    const dw = Number(e.target.value);
+                    setDryWeight(dw);
+                    setTargetUf(Math.max(0.5, Number((preWeight - dw + 0.2).toFixed(2))));
+                  }}
+                  required
+                />
+              </div>
+              <div className="col-md-4">
+                <label className="form-label small fw-bold">Target UF Removal (L) *</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  className="form-control"
+                  value={targetUf}
+                  onChange={(e) => setTargetUf(Number(e.target.value))}
                   required
                 />
               </div>
             </div>
 
-            <div className="row g-2 mb-3">
-              <div className="col-md-4">
-                <label className="form-label small fw-bold">Sitting BP Sys / Dia *</label>
-                <div className="input-group">
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={postSittingSys}
-                    onChange={(e) => setPostSittingSys(Number(e.target.value))}
-                    required
-                  />
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={postSittingDia}
-                    onChange={(e) => setPostSittingDia(Number(e.target.value))}
-                    required
-                  />
-                </div>
+            <div className="p-2 mb-3 bg-light rounded border small d-flex justify-content-between align-items-center">
+              <div>
+                <strong>Calculated Interdialytic Fluid Gain:</strong>{" "}
+                <span className="badge bg-primary fs-7">
+                  {(preWeight - dryWeight).toFixed(2)} kg
+                </span>
               </div>
-              <div className="col-md-4">
+              <div className="text-muted">
+                Recommended Target UF: {(preWeight - dryWeight + 0.2).toFixed(2)} L (incl. 200mL
+                rinseback)
+              </div>
+            </div>
+
+            <div className="row g-2 mb-3">
+              <div className="col-md-3">
+                <label className="form-label small fw-bold">Sitting Sys BP *</label>
+                <input
+                  type="number"
+                  className="form-control"
+                  value={sittingSys}
+                  onChange={(e) => setSittingSys(Number(e.target.value))}
+                  required
+                />
+              </div>
+              <div className="col-md-3">
+                <label className="form-label small fw-bold">Sitting Dia BP *</label>
+                <input
+                  type="number"
+                  className="form-control"
+                  value={sittingDia}
+                  onChange={(e) => setSittingDia(Number(e.target.value))}
+                  required
+                />
+              </div>
+              <div className="col-md-3">
                 <label className="form-label small fw-bold">Pulse (bpm) *</label>
                 <input
                   type="number"
                   className="form-control"
-                  value={postPulse}
-                  onChange={(e) => setPostPulse(Number(e.target.value))}
+                  value={pulse}
+                  onChange={(e) => setPulse(Number(e.target.value))}
                   required
                 />
               </div>
-              <div className="col-md-4">
-                <label className="form-label small fw-bold">Hemostasis (min) *</label>
+              <div className="col-md-3">
+                <label className="form-label small fw-bold">Temp (°C) *</label>
                 <input
                   type="number"
+                  step="0.1"
                   className="form-control"
-                  value={hemostasisMinutes}
-                  onChange={(e) => setHemostasisMinutes(Number(e.target.value))}
+                  value={temp}
+                  onChange={(e) => setTemp(Number(e.target.value))}
                   required
                 />
               </div>
             </div>
 
-            <div className="row g-2 mb-3">
-              <div className="col-md-6">
-                <label className="form-label small fw-bold">Condition at Discharge *</label>
-                <select
-                  className="form-select"
-                  value={dischargeCondition}
-                  onChange={(e) => setDischargeCondition(e.target.value)}
-                >
-                  <option value="STABLE">STABLE</option>
-                  <option value="WEAK">WEAK / DIZZY</option>
-                  <option value="HYPOTENSIVE">HYPOTENSIVE</option>
-                  <option value="REFERRED_TO_ER">REFERRED TO ER</option>
-                </select>
+            <div className="mb-3 form-check">
+              <input
+                type="checkbox"
+                className="form-check-input"
+                id="chkAccess"
+                checked={accessChecked}
+                onChange={(e) => setAccessChecked(e.target.checked)}
+              />
+              <label className="form-check-label small" htmlFor="chkAccess">
+                Vascular access evaluated (thrill and bruit confirmed; no signs of infection, steal
+                syndrome, or hematoma)
+              </label>
+            </div>
+
+            <div className="d-flex justify-content-end gap-2 mt-4 border-top pt-3">
+              <Button
+                variant="outline-secondary"
+                onClick={() => setIsPreModalOpen(false)}
+                disabled={submittingPre}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                type="submit"
+                className="shadow-sm fw-bold d-flex align-items-center gap-1"
+                disabled={submittingPre}
+              >
+                <span>⚡</span> {submittingPre ? "Verifying Safety Gates..." : "Pass Gates & Start Dialysis Run"}
+              </Button>
+            </div>
+          </form>
+        </Modal.Body>
+      </Modal>
+
+      {/* ── 2. INTRA-DIALYTIC FLOWSHEET MODAL ─────────────────────────────────── */}
+      <Modal show={isFlowsheetModalOpen} onHide={() => setIsFlowsheetModalOpen(false)} size="lg" centered>
+        <Modal.Header closeButton className="border-bottom pb-3">
+          <div>
+            <Modal.Title className="h5 fw-bold text-primary d-flex align-items-center gap-2">
+              <span>📈</span> Intra-dialytic Monitoring &amp; Flowsheet Charting
+            </Modal.Title>
+            <p className="text-muted small mb-0 font-monospace">
+              Session: {selectedSession?.session_no} &bull; Chair: {selectedSession?.station_no}
+            </p>
+          </div>
+        </Modal.Header>
+
+        <Modal.Body className="p-4">
+          <div className="mb-4">
+            <h6 className="fw-bold mb-2">Recorded Hourly Intervals</h6>
+            <div className="table-responsive border rounded">
+              <table className="table table-sm table-striped mb-0 small">
+                <thead className="table-light">
+                  <tr>
+                    <th>Min</th>
+                    <th>BP</th>
+                    <th>Pulse</th>
+                    <th>BFR</th>
+                    <th>DFR</th>
+                    <th>TMP</th>
+                    <th>Cum UF</th>
+                    <th>Heparin</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedSession?.flowsheet && selectedSession.flowsheet.length > 0 ? (
+                    selectedSession.flowsheet.map((f: any, idx: number) => (
+                      <tr key={idx}>
+                        <td>{f.elapsed_minutes}m</td>
+                        <td>
+                          {f.bp_systolic}/{f.bp_diastolic}
+                        </td>
+                        <td>{f.pulse}</td>
+                        <td>{f.blood_flow_rate}</td>
+                        <td>{f.dialysate_flow_rate}</td>
+                        <td>{f.tmp || "--"}</td>
+                        <td>{f.cum_uf_volume_liters} L</td>
+                        <td>{f.heparin_administered || "--"} U</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={8} className="text-center py-2 text-muted">
+                        No intervals charted yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <form onSubmit={handleSubmitFlowsheet}>
+            <h6 className="fw-bold mb-2">Chart New Interval</h6>
+            {flowError && <div className="alert alert-danger small p-2">{flowError}</div>}
+
+            <div className="row g-2 mb-2">
+              <div className="col-md-3">
+                <label className="form-label small fw-bold">Elapsed (min) *</label>
+                <input
+                  type="number"
+                  className="form-control form-control-sm"
+                  value={elapsedMinutes}
+                  onChange={(e) => setElapsedMinutes(Number(e.target.value))}
+                  required
+                />
               </div>
-              <div className="col-md-6 d-flex align-items-center pt-3">
-                <div className="form-check">
+              <div className="col-md-3">
+                <label className="form-label small fw-bold">BP Sys / Dia *</label>
+                <div className="input-group input-group-sm">
                   <input
-                    type="checkbox"
-                    className="form-check-input"
-                    id="chkBruit"
-                    checked={accessBruitThrill}
-                    onChange={(e) => setAccessBruitThrill(e.target.checked)}
+                    type="number"
+                    className="form-control"
+                    value={flowBpSys}
+                    onChange={(e) => setFlowBpSys(Number(e.target.value))}
+                    required
                   />
-                  <label className="form-check-label small" htmlFor="chkBruit">
-                    Access bruit and thrill palpable post-procedure
-                  </label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={flowBpDia}
+                    onChange={(e) => setFlowBpDia(Number(e.target.value))}
+                    required
+                  />
                 </div>
+              </div>
+              <div className="col-md-3">
+                <label className="form-label small fw-bold">Pulse (bpm) *</label>
+                <input
+                  type="number"
+                  className="form-control form-control-sm"
+                  value={flowPulse}
+                  onChange={(e) => setFlowPulse(Number(e.target.value))}
+                  required
+                />
+              </div>
+              <div className="col-md-3">
+                <label className="form-label small fw-bold">Cum UF (L) *</label>
+                <input
+                  type="number"
+                  step="0.05"
+                  className="form-control form-control-sm"
+                  value={cumUf}
+                  onChange={(e) => setCumUf(Number(e.target.value))}
+                  required
+                />
               </div>
             </div>
 
-            <div className="d-flex justify-content-end gap-2 mt-4">
-              <button
-                type="button"
-                className="btn btn-outline-secondary"
-                onClick={() => setIsPostModalOpen(false)}
+            <div className="row g-2 mb-2">
+              <div className="col-md-3">
+                <label className="form-label small fw-bold">BFR (mL/min) *</label>
+                <input
+                  type="number"
+                  className="form-control form-control-sm"
+                  value={bfr}
+                  onChange={(e) => setBfr(Number(e.target.value))}
+                  required
+                />
+              </div>
+              <div className="col-md-3">
+                <label className="form-label small fw-bold">DFR (mL/min) *</label>
+                <input
+                  type="number"
+                  className="form-control form-control-sm"
+                  value={dfr}
+                  onChange={(e) => setDfr(Number(e.target.value))}
+                  required
+                />
+              </div>
+              <div className="col-md-3">
+                <label className="form-label small fw-bold">TMP (mmHg)</label>
+                <input
+                  type="number"
+                  className="form-control form-control-sm"
+                  value={tmp}
+                  onChange={(e) => setTmp(Number(e.target.value))}
+                />
+              </div>
+              <div className="col-md-3">
+                <label className="form-label small fw-bold">Heparin (U)</label>
+                <input
+                  type="number"
+                  className="form-control form-control-sm"
+                  value={heparinGiven}
+                  onChange={(e) => setHeparinGiven(Number(e.target.value))}
+                />
+              </div>
+            </div>
+
+            <div className="d-flex justify-content-end gap-2 mt-3 border-top pt-2">
+              <Button
+                variant="outline-secondary"
+                size="sm"
+                onClick={() => setIsFlowsheetModalOpen(false)}
               >
-                Cancel
-              </button>
-              <button type="submit" className="btn btn-success" disabled={submittingPost}>
-                {submittingPost ? "Finalizing Session..." : "Finalize Session & Capture Charge"}
-              </button>
+                Close
+              </Button>
+              <Button variant="primary" size="sm" type="submit" disabled={submittingFlow}>
+                {submittingFlow ? "Saving..." : "Save Flowsheet Entry"}
+              </Button>
             </div>
           </form>
-        )}
+        </Modal.Body>
+      </Modal>
+
+      {/* ── 3. POST-DIALYSIS CLOSE MODAL (AC-29, AC-32) ──────────────────────── */}
+      <Modal
+        show={isPostModalOpen}
+        onHide={() => {
+          setIsPostModalOpen(false);
+          setPostSuccessData(null);
+        }}
+        size="lg"
+        centered
+      >
+        <Modal.Header closeButton className="border-bottom pb-3">
+          <div>
+            <Modal.Title className="h5 fw-bold text-success d-flex align-items-center gap-2">
+              <span>🏁</span> Post-Dialysis Termination, Hemostasis &amp; Discharge
+            </Modal.Title>
+            <p className="text-muted small mb-0 font-monospace">
+              Session: {selectedSession?.session_no} &bull; Patient: {selectedSession?.first_name}{" "}
+              {selectedSession?.last_name}
+            </p>
+          </div>
+        </Modal.Header>
+
+        <Modal.Body className="p-4">
+          {postSuccessData ? (
+            <div>
+              <div className="alert alert-success p-3 rounded-3 mb-3 shadow-sm border-0">
+                <h5 className="alert-heading fw-bold mb-1">Session Successfully Completed!</h5>
+                <p className="mb-0 small">
+                  Hemodialysis session finalized. Financial charges and PhilHealth package counter
+                  updated. Dialyzer moved to reprocessing queue.
+                </p>
+              </div>
+
+              <div className="card bg-light border-0 p-3 mb-3 small">
+                <div className="d-flex justify-content-between mb-1">
+                  <span>PhilHealth Annual Session:</span>
+                  <strong className="text-primary fs-6">
+                    Session #{postSuccessData.philHealthSequenceNo} of 156
+                  </strong>
+                </div>
+                <div className="d-flex justify-content-between mb-1">
+                  <span>PhilHealth Benefit Claim:</span>
+                  <strong>₱{Number(postSuccessData.claimAmount).toFixed(2)}</strong>
+                </div>
+                <div className="d-flex justify-content-between mb-1">
+                  <span>Patient Copay:</span>
+                  <strong>₱{Number(postSuccessData.copayAmount).toFixed(2)}</strong>
+                </div>
+                <div className="d-flex justify-content-between border-top pt-2 mt-2">
+                  <span>Dialysis Charge Captured:</span>
+                  <span className="badge bg-success">₱2,600.00 POSTED TO BILLING</span>
+                </div>
+              </div>
+
+              <div className="d-flex justify-content-between border-top pt-3">
+                <Button
+                  variant="outline-danger"
+                  className="shadow-sm d-flex align-items-center gap-1"
+                  onClick={() => {
+                    setSelectedSessionForPdf(selectedSession);
+                    setIsPdfModalOpen(true);
+                  }}
+                >
+                  <span>📄</span> View / Print Treatment Sheet PDF
+                </Button>
+
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    setIsPostModalOpen(false);
+                    setPostSuccessData(null);
+                  }}
+                >
+                  Done
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmitPost}>
+              {postError && (
+                <div className="alert alert-danger small p-2 mb-3">{postError}</div>
+              )}
+
+              <div className="row g-2 mb-3">
+                <div className="col-md-6">
+                  <label className="form-label small fw-bold">Post-Treatment Weight (kg) *</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    className="form-control"
+                    value={postWeight}
+                    onChange={(e) => setPostWeight(Number(e.target.value))}
+                    required
+                  />
+                </div>
+                <div className="col-md-6">
+                  <label className="form-label small fw-bold">Actual UF Removed (Liters) *</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    className="form-control"
+                    value={actualUfRemoved}
+                    onChange={(e) => setActualUfRemoved(Number(e.target.value))}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="row g-2 mb-3">
+                <div className="col-md-4">
+                  <label className="form-label small fw-bold">Sitting BP Sys / Dia *</label>
+                  <div className="input-group">
+                    <input
+                      type="number"
+                      className="form-control"
+                      value={postSittingSys}
+                      onChange={(e) => setPostSittingSys(Number(e.target.value))}
+                      required
+                    />
+                    <input
+                      type="number"
+                      className="form-control"
+                      value={postSittingDia}
+                      onChange={(e) => setPostSittingDia(Number(e.target.value))}
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="col-md-4">
+                  <label className="form-label small fw-bold">Pulse (bpm) *</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={postPulse}
+                    onChange={(e) => setPostPulse(Number(e.target.value))}
+                    required
+                  />
+                </div>
+                <div className="col-md-4">
+                  <label className="form-label small fw-bold">Hemostasis (min) *</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={hemostasisMinutes}
+                    onChange={(e) => setHemostasisMinutes(Number(e.target.value))}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="row g-2 mb-3">
+                <div className="col-md-6">
+                  <label className="form-label small fw-bold">Condition at Discharge *</label>
+                  <select
+                    className="form-select"
+                    value={dischargeCondition}
+                    onChange={(e) => setDischargeCondition(e.target.value)}
+                  >
+                    <option value="STABLE">STABLE</option>
+                    <option value="WEAK">WEAK / DIZZY</option>
+                    <option value="HYPOTENSIVE">HYPOTENSIVE</option>
+                    <option value="REFERRED_TO_ER">REFERRED TO ER</option>
+                  </select>
+                </div>
+                <div className="col-md-6 d-flex align-items-center pt-3">
+                  <div className="form-check">
+                    <input
+                      type="checkbox"
+                      className="form-check-input"
+                      id="chkBruit"
+                      checked={accessBruitThrill}
+                      onChange={(e) => setAccessBruitThrill(e.target.checked)}
+                    />
+                    <label className="form-check-label small" htmlFor="chkBruit">
+                      Access bruit and thrill palpable post-procedure
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="d-flex justify-content-end gap-2 mt-4 border-top pt-3">
+                <Button
+                  variant="outline-secondary"
+                  onClick={() => setIsPostModalOpen(false)}
+                  disabled={submittingPost}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="success"
+                  type="submit"
+                  className="shadow-sm fw-bold"
+                  disabled={submittingPost}
+                >
+                  {submittingPost
+                    ? "Finalizing Session..."
+                    : "Finalize Session & Capture Charge"}
+                </Button>
+              </div>
+            </form>
+          )}
+        </Modal.Body>
       </Modal>
 
       {/* ── 4. SESSION DETAIL MODAL ─────────────────────────────────────────── */}
-      <Modal
-        isOpen={isDetailModalOpen}
-        onClose={() => setIsDetailModalOpen(false)}
-        title={`Session Summary: ${selectedSession?.session_no}`}
-      >
-        <div className="small">
+      <Modal show={isDetailModalOpen} onHide={() => setIsDetailModalOpen(false)} size="lg" centered>
+        <Modal.Header closeButton className="border-bottom pb-3">
+          <Modal.Title className="h5 fw-bold text-primary">
+            Session Details &bull; {selectedSession?.session_no}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body className="p-4 small">
           <div className="row g-2 mb-3">
             <div className="col-md-6">
               <strong>Patient:</strong> {selectedSession?.first_name} {selectedSession?.last_name}
@@ -1024,17 +1135,29 @@ export function DialysisWorklistPage() {
               <span>📄</span> Print Formal Treatment Record (True PDF)
             </button>
           </div>
-        </div>
+        </Modal.Body>
       </Modal>
 
-      {/* ── 5. FORMAL TREATMENT SHEET PDF MODAL (DOH / PhilHealth Standard) ── */}
+      {/* ── 5. ADMIT PATIENT TO MACHINE MODAL ───────────────────────────────── */}
+      <AdmitPatientModal
+        show={isAdmitModalOpen}
+        onHide={() => setIsAdmitModalOpen(false)}
+        onSessionAdmitted={(newSession, startImmediately) => {
+          loadSessions();
+          if (startImmediately) {
+            handleOpenPre(newSession);
+          }
+        }}
+      />
+
+      {/* ── 6. FORMAL TREATMENT SHEET PDF MODAL (DOH / PhilHealth Standard) ── */}
       <ReportPdfModal
         isOpen={isPdfModalOpen}
         onClose={() => {
           setIsPdfModalOpen(false);
           setSelectedSessionForPdf(null);
         }}
-        reportTitle={`Hemodialysis Treatment Flowsheet - ${selectedSessionForPdf?.session_no || ''}`}
+        reportTitle={`Hemodialysis Treatment Flowsheet - ${selectedSessionForPdf?.session_no || ""}`}
         pdfEndpoint={
           selectedSessionForPdf
             ? `/renal/sessions/${selectedSessionForPdf.id}/treatment-sheet-pdf`

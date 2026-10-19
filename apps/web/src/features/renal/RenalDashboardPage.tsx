@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { Link } from "react-router";
-import { Alert } from "@clinic/ui";
+import { Link, useNavigate } from "react-router";
+import { Alert, Button } from "@clinic/ui";
 import { renalApi, type RenalStation, type DialysisMachine, type DialysisSession, type WaterTreatmentLog } from "./api.js";
 import { ReportPdfModal } from "../../shared/reports/ReportPdfModal.js";
+import { AdmitPatientModal } from "./AdmitPatientModal.js";
 
 export function RenalDashboardPage() {
+  const navigate = useNavigate();
   const [stations, setStations] = useState<RenalStation[]>([]);
   const [machines, setMachines] = useState<DialysisMachine[]>([]);
   const [todaySessions, setTodaySessions] = useState<DialysisSession[]>([]);
@@ -14,6 +16,8 @@ export function RenalDashboardPage() {
   const [activeReportId, setActiveReportId] = useState<string | null>(null);
   const [activeReportTitle, setActiveReportTitle] = useState<string>('');
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [isAdmitModalOpen, setIsAdmitModalOpen] = useState(false);
+  const [admitStationId, setAdmitStationId] = useState<string | null>(null);
 
   const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -56,6 +60,11 @@ export function RenalDashboardPage() {
   const inProgressCount = todaySessions.filter((s) => s.status === "IN_PROGRESS").length;
   const completedCount = todaySessions.filter((s) => s.status === "COMPLETED").length;
 
+  function handleOpenAdmit(stationId?: string) {
+    setAdmitStationId(stationId || null);
+    setIsAdmitModalOpen(true);
+  }
+
   return (
     <div className="container-fluid p-4">
       {/* Header & Quick Action Buttons */}
@@ -69,7 +78,14 @@ export function RenalDashboardPage() {
           </p>
         </div>
         <div className="d-flex gap-2">
-          <Link to="/renal/worklist" className="btn btn-primary d-flex align-items-center gap-1 shadow-sm">
+          <Button
+            variant="primary"
+            className="d-flex align-items-center gap-1 shadow-sm fw-bold px-3"
+            onClick={() => handleOpenAdmit()}
+          >
+            <span>➕</span> Admit Patient
+          </Button>
+          <Link to="/renal/worklist" className="btn btn-outline-primary d-flex align-items-center gap-1 shadow-sm">
             <span>📋</span> Daily Worklist
           </Link>
           <Link to="/renal/water-safety" className="btn btn-outline-info d-flex align-items-center gap-1">
@@ -328,8 +344,14 @@ export function RenalDashboardPage() {
                             </div>
                           </div>
                         ) : (
-                          <div className="text-center py-2 text-muted small">
-                            Ready for next patient shift
+                          <div className="text-center py-2">
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline-success w-100 fw-bold d-flex align-items-center justify-content-center gap-1 shadow-sm"
+                              onClick={() => handleOpenAdmit(st.id)}
+                            >
+                              <span>⚡</span> Admit Patient to Chair
+                            </button>
                           </div>
                         )}
                       </div>
@@ -445,6 +467,23 @@ export function RenalDashboardPage() {
         reportId={activeReportId || undefined}
         reportTitle={activeReportTitle}
         filename={activeReportId ? `${activeReportId.toLowerCase()}_formal_report.pdf` : undefined}
+      />
+
+      {/* ── 6. ADMIT PATIENT TO MACHINE MODAL ─────────────────────────────────── */}
+      <AdmitPatientModal
+        show={isAdmitModalOpen}
+        onHide={() => {
+          setIsAdmitModalOpen(false);
+          setAdmitStationId(null);
+        }}
+        preselectedStationId={admitStationId}
+        onSessionAdmitted={(session, startImmediately) => {
+          if (startImmediately) {
+            navigate(`/renal/worklist?admitSessionId=${session.id}`);
+          } else {
+            loadDashboardData();
+          }
+        }}
       />
     </div>
   );

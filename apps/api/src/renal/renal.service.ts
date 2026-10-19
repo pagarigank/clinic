@@ -482,6 +482,28 @@ export class RenalService {
       }
       query += ` ORDER BY start_time ASC`;
       const res = await tx.query(query, params);
+      if (res.rows.length === 0) {
+        let bId = branchId;
+        if (!bId) {
+          const bRes = await tx.query(
+            `SELECT id FROM branches WHERE tenant_id = $1 ORDER BY created_at ASC LIMIT 1`,
+            [tenantId],
+          );
+          bId = bRes.rows[0]?.id;
+        }
+        if (bId) {
+          await tx.query(
+            `INSERT INTO dialysis_shifts (tenant_id, branch_id, shift_name, start_time, end_time, days_of_week, is_active)
+             VALUES
+               ($1, $2, 'Shift 1 (Morning)', '06:00:00', '10:00:00', '{1,2,3,4,5,6}', true),
+               ($1, $2, 'Shift 2 (Mid-Day)', '11:00:00', '15:00:00', '{1,2,3,4,5,6}', true),
+               ($1, $2, 'Shift 3 (Evening)', '16:00:00', '20:00:00', '{1,2,3,4,5,6}', true)`,
+            [tenantId, bId],
+          );
+          const reQuery = await tx.query(query, params);
+          return reQuery.rows;
+        }
+      }
       return res.rows;
     });
   }
@@ -1261,6 +1283,15 @@ export class RenalService {
              updated_at = now()
          WHERE tenant_id = $1 AND id = $2`,
         [tenantId, session.dialyzer_id],
+      );
+
+      // Update machine operating hours
+      await tx.query(
+        `UPDATE dialysis_machines
+         SET total_operating_hours = total_operating_hours + $1,
+             updated_at = now()
+         WHERE tenant_id = $2 AND id = $3`,
+        [Number((durationMin / 60).toFixed(2)), tenantId, session.machine_id],
       );
 
       // ── Financial charge capture (AC-29) ──────────────────────────────────
